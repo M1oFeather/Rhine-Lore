@@ -545,12 +545,15 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
                     raise ValueError("project_id 不能为空")
                 seed_raw = payload.get("seed")
                 seed = int(seed_raw) if seed_raw not in (None, "") else None
+                map_data = payload.get("map") or {}
                 state = start_run(
                     project_id=project_id,
                     project_name=str(payload.get("project_name") or ""),
                     genre=str(payload.get("genre") or ""),
                     characters=payload.get("characters") or [],
                     world=payload.get("world") or [],
+                    map_nodes=map_data.get("nodes") or [],
+                    map_edges=map_data.get("edges") or [],
                     settings=evolution_settings_from_dict(payload.get("settings")),
                     seed=seed,
                 )

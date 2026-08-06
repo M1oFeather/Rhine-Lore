@@ -79,6 +79,10 @@ class CastMember:
     identity: str = ""
     traits: list[str] = field(default_factory=list)
     background: str = ""
+    location: str = ""
+    secret: str = ""
+    abilities: list[str] = field(default_factory=list)
+    weakness: str = ""
 
 
 @dataclass
@@ -94,6 +98,7 @@ class WorldState:
     factions: list[Faction] = field(default_factory=list)
     facts: list[str] = field(default_factory=list)
     tension: int = 30
+    connections: list[list[str]] = field(default_factory=list)
 
 
 @dataclass
@@ -237,6 +242,10 @@ def _cast_from_characters(characters: list[dict[str, Any]]) -> list[CastMember]:
                 identity=str(raw.get("identity") or "").strip(),
                 traits=_parse_traits(raw.get("traits")),
                 background=str(raw.get("background") or "").strip(),
+                location="",
+                secret=str(raw.get("secret") or "").strip(),
+                abilities=_parse_traits(raw.get("abilities")),
+                weakness=str(raw.get("weakness") or "").strip(),
             )
         )
     by_name = {member.name: member.id for member in members}
@@ -259,21 +268,31 @@ def _world_from_items(world: list[dict[str, Any]]) -> WorldState:
     facts: list[str] = []
     factions: list[Faction] = []
     for raw in world:
-        title = str(raw.get("title") or "").strip()
-        content = str(raw.get("content") or "").strip()
+        title = str(raw.get("name") or raw.get("title") or "").strip()
+        kind = str(raw.get("type") or "").strip()
+        content = str(raw.get("details") or raw.get("content") or "").strip()
+        summary = str(raw.get("summary") or "").strip()
+        description = summary or content
+        fact_text = f"{title}：{description[:120]}" if description else title
         if not title:
             continue
-        if any(keyword in title for keyword in FACTION_KEYWORDS):
+        if kind in {"势力", "组织", "王国", "家族"} or any(keyword in title for keyword in FACTION_KEYWORDS):
             factions.append(Faction(id=f"faction-{len(factions) + 1}", name=title))
-        else:
+        elif kind in {"地点", ""}:
             locations.append(title)
-        if content and len(facts) < 8:
-            facts.append(f"{title}：{content[:120]}")
+        if description and len(facts) < 8:
+            facts.append(fact_text)
     if not locations:
         locations = ["故事开始的地方"]
     if not factions:
         factions = [Faction(id="faction-1", name="未知势力")]
     return WorldState(locations=locations[:6], factions=factions, facts=facts, tension=30)
+
+
+def _assign_cast_locations(state: EvolutionState) -> None:
+    locations = state.world.locations or ["故事开始的地方"]
+    for index, member in enumerate(state.cast):
+        member.location = locations[index % len(locations)]
 
 
 def _initial_threads(state: EvolutionState) -> list[PlotThread]:
@@ -294,6 +313,17 @@ def _initial_threads(state: EvolutionState) -> list[PlotThread]:
                 participants=[state.cast[0].id, state.cast[1].id],
             )
         )
+    for member in state.cast:
+        if member.secret:
+            threads.append(
+                PlotThread(
+                    id=f"thread-secret-{member.id}",
+                    title=f"{member.name}的秘密",
+                    kind="伏笔",
+                    participants=[member.id],
+                    secret=member.secret,
+                )
+            )
     return threads
 
 
@@ -303,6 +333,8 @@ def start_run(
     genre: str = "未分类",
     characters: list[dict[str, Any]] | None = None,
     world: list[dict[str, Any]] | None = None,
+    map_nodes: list[dict[str, Any]] | None = None,
+    map_edges: list[dict[str, Any]] | None = None,
     settings: EvolutionSettings | None = None,
     seed: int | None = None,
 ) -> EvolutionState:
@@ -317,6 +349,27 @@ def start_run(
         world=_world_from_items(world or []),
         settings=copy.deepcopy(settings) if settings is not None else EvolutionSettings(),
     )
+    if map_nodes:
+        node_names = [
+            str(node.get("name") or "").strip()
+            for node in map_nodes
+            if str(node.get("name") or "").strip()
+        ]
+        if node_names:
+            state.world.locations = node_names
+    if map_edges:
+        id_to_name = {
+            str(node.get("id") or ""): str(node.get("name") or "").strip()
+            for node in map_nodes or []
+        }
+        connections: list[list[str]] = []
+        for edge in map_edges:
+            first = id_to_name.get(str(edge.get("from") or ""))
+            second = id_to_name.get(str(edge.get("to") or ""))
+            if first and second and first != second and [first, second] not in connections:
+                connections.append([first, second])
+        state.world.connections = connections
+    _assign_cast_locations(state)
     state.threads = _initial_threads(state)
     return state
 
@@ -366,7 +419,20 @@ def _pick_secondary(state: EvolutionState, rng: random.Random, primary: CastMemb
     return rng.choice(related or candidates)
 
 
-def _pick_location(state: EvolutionState, rng: random.Random) -> str:
+def _pick_location(
+    state: EvolutionState,
+    rng: random.Random,
+    primary: CastMember | None = None,
+) -> str:
+    if primary is not None and primary.location:
+        neighbors: list[str] = []
+        for pair in state.world.connections:
+            if pair[0] == primary.location:
+                neighbors.append(pair[1])
+            elif pair[1] == primary.location:
+                neighbors.append(pair[0])
+        if neighbors:
+            return rng.choice(neighbors)
     return rng.choice(state.world.locations or ["故事开始的地方"])
 
 
@@ -435,7 +501,7 @@ def _plan_event(state: EvolutionState, rng: random.Random) -> EvolutionEvent:
     participants = [primary.id]
     if kind in {"相遇", "冲突", "背叛", "结盟"} and secondary is not None:
         participants.append(secondary.id)
-    location = _pick_location(state, rng)
+    location = _pick_location(state, rng, primary)
     event = EvolutionEvent(
         id=f"event-{state.turn}-{len(state.history) + 1}",
         turn=state.turn,
@@ -702,6 +768,11 @@ def _apply_effects(state: EvolutionState, event: EvolutionEvent) -> None:
     fact = str(effects.get("new_fact") or "").strip()
     if fact and fact not in state.world.facts:
         state.world.facts.append(fact)
+
+    for participant_id in event.participants:
+        member = _member(state, participant_id)
+        if member is not None and event.location and event.location in state.world.locations:
+            member.location = event.location
 
     cast_change = effects.get("cast_change")
     if isinstance(cast_change, dict):
@@ -981,6 +1052,11 @@ def evolution_state_from_dict(data: dict[str, Any]) -> EvolutionState:
         ],
         facts=[str(item) for item in (world_raw.get("facts") or [])],
         tension=max(0, min(100, int(world_raw.get("tension") or 30))),
+        connections=[
+            [str(pair[0]), str(pair[1])]
+            for pair in (world_raw.get("connections") or [])
+            if isinstance(pair, (list, tuple)) and len(pair) == 2
+        ],
     )
     cast = [
         CastMember(
@@ -995,6 +1071,10 @@ def evolution_state_from_dict(data: dict[str, Any]) -> EvolutionState:
             identity=str(member.get("identity") or ""),
             traits=[str(trait) for trait in (member.get("traits") or []) if str(trait)],
             background=str(member.get("background") or ""),
+            location=str(member.get("location") or ""),
+            secret=str(member.get("secret") or ""),
+            abilities=[str(ability) for ability in (member.get("abilities") or []) if str(ability)],
+            weakness=str(member.get("weakness") or ""),
         )
         for index, member in enumerate(data.get("cast") or [])
     ]

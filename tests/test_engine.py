@@ -205,7 +205,16 @@ class CharacterCardMappingTests(unittest.TestCase):
 
     def test_rich_fields_survive_store_roundtrip(self) -> None:
         characters = [
-            {"id": "hero", "name": "林澈", "identity": "雾港送信人", "traits": ["谨慎"], "background": "雾港长大"},
+            {
+                "id": "hero",
+                "name": "林澈",
+                "identity": "雾港送信人",
+                "traits": ["谨慎"],
+                "background": "雾港长大",
+                "secret": "那封信是自己寄出的",
+                "abilities": ["认路"],
+                "weakness": "怕水",
+            },
         ]
         state = start_run("p1", "雾港来信", "悬疑", characters, [], seed=1)
         with tempfile.TemporaryDirectory() as raw_dir:
@@ -216,6 +225,9 @@ class CharacterCardMappingTests(unittest.TestCase):
         self.assertEqual(loaded.cast[0].identity, "雾港送信人")
         self.assertEqual(loaded.cast[0].traits, ["谨慎"])
         self.assertEqual(loaded.cast[0].background, "雾港长大")
+        self.assertEqual(loaded.cast[0].secret, "那封信是自己寄出的")
+        self.assertEqual(loaded.cast[0].abilities, ["认路"])
+        self.assertEqual(loaded.cast[0].weakness, "怕水")
 
     def test_legacy_title_content_characters_still_work(self) -> None:
         characters = [{"id": "a", "title": "林澈", "content": "想要查明真相"}]
@@ -223,6 +235,65 @@ class CharacterCardMappingTests(unittest.TestCase):
         self.assertEqual(state.cast[0].name, "林澈")
         self.assertEqual(state.cast[0].drive, "想要查明真相")
         self.assertEqual(state.cast[0].identity, "")
+
+
+class WorldMapTests(unittest.TestCase):
+    def test_world_cards_map_by_type(self) -> None:
+        world = [
+            {"id": "w1", "name": "雾港", "type": "地点", "summary": "海雾笼罩的港口"},
+            {"id": "w2", "name": "沈家商会", "type": "势力"},
+            {"id": "w3", "name": "雾夜禁行", "type": "规则", "summary": "入夜后不得出港"},
+        ]
+        state = start_run("p1", "雾港来信", "悬疑", CHARACTERS, world, seed=1)
+        self.assertIn("雾港", state.world.locations)
+        self.assertNotIn("雾夜禁行", state.world.locations)
+        self.assertEqual(state.world.factions[0].name, "沈家商会")
+        self.assertTrue(any("雾夜禁行" in fact for fact in state.world.facts))
+
+    def test_map_nodes_become_locations_and_assign_cast(self) -> None:
+        nodes = [
+            {"id": "n1", "name": "雾港"},
+            {"id": "n2", "name": "旧码头"},
+            {"id": "n3", "name": "灯塔"},
+        ]
+        edges = [
+            {"id": "e1", "from": "n1", "to": "n2"},
+            {"id": "e2", "from": "n2", "to": "n3"},
+        ]
+        state = start_run("p1", "雾港来信", "悬疑", CHARACTERS, [], map_nodes=nodes, map_edges=edges, seed=1)
+        self.assertEqual(state.world.locations, ["雾港", "旧码头", "灯塔"])
+        self.assertEqual(state.world.connections, [["雾港", "旧码头"], ["旧码头", "灯塔"]])
+        self.assertEqual(state.cast[0].location, "雾港")
+        self.assertIn(state.cast[1].location, {"旧码头", "灯塔"})
+
+    def test_secret_seeds_foreshadow_thread(self) -> None:
+        characters = [{"id": "hero", "name": "林澈", "secret": "那封信其实是自己寄出的"}]
+        state = start_run("p1", "雾港来信", "悬疑", characters, [], seed=1)
+        secrets = [thread for thread in state.threads if thread.kind == "伏笔" and thread.title == "林澈的秘密"]
+        self.assertEqual(len(secrets), 1)
+        self.assertEqual(secrets[0].secret, "那封信其实是自己寄出的")
+
+    def test_events_move_participants_along_connections(self) -> None:
+        settings = EvolutionSettings(branch_frequency=0, chaos=0)
+        nodes = [{"id": "n1", "name": "雾港"}, {"id": "n2", "name": "旧码头"}]
+        edges = [{"id": "e1", "from": "n1", "to": "n2"}]
+        state = start_run(
+            "p1",
+            "雾港来信",
+            "悬疑",
+            CHARACTERS,
+            [],
+            map_nodes=nodes,
+            map_edges=edges,
+            settings=settings,
+            seed=3,
+        )
+        state, _ = advance(state)
+        event = state.history[0]
+        for participant_id in event.participants:
+            member = next(item for item in state.cast if item.id == participant_id)
+            self.assertEqual(member.location, event.location)
+            self.assertIn(member.location, {"雾港", "旧码头"})
 
 
 class EndingTests(unittest.TestCase):

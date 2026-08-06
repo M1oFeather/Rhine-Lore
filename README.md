@@ -22,6 +22,14 @@ state, snapshots, and long-term retrieval.
   appearance, background, relationship web, and current status. The cards
   seed the evolution sandbox and can be synced to the knowledge library as
   formatted proposals.
+- Detailed character editor with a simplified/full view toggle, plus extra
+  fields (age, stance, abilities, weakness, secret, speech style).
+- Structured worldbuilding cards (location, faction, rule, history, item,
+  legend) with one-click placement onto the story map.
+- A story map: drag location nodes, draw connections between them, zoom, and
+  edit place descriptions. Map nodes become evolution locations, characters
+  are assigned starting locations, and events move participants along
+  connected routes.
 - Conversation-based drafting tied to the active story project and chapter.
 - Conversation messages and chapter excerpts can be saved as story reference
   material without exposing backend workflow terms.

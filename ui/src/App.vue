@@ -11,10 +11,13 @@ import {
   type EvolutionState,
   type EvolutionView,
   type LoreItem,
+  type StoryMap,
+  type StoryMapNode,
   type StoryProject,
   type VaultRuntimeStatus,
   type VaultWebStatus,
   type WorkspaceRecord,
+  type WorldCard,
   advanceEvolution,
   approveStaging,
   buildContextBundle,
@@ -43,7 +46,7 @@ import {
 import GameIcon from "./components/GameIcon.vue";
 import type { GameIconName } from "./icons/gameIconPack";
 
-type Activity = "studio" | "story" | "world" | "characters" | "chat" | "novel" | "context" | "evolution" | "settings";
+type Activity = "studio" | "story" | "world" | "characters" | "chat" | "novel" | "context" | "evolution" | "map" | "settings";
 type WorkMode = "write" | "advanced";
 type BackendStatus = "checking" | "online" | "offline";
 type CreateDestination = "novel" | "chat";
@@ -51,11 +54,12 @@ type CreateDestination = "novel" | "chat";
 const projectKey = "rhine-lore-projects";
 const activeProjectKey = "rhine-lore-active-project";
 const activeChapterKey = "rhine-lore-active-chapter";
-const primaryActivityIds: Activity[] = ["studio", "chat", "novel", "context", "evolution"];
+const primaryActivityIds: Activity[] = ["studio", "chat", "novel", "context", "evolution", "map"];
 const storySetupActivities: Activity[] = ["story", "world", "characters"];
 const genreOptions = ["奇幻", "科幻", "悬疑", "都市", "历史", "爱情", "轻小说", "未分类"];
 const characterRoles = ["主角", "重要配角", "配角", "反派", "盟友", "导师", "恋人"];
 const characterStatusOptions = ["正常", "受伤", "失踪", "被囚禁", "死亡", "未知"];
+const worldTypes = ["地点", "势力", "规则", "历史", "物品", "传说", "其他"];
 
 const activities: {id: Activity; label: string; icon: GameIconName; description: string}[] = [
   {id: "studio", label: "工作台", icon: "book", description: "选择故事和开始写作"},
@@ -66,6 +70,7 @@ const activities: {id: Activity; label: string; icon: GameIconName; description:
   {id: "novel", label: "正文", icon: "book", description: "阅读和编辑章节"},
   {id: "context", label: "资料库", icon: "search", description: "查找设定和参考资料"},
   {id: "evolution", label: "演化", icon: "nodes", description: "沙盘观演与有限视角小说"},
+  {id: "map", label: "地图", icon: "nodes", description: "故事空间与地点连接"},
   {id: "settings", label: "设置", icon: "settings", description: "连接、高级和维护"},
 ];
 
@@ -126,6 +131,14 @@ const evolutionAutoResolve = ref(false);
 const evolutionAutoPlay = ref(false);
 const evolutionSpeed = ref(4);
 const evolutionSeedInput = ref("");
+const characterEditorMode = ref<"simple" | "full">(
+  localStorage.getItem("rhine-lore-character-mode") === "full" ? "full" : "simple",
+);
+const mapSelectedNodeId = ref("");
+const mapConnectMode = ref(false);
+const mapPendingNodeId = ref("");
+const mapZoom = ref(1);
+const mapDragging = ref<{id: string; dx: number; dy: number} | null>(null);
 let evolutionTimer: number | undefined;
 let evolutionTurnRunning = false;
 
@@ -336,6 +349,7 @@ function loadProjects(): StoryProject[] {
       summary: "",
       world: [],
       characters: [],
+      map: {nodes: [], edges: []},
       chapters: [],
       chat: [],
     },
@@ -350,9 +364,15 @@ function normalizeCharacter(item: Partial<CharacterCard> & Partial<LoreItem>): C
     name: item.name || legacyTitle || "未命名角色",
     identity: item.identity || "",
     role: item.role || "配角",
+    age: item.age || "",
+    stance: item.stance || "",
     drive: item.drive || "",
     fear: item.fear || "",
     traits: item.traits || "",
+    abilities: item.abilities || "",
+    weakness: item.weakness || "",
+    secret: item.secret || "",
+    speech: item.speech || "",
     appearance: item.appearance || "",
     background: item.background || "",
     relationships: Array.isArray(item.relationships)
@@ -363,6 +383,39 @@ function normalizeCharacter(item: Partial<CharacterCard> & Partial<LoreItem>): C
       : [],
     status: item.status || "正常",
     notes: item.notes || legacyContent || "",
+  };
+}
+
+function normalizeWorld(item: Partial<WorldCard> & Partial<LoreItem>): WorldCard {
+  const legacyTitle = item.title || "";
+  const legacyContent = item.content || "";
+  return {
+    id: item.id || uid("world"),
+    name: item.name || legacyTitle || "新设定",
+    type: item.type || "地点",
+    summary: item.summary || "",
+    details: item.details || legacyContent || "",
+    significance: item.significance || "",
+    tags: item.tags || "",
+  };
+}
+
+function normalizeMap(map: Partial<StoryMap> | null | undefined): StoryMap {
+  return {
+    nodes: (map?.nodes ?? []).map((node) => ({
+      id: node.id || uid("map-node"),
+      name: node.name || "新地点",
+      x: Number(node.x) || 0,
+      y: Number(node.y) || 0,
+      description: node.description || "",
+    })),
+    edges: (map?.edges ?? [])
+      .filter((edge) => edge.from && edge.to)
+      .map((edge) => ({
+        id: edge.id || uid("map-edge"),
+        from: edge.from,
+        to: edge.to,
+      })),
   };
 }
 
@@ -385,8 +438,9 @@ function normalizeProject(project: Partial<StoryProject>): StoryProject {
     name: project.name || "未命名故事",
     genre: project.genre || "未分类",
     summary: project.summary || "",
-    world: project.world ?? [],
+    world: (project.world ?? []).map(normalizeWorld),
     characters: (project.characters ?? []).map(normalizeCharacter),
+    map: normalizeMap(project.map),
     chapters: project.chapters ?? [],
     chat,
   };
@@ -472,6 +526,7 @@ function confirmCreateProject(destination: CreateDestination): void {
     summary: newProjectIdea.value.trim(),
     world: [],
     characters: [],
+    map: {nodes: [], edges: []},
     chapters: [{id: uid("chapter"), title: "第一章", content: ""}],
     chat: [],
   };
@@ -513,6 +568,18 @@ function duplicateProject(): void {
   copy.world = copy.world.map((item) => ({...item, id: uid("world")}));
   copy.characters = copy.characters.map((item) => ({...item, id: uid("characters")}));
   copy.chat = copy.chat.map((message) => ({...message, id: uid("message")}));
+  const nodeIdMap = new Map<string, string>();
+  copy.map.nodes = copy.map.nodes.map((node) => {
+    const nextId = uid("map-node");
+    nodeIdMap.set(node.id, nextId);
+    return {...node, id: nextId};
+  });
+  copy.map.edges = copy.map.edges.map((edge) => ({
+    ...edge,
+    id: uid("map-edge"),
+    from: nodeIdMap.get(edge.from) ?? edge.from,
+    to: nodeIdMap.get(edge.to) ?? edge.to,
+  }));
   projects.value.push(copy);
   activeProjectId.value = copy.id;
   activeChapterId.value = copy.chapters[0]?.id ?? "";
@@ -599,13 +666,26 @@ function continueSetup(): void {
 
 function addLoreItem(): void {
   const project = activeProject.value;
-  const item: LoreItem = {
+  const item: WorldCard = {
     id: uid("world"),
-    title: "新设定",
-    content: "",
+    name: "新设定",
+    type: "地点",
+    summary: "",
+    details: "",
+    significance: "",
+    tags: "",
   };
   project.world.push(item);
   saveProjects();
+}
+
+function removeWorldItem(item: WorldCard): void {
+  const project = activeProject.value;
+  const index = project.world.findIndex((entry) => entry.id === item.id);
+  if (index >= 0) {
+    project.world.splice(index, 1);
+    saveProjects();
+  }
 }
 
 function addCharacter(): void {
@@ -615,9 +695,15 @@ function addCharacter(): void {
     name: "新角色",
     identity: "",
     role: "配角",
+    age: "",
+    stance: "",
     drive: "",
     fear: "",
     traits: "",
+    abilities: "",
+    weakness: "",
+    secret: "",
+    speech: "",
     appearance: "",
     background: "",
     relationships: [],
@@ -626,6 +712,11 @@ function addCharacter(): void {
   };
   project.characters.push(card);
   saveProjects();
+}
+
+function setCharacterEditorMode(mode: "simple" | "full"): void {
+  characterEditorMode.value = mode;
+  localStorage.setItem("rhine-lore-character-mode", mode);
 }
 
 function removeCharacter(card: CharacterCard): void {
@@ -645,6 +736,151 @@ function addRelationship(card: CharacterCard): void {
 function removeRelationship(card: CharacterCard, index: number): void {
   card.relationships.splice(index, 1);
   saveProjects();
+}
+
+const mapViewBox = computed(() => {
+  const width = 1000 / mapZoom.value;
+  const height = 700 / mapZoom.value;
+  return `0 0 ${width} ${height}`;
+});
+
+const mapSelectedNode = computed(() => {
+  return activeProject.value.map.nodes.find((node) => node.id === mapSelectedNodeId.value) ?? null;
+});
+
+function mapEventPoint(event: PointerEvent): {x: number; y: number} {
+  const svg = (event.currentTarget as Element).closest("svg") as SVGSVGElement | null;
+  const rect = svg?.getBoundingClientRect();
+  if (!svg || !rect || rect.width === 0) {
+    return {x: 0, y: 0};
+  }
+  const parts = mapViewBox.value.split(" ").map(Number);
+  return {
+    x: ((event.clientX - rect.left) / rect.width) * parts[2] + parts[0],
+    y: ((event.clientY - rect.top) / rect.height) * parts[3] + parts[1],
+  };
+}
+
+function addMapNode(): void {
+  const map = activeProject.value.map;
+  const count = map.nodes.length;
+  map.nodes.push({
+    id: uid("map-node"),
+    name: `地点${count + 1}`,
+    x: 120 + (count % 4) * 220,
+    y: 120 + Math.floor(count / 4) * 190,
+    description: "",
+  });
+  saveProjects();
+}
+
+function selectMapNode(node: StoryMapNode): void {
+  if (mapConnectMode.value) {
+    if (mapPendingNodeId.value && mapPendingNodeId.value !== node.id) {
+      const exists = activeProject.value.map.edges.some(
+        (edge) =>
+          (edge.from === mapPendingNodeId.value && edge.to === node.id) ||
+          (edge.from === node.id && edge.to === mapPendingNodeId.value),
+      );
+      if (!exists) {
+        activeProject.value.map.edges.push({
+          id: uid("map-edge"),
+          from: mapPendingNodeId.value,
+          to: node.id,
+        });
+        saveProjects();
+      }
+      mapPendingNodeId.value = "";
+    } else {
+      mapPendingNodeId.value = node.id;
+    }
+  }
+  mapSelectedNodeId.value = node.id;
+}
+
+function removeMapSelection(): void {
+  const map = activeProject.value.map;
+  const nodeId = mapSelectedNodeId.value;
+  if (!nodeId) {
+    return;
+  }
+  map.nodes = map.nodes.filter((node) => node.id !== nodeId);
+  map.edges = map.edges.filter((edge) => edge.from !== nodeId && edge.to !== nodeId);
+  mapSelectedNodeId.value = "";
+  mapPendingNodeId.value = "";
+  saveProjects();
+}
+
+function onMapNodePointerDown(node: StoryMapNode, event: PointerEvent): void {
+  const point = mapEventPoint(event);
+  mapDragging.value = {id: node.id, dx: node.x - point.x, dy: node.y - point.y};
+}
+
+function onMapSvgPointerDown(event: PointerEvent): void {
+  if ((event.target as Element).tagName !== "svg") {
+    return;
+  }
+  if (mapConnectMode.value) {
+    return;
+  }
+  mapSelectedNodeId.value = "";
+  mapPendingNodeId.value = "";
+}
+
+function onMapPointerMove(event: PointerEvent): void {
+  const dragging = mapDragging.value;
+  if (!dragging) {
+    return;
+  }
+  const point = mapEventPoint(event);
+  const node = activeProject.value.map.nodes.find((item) => item.id === dragging.id);
+  if (node) {
+    node.x = Math.max(24, Math.min(976, Math.round(point.x + dragging.dx)));
+    node.y = Math.max(24, Math.min(676, Math.round(point.y + dragging.dy)));
+    saveProjects();
+  }
+}
+
+function onMapPointerUp(): void {
+  mapDragging.value = null;
+}
+
+function mapNodeX(nodeId: string): number {
+  return activeProject.value.map.nodes.find((node) => node.id === nodeId)?.x ?? 0;
+}
+
+function mapNodeY(nodeId: string): number {
+  return activeProject.value.map.nodes.find((node) => node.id === nodeId)?.y ?? 0;
+}
+
+function mapZoomIn(): void {
+  mapZoom.value = Math.min(2, Number((mapZoom.value * 1.2).toFixed(2)));
+}
+
+function mapZoomOut(): void {
+  mapZoom.value = Math.max(0.5, Number((mapZoom.value / 1.2).toFixed(2)));
+}
+
+function placeWorldOnMap(item: WorldCard): void {
+  const map = activeProject.value.map;
+  const existing = map.nodes.find((node) => node.name === item.name);
+  if (existing) {
+    mapSelectedNodeId.value = existing.id;
+    activity.value = "map";
+    markSaved("该地点已在地图上");
+    return;
+  }
+  const count = map.nodes.length;
+  map.nodes.push({
+    id: uid("map-node"),
+    name: item.name,
+    x: 120 + (count % 4) * 220,
+    y: 120 + Math.floor(count / 4) * 190,
+    description: item.summary || item.details.slice(0, 80),
+  });
+  saveProjects();
+  markSaved("已放置到地图");
+  activity.value = "map";
 }
 
 function addChapter(): void {
@@ -675,7 +911,16 @@ function buildCreativePrompt(userText: string): string {
   const chapter = activeChapter.value;
   const world = activeProject.value.world
     .slice(0, 5)
-    .map((item) => `${item.title}: ${item.content}`)
+    .map((item) =>
+      [
+        `${item.name}（${item.type}）`,
+        item.summary,
+        item.details,
+        item.significance ? `意义：${item.significance}` : "",
+      ]
+        .filter(Boolean)
+        .join("；"),
+    )
     .join("\n");
   const characters = activeProject.value.characters
     .slice(0, 5)
@@ -897,15 +1142,26 @@ async function saveChatAsKnowledge(): Promise<void> {
   }
 }
 
-async function submitLoreItem(kind: "world" | "characters", item: LoreItem | CharacterCard): Promise<void> {
+async function submitLoreItem(kind: "world" | "characters", item: WorldCard | CharacterCard): Promise<void> {
   const project = activeProject.value;
   const titlePrefix = kind === "world" ? "World" : "Character";
   let title = "";
   let content = "";
   if (kind === "world") {
-    const lore = item as LoreItem;
-    title = lore.title;
-    content = [`# ${lore.title}`, "", `Project: ${project.name}`, "", lore.content].join("\n");
+    const lore = item as WorldCard;
+    title = lore.name;
+    content = [
+      `# ${lore.name}`,
+      "",
+      `Project: ${project.name}`,
+      "",
+      `类型：${lore.type}`,
+      `概述：${lore.summary || "未设定"}`,
+      `意义：${lore.significance || "未设定"}`,
+      `标签：${lore.tags || "未设定"}`,
+      "",
+      lore.details || "未设定",
+    ].join("\n");
   } else {
     const card = item as CharacterCard;
     title = card.name;
@@ -919,9 +1175,15 @@ async function submitLoreItem(kind: "world" | "characters", item: LoreItem | Cha
       "",
       `身份：${card.identity || "未设定"}`,
       `角色定位：${card.role}`,
+      `年龄：${card.age || "未设定"}`,
+      `立场：${card.stance || "未设定"}`,
       `欲望：${card.drive || "未设定"}`,
       `恐惧：${card.fear || "未设定"}`,
       `性格：${card.traits || "未设定"}`,
+      `能力：${card.abilities || "未设定"}`,
+      `弱点：${card.weakness || "未设定"}`,
+      `秘密：${card.secret || "未设定"}`,
+      `说话风格：${card.speech || "未设定"}`,
       `外貌：${card.appearance || "未设定"}`,
       `背景：${card.background || "未设定"}`,
       `状态：${card.status}`,
@@ -1370,6 +1632,7 @@ async function beginEvolution(): Promise<void> {
       genre: project.genre,
       characters: project.characters,
       world: project.world,
+      map: project.map,
       seed,
       settings: {
         chaos: evolutionChaos.value,
@@ -1710,6 +1973,11 @@ onUnmounted(() => {
                 <strong>让小说自己演下去</strong>
                 <small>{{ evolutionState ? `已进行 ${evolutionState.turn} 回合` : "回合制沙盘与有限视角小说" }}</small>
               </button>
+              <button class="guide-card" type="button" @click="activity = 'map'">
+                <span>故事地图</span>
+                <strong>摆放地点，画出路线</strong>
+                <small>{{ activeProject.map.nodes.length }} 个地点 · {{ activeProject.map.edges.length }} 条连接</small>
+              </button>
             </div>
 
             <div class="knowledge-home-strip">
@@ -1798,21 +2066,122 @@ onUnmounted(() => {
             <el-card shadow="never">
               <template #header>
                 <div class="card-header">
-                  <span>世界观</span>
-                  <el-button size="small" @click="addLoreItem()">添加设定</el-button>
+                  <span>世界观设定</span>
+                  <el-space wrap>
+                    <el-button size="small" type="primary" @click="addLoreItem()">添加设定</el-button>
+                    <el-button size="small" @click="activity = 'map'">打开地图</el-button>
+                  </el-space>
                 </div>
               </template>
               <div v-if="activeProject.world.length === 0" class="product-empty-state">
                 <strong>还没有世界观设定</strong>
-                <p>可以先写一个地点、一条规则，或者故事发生前的重要事件。</p>
+                <p>先写地点、势力或规则；地点可以一键放置到地图。</p>
                 <el-button type="primary" @click="addLoreItem()">添加第一条设定</el-button>
               </div>
-              <div class="lore-editor-grid">
-                <div v-for="item in activeProject.world" :key="item.id" class="editor-block">
-                  <el-input v-model="item.title" @input="saveProjects" />
-                  <el-input v-model="item.content" type="textarea" :rows="7" @input="saveProjects" />
-                  <el-button size="small" @click="submitLoreItem('world', item)">同步到资料库</el-button>
+              <div class="world-card-grid">
+                <div v-for="item in activeProject.world" :key="item.id" class="character-card world-card">
+                  <div class="character-card-head">
+                    <div class="character-card-avatar">{{ (item.name || "?").slice(0, 1) }}</div>
+                    <div class="character-card-title">
+                      <el-input v-model="item.name" class="character-name-input" placeholder="名称，如：雾港" @input="saveProjects" />
+                      <el-select v-model="item.type" size="small" style="width: 140px" @change="saveProjects">
+                        <el-option v-for="type in worldTypes" :key="type" :label="type" :value="type" />
+                      </el-select>
+                    </div>
+                    <el-button size="small" type="danger" plain @click="removeWorldItem(item)">删除</el-button>
+                  </div>
+                  <div class="character-card-section">
+                    <label>一句话概述</label>
+                    <el-input v-model="item.summary" placeholder="这里是什么？它为什么存在？" @input="saveProjects" />
+                  </div>
+                  <div class="character-card-section">
+                    <label>详细描述</label>
+                    <el-input v-model="item.details" type="textarea" :rows="4" placeholder="环境、氛围、规则细节……" @input="saveProjects" />
+                  </div>
+                  <div class="character-card-section">
+                    <label>对故事的意义</label>
+                    <el-input v-model="item.significance" type="textarea" :rows="2" placeholder="它如何影响角色和剧情？" @input="saveProjects" />
+                  </div>
+                  <div class="character-card-section">
+                    <label>标签</label>
+                    <el-input v-model="item.tags" placeholder="例如：港口、海雾、禁行（逗号分隔）" @input="saveProjects" />
+                  </div>
+                  <div class="character-card-actions">
+                    <el-button size="small" @click="submitLoreItem('world', item)">同步到资料库</el-button>
+                    <el-button size="small" type="primary" @click="placeWorldOnMap(item)">放置到地图</el-button>
+                  </div>
                 </div>
+              </div>
+            </el-card>
+          </section>
+
+          <section v-else-if="activity === 'map'" class="activity-panel map-panel">
+            <el-card shadow="never" class="map-card">
+              <template #header>
+                <div class="card-header">
+                  <span>故事地图</span>
+                  <el-space wrap>
+                    <el-button size="small" type="primary" @click="addMapNode">添加地点</el-button>
+                    <el-button
+                      size="small"
+                      :type="mapConnectMode ? 'primary' : 'default'"
+                      @click="mapConnectMode = !mapConnectMode"
+                    >
+                      {{ mapConnectMode ? "连接中：点两个地点" : "连接" }}
+                    </el-button>
+                    <el-button size="small" @click="removeMapSelection">删除选中</el-button>
+                    <el-button size="small" @click="mapZoomIn">放大</el-button>
+                    <el-button size="small" @click="mapZoomOut">缩小</el-button>
+                  </el-space>
+                </div>
+              </template>
+              <div v-if="activeProject.map.nodes.length === 0" class="product-empty-state">
+                <strong>地图还是空的</strong>
+                <p>点击“添加地点”，或从世界观设定里一键放置地点，然后用“连接”画出路线。</p>
+                <el-button type="primary" @click="addMapNode">添加第一个地点</el-button>
+              </div>
+              <svg
+                class="story-map"
+                :viewBox="mapViewBox"
+                @pointerdown="onMapSvgPointerDown"
+                @pointermove="onMapPointerMove"
+                @pointerup="onMapPointerUp"
+                @pointerleave="onMapPointerUp"
+              >
+                <line
+                  v-for="edge in activeProject.map.edges"
+                  :key="edge.id"
+                  :x1="mapNodeX(edge.from)"
+                  :y1="mapNodeY(edge.from)"
+                  :x2="mapNodeX(edge.to)"
+                  :y2="mapNodeY(edge.to)"
+                  class="map-edge"
+                />
+                <g
+                  v-for="node in activeProject.map.nodes"
+                  :key="node.id"
+                  class="map-node-group"
+                  :transform="`translate(${node.x},${node.y})`"
+                  @pointerdown.stop="onMapNodePointerDown(node, $event)"
+                  @click.stop="selectMapNode(node)"
+                >
+                  <circle
+                    r="26"
+                    class="map-node-circle"
+                    :class="{selected: mapSelectedNodeId === node.id, pending: mapPendingNodeId === node.id}"
+                  />
+                  <text text-anchor="middle" dy="5" class="map-node-text">{{ (node.name || "?").slice(0, 4) }}</text>
+                </g>
+              </svg>
+              <div v-if="mapSelectedNode" class="map-node-editor">
+                <el-input v-model="mapSelectedNode.name" placeholder="地点名称" @input="saveProjects" />
+                <el-input
+                  v-model="mapSelectedNode.description"
+                  type="textarea"
+                  :rows="2"
+                  placeholder="地点描述（会进入演化的事件发生地）"
+                  @input="saveProjects"
+                />
               </div>
             </el-card>
           </section>
@@ -1823,6 +2192,10 @@ onUnmounted(() => {
                 <div class="card-header">
                   <span>角色卡</span>
                   <el-space wrap>
+                    <el-radio-group v-model="characterEditorMode" size="small" @change="setCharacterEditorMode">
+                      <el-radio-button value="simple">简版</el-radio-button>
+                      <el-radio-button value="full">详版</el-radio-button>
+                    </el-radio-group>
                     <el-button size="small" type="primary" @click="addCharacter">添加角色</el-button>
                     <el-button size="small" @click="activity = 'evolution'">去演化沙盘</el-button>
                   </el-space>
@@ -1849,6 +2222,17 @@ onUnmounted(() => {
                     <el-button size="small" type="danger" plain @click="removeCharacter(card)">删除</el-button>
                   </div>
 
+                  <div v-if="characterEditorMode === 'full'" class="character-card-section character-extra-row">
+                    <div>
+                      <label>年龄</label>
+                      <el-input v-model="card.age" placeholder="例如：19 岁" @input="saveProjects" />
+                    </div>
+                    <div>
+                      <label>立场 / 阵营</label>
+                      <el-input v-model="card.stance" placeholder="例如：中立、偏向主角、亦正亦邪" @input="saveProjects" />
+                    </div>
+                  </div>
+
                   <div class="character-card-section">
                     <label>欲望 / 目标</label>
                     <el-input v-model="card.drive" placeholder="他最想要什么？" @input="saveProjects" />
@@ -1861,6 +2245,27 @@ onUnmounted(() => {
                     <el-input v-model="card.traits" placeholder="例如：谨慎、毒舌、重情义（用逗号分隔）" @input="saveProjects" />
                   </div>
 
+                  <div v-if="characterEditorMode === 'full'" class="character-card-section character-detail-grid">
+                    <div>
+                      <label>能力 / 特长</label>
+                      <el-input v-model="card.abilities" placeholder="例如：认路、谈判（逗号分隔）" @input="saveProjects" />
+                    </div>
+                    <div>
+                      <label>弱点</label>
+                      <el-input v-model="card.weakness" placeholder="例如：怕水、易心软" @input="saveProjects" />
+                    </div>
+                  </div>
+
+                  <div v-if="characterEditorMode === 'full'" class="character-card-section">
+                    <label>秘密（会成为演化伏笔）</label>
+                    <el-input v-model="card.secret" placeholder="只有这个角色知道的真相……" @input="saveProjects" />
+                  </div>
+
+                  <div v-if="characterEditorMode === 'full'" class="character-card-section">
+                    <label>说话风格 / 口头禅</label>
+                    <el-input v-model="card.speech" placeholder="例如：总是把话说到一半" @input="saveProjects" />
+                  </div>
+
                   <div class="character-card-section">
                     <label>关系</label>
                     <div v-for="(relation, index) in card.relationships" :key="index" class="relationship-row">
@@ -1871,7 +2276,7 @@ onUnmounted(() => {
                     <el-button size="small" @click="addRelationship(card)">添加关系</el-button>
                   </div>
 
-                  <div class="character-card-section character-detail-grid">
+                  <div v-if="characterEditorMode === 'full'" class="character-card-section character-detail-grid">
                     <div>
                       <label>外貌特征</label>
                       <el-input v-model="card.appearance" type="textarea" :rows="3" placeholder="衣着、气质、标志性细节" @input="saveProjects" />
@@ -2457,6 +2862,7 @@ onUnmounted(() => {
                     <div v-for="member in evolutionCast" :key="member.id" class="cast-row" :class="{dead: !member.alive}">
                       <strong>{{ member.name }} <small>{{ member.role }}</small></strong>
                       <span v-if="member.identity">{{ member.identity }}</span>
+                      <small v-if="member.location">所在地：{{ member.location }}</small>
                       <span>{{ member.drive }}</span>
                       <small>恐惧：{{ member.fear }}</small>
                       <div v-if="member.traits?.length" class="cast-trait-chips">

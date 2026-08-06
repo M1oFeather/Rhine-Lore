@@ -11,8 +11,9 @@ export type StoryProject = {
   name: string;
   genre: string;
   summary: string;
-  world: LoreItem[];
+  world: WorldCard[];
   characters: CharacterCard[];
+  map: StoryMap;
   chapters: Chapter[];
   chat: CreativeMessage[];
 };
@@ -33,14 +34,49 @@ export type CharacterCard = {
   name: string;
   identity: string;
   role: string;
+  age: string;
+  stance: string;
   drive: string;
   fear: string;
   traits: string;
+  abilities: string;
+  weakness: string;
+  secret: string;
+  speech: string;
   appearance: string;
   background: string;
   relationships: CharacterRelationship[];
   status: string;
   notes: string;
+};
+
+export type WorldCard = {
+  id: string;
+  name: string;
+  type: string;
+  summary: string;
+  details: string;
+  significance: string;
+  tags: string;
+};
+
+export type StoryMapNode = {
+  id: string;
+  name: string;
+  x: number;
+  y: number;
+  description: string;
+};
+
+export type StoryMapEdge = {
+  id: string;
+  from: string;
+  to: string;
+};
+
+export type StoryMap = {
+  nodes: StoryMapNode[];
+  edges: StoryMapEdge[];
 };
 
 export type Chapter = {
@@ -119,6 +155,10 @@ export type EvolutionCastMember = {
   identity: string;
   traits: string[];
   background: string;
+  location: string;
+  secret: string;
+  abilities: string[];
+  weakness: string;
 };
 
 export type EvolutionFaction = {
@@ -371,6 +411,7 @@ export function startEvolutionRun(body: {
   genre: string;
   characters: ApiRecord[];
   world: ApiRecord[];
+  map?: StoryMap;
   seed?: number | null;
   settings: Partial<EvolutionSettings>;
 }): Promise<EvolutionView> {
