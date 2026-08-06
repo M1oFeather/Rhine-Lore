@@ -150,6 +150,9 @@ const aiProse = ref("");
 const aiProseBusy = ref(false);
 const aiAutoProse = ref(localStorage.getItem("rhine-lore-ai-auto") !== "0");
 const aiGenerating = ref(false);
+const aiStatus = ref<"checking" | "ok" | "error" | "unset">("unset");
+const aiStatusDetail = ref("");
+const aiPanelOpen = ref(false);
 let evolutionTimer: number | undefined;
 let evolutionTurnRunning = false;
 
@@ -340,6 +343,7 @@ onMounted(async () => {
     await Promise.allSettled([updateBackendStatus(), refreshWorkspaces(), refreshNodes(), refreshReview()]);
     return {ready: true};
   }, {collapseOutput: true});
+  void runAiCheck();
 });
 
 function loadProjects(): StoryProject[] {
@@ -1818,6 +1822,76 @@ const llmChannelLabel = computed(() => {
   return llmApiKey.value.trim() ? `已接入 ${llmModel.value.trim() || "模型"}` : "离线模板";
 });
 
+const aiStatusLabel = computed(() => {
+  if (aiStatus.value === "ok") {
+    return "正常";
+  }
+  if (aiStatus.value === "error") {
+    return "异常";
+  }
+  if (aiStatus.value === "checking") {
+    return "检查中";
+  }
+  return "未配置";
+});
+
+const aiStatusTone = computed(() => {
+  if (aiStatus.value === "ok") {
+    return "online";
+  }
+  if (aiStatus.value === "error") {
+    return "offline";
+  }
+  return "checking";
+});
+
+function apiErrorMessage(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return String(error);
+  }
+  try {
+    const parsed = JSON.parse(error.message);
+    if (parsed?.detail) {
+      return String(parsed.detail);
+    }
+  } catch {
+    // 保留原始错误文本
+  }
+  return error.message;
+}
+
+async function runAiCheck(): Promise<void> {
+  aiStatus.value = "checking";
+  aiStatusDetail.value = "正在检查通道…";
+  const key = llmApiKey.value.trim();
+  if (!key) {
+    aiStatus.value = "unset";
+    aiStatusDetail.value = "未配置 API Key：对话创作与演化扩写将使用离线模板。";
+    return;
+  }
+  persistLlmConfig();
+  try {
+    const result = await llmPing({
+      base_url: llmBaseUrl.value.trim() || undefined,
+      api_key: key,
+      model: llmModel.value.trim() || undefined,
+      message: "你好",
+    });
+    aiStatus.value = "ok";
+    aiStatusDetail.value = `功能正常（${String(result.model || llmModel.value)} 响应正常）`;
+  } catch (error) {
+    aiStatus.value = "error";
+    aiStatusDetail.value = apiErrorMessage(error);
+  }
+}
+
+function toggleAiPanel(): void {
+  aiPanelOpen.value = !aiPanelOpen.value;
+  if (aiPanelOpen.value && aiStatus.value === "unset") {
+    void runAiCheck();
+  }
+}
+
 function applyLlmProvider(provider: "deepseek" | "openai" | "custom"): void {
   llmPreset.value = provider;
   localStorage.setItem("rhine-lore-llm-preset", provider);
@@ -1842,6 +1916,7 @@ function saveLlmConfig(): void {
   persistLlmConfig();
   localStorage.setItem("rhine-lore-llm-preset", llmPreset.value);
   markSaved("模型设置已保存");
+  void runAiCheck();
 }
 
 function toggleAiAutoProse(): void {
@@ -1955,17 +2030,11 @@ function appendAIProseToChapter(): void {
 }
 
 async function testLlmConnection(): Promise<void> {
-  persistLlmConfig();
-  const result = await perform("测试模型连接", () =>
-    llmPing({
-      base_url: llmBaseUrl.value.trim() || undefined,
-      api_key: llmApiKey.value.trim() || undefined,
-      model: llmModel.value.trim() || undefined,
-      message: "你好",
-    }),
-  );
-  if (result?.answer) {
-    markSaved(`连接成功：${String(result.model || llmModel.value)}`);
+  await runAiCheck();
+  if (aiStatus.value === "ok") {
+    markSaved("AI 通道功能正常");
+  } else if (aiStatus.value === "error") {
+    runState.value = {error: aiStatusDetail.value};
   }
 }
 
@@ -2046,6 +2115,39 @@ onUnmounted(() => {
             <span class="status-dot" />
             <span>{{ backendStatusLabel }}</span>
           </button>
+          <button class="backend-chip ai-status-chip" :class="aiStatusTone" type="button" @click="toggleAiPanel">
+            <span class="status-dot" />
+            <span>AI：{{ aiStatusLabel }}</span>
+          </button>
+        </div>
+        <div v-if="aiPanelOpen" class="ai-status-panel">
+          <div class="ai-status-row" :class="aiStatusTone">
+            <strong>AI 生成通道 · {{ aiStatusLabel }}</strong>
+            <span>{{ aiStatusDetail || "点击「测试连接」检查通道状态" }}</span>
+          </div>
+          <div class="ai-status-fields">
+            <el-select v-model="llmPreset" size="small" @change="applyLlmProvider">
+              <el-option label="DeepSeek" value="deepseek" />
+              <el-option label="OpenAI" value="openai" />
+              <el-option label="自定义" value="custom" />
+            </el-select>
+            <el-input v-model="llmBaseUrl" size="small" placeholder="API 地址" />
+            <el-input v-model="llmModel" size="small" placeholder="模型" />
+            <el-input
+              v-model="llmApiKey"
+              type="password"
+              show-password
+              size="small"
+              placeholder="API Key（仅本机）"
+            />
+          </div>
+          <div class="ai-status-actions">
+            <el-button size="small" :loading="aiStatus === 'checking'" @click="runAiCheck">
+              测试连接
+            </el-button>
+            <el-button size="small" type="primary" @click="saveLlmConfig">保存并检查</el-button>
+            <small>配置后对话创作与演化正文都走此通道；未配置时使用离线模板。</small>
+          </div>
         </div>
       </header>
 
