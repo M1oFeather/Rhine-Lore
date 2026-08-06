@@ -81,6 +81,9 @@ Rhine-Lore/
 python main.py
 ```
 
+Or double-click `start.bat` at the project root to launch with the same
+settings in a visible console.
+
 The app defaults to binding every local interface (`0.0.0.0`), so it is
 reachable from other devices on the same local network:
 
