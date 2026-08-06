@@ -7,6 +7,8 @@ import os
 import socket
 import subprocess
 import sys
+import tempfile
+import time
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -35,7 +37,9 @@ ALLOWED_METHODS = {"GET", "POST", "PATCH"}
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PROJECTS_DIR = PROJECT_ROOT / "data" / "projects"
 DEFAULT_VAULT_HOST = "127.0.0.1"
-DEFAULT_VAULT_PORT = 8765
+DEFAULT_VAULT_PORT = 8795
+DEFAULT_VAULT_PORT_CANDIDATES = (8795, 8796, 8797)
+DEFAULT_VAULT_PORTS = set(DEFAULT_VAULT_PORT_CANDIDATES)
 DEFAULT_VAULT_URL = f"http://{DEFAULT_VAULT_HOST}:{DEFAULT_VAULT_PORT}"
 DEFAULT_VAULT_CHECKOUT = Path(__file__).resolve().parents[3] / "Rhine-Vault"
 DEFAULT_VAULT_DATABASE = PROJECT_ROOT / "data" / "rhine-vault-core.db"
@@ -55,7 +59,8 @@ class VaultProcessManager:
     def status(self) -> dict[str, Any]:
         running = self.process is not None and self.process.poll() is None
         self.base_url = os.environ.get("RHINE_LORE_VAULT_URL", self.base_url).strip() or DEFAULT_VAULT_URL
-        is_external = self.base_url.rstrip("/") != DEFAULT_VAULT_URL
+        parsed_base = urlparse(self.base_url)
+        is_external = parsed_base.port not in DEFAULT_VAULT_PORTS
         return {
             "managed": self.process is not None,
             "running": running,
@@ -111,18 +116,65 @@ class VaultProcessManager:
         if database_path is not None:
             env["RHINE_VAULT_DB"] = str(database_path)
 
-        self.process = subprocess.Popen(
-            command,
-            cwd=resolved_vault_path,
-            env=env,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        self.command = command
-        self.vault_path = resolved_vault_path
-        self.auto_start_error = ""
+        err_file = tempfile.NamedTemporaryFile(mode="w+b", suffix=".log", delete=False)
+        try:
+            self.process = subprocess.Popen(
+                command,
+                cwd=resolved_vault_path,
+                env=env,
+                stdout=subprocess.DEVNULL,
+                stderr=err_file,
+            )
+            self.command = command
+            self.vault_path = resolved_vault_path
+        except OSError:
+            err_file.close()
+            raise
+        if not self._wait_healthy(port, timeout=6):
+            self.auto_start_error = self._failure_detail(err_file)
+            err_file.close()
+            self._remove_log(err_file.name)
+            return self.status()
+        err_file.close()
+        self._remove_log(err_file.name)
         self.connect(f"http://{host}:{port}")
+        self.auto_start_error = ""
         return self.status()
+
+    def _wait_healthy(self, port: int, timeout: float) -> bool:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self.process is not None and self.process.poll() is not None:
+                return False
+            if _vault_health(f"http://{DEFAULT_VAULT_HOST}:{port}").get("connected"):
+                return True
+            time.sleep(0.4)
+        return bool(_vault_health(f"http://{DEFAULT_VAULT_HOST}:{port}").get("connected"))
+
+    def _failure_detail(self, err_file: tempfile._TemporaryFileWrapper[bytes] | None) -> str:
+        pieces: list[str] = []
+        code = self.process.poll() if self.process is not None else None
+        if code is not None:
+            pieces.append(f"进程退出 code={code}")
+        tail = ""
+        if err_file is not None:
+            try:
+                err_file.flush()
+                err_file.seek(0)
+                tail = err_file.read()[-1500:].decode("utf-8", errors="replace")
+            except OSError:
+                pass
+        if tail.strip():
+            last_line = tail.strip().splitlines()[-1]
+            pieces.append(last_line[:300])
+        return "；".join(pieces) or "端口未响应健康检查"
+
+    @staticmethod
+    def _remove_log(name: str) -> None:
+        try:
+            Path(name).unlink(missing_ok=True)
+        except OSError:
+            pass
 
     def ensure_default_core(self) -> dict[str, Any]:
         self.auto_start_attempted = True
@@ -134,20 +186,29 @@ class VaultProcessManager:
         if configured_url and configured_url != DEFAULT_VAULT_URL:
             self.connect(configured_url)
             return self.status()
-        if _vault_health(self.base_url).get("connected"):
-            self.auto_start_error = ""
-            return self.status()
-        try:
-            return self.start(
-                vault_path=DEFAULT_VAULT_CHECKOUT,
-                host=DEFAULT_VAULT_HOST,
-                port=DEFAULT_VAULT_PORT,
-                database_path=DEFAULT_VAULT_DATABASE,
-                python_path=None,
-            )
-        except (OSError, ValueError) as exc:
-            self.auto_start_error = str(exc)
-            return self.status()
+        errors: list[str] = []
+        for port in DEFAULT_VAULT_PORT_CANDIDATES:
+            candidate_url = f"http://{DEFAULT_VAULT_HOST}:{port}"
+            if _vault_health(candidate_url).get("connected"):
+                self.connect(candidate_url)
+                self.auto_start_error = ""
+                return self.status()
+            try:
+                started = self.start(
+                    vault_path=DEFAULT_VAULT_CHECKOUT,
+                    host=DEFAULT_VAULT_HOST,
+                    port=port,
+                    database_path=DEFAULT_VAULT_DATABASE,
+                    python_path=None,
+                )
+            except (OSError, ValueError) as exc:
+                errors.append(f"{port}: {exc}")
+                continue
+            if started["running"] and _vault_health(f"http://{DEFAULT_VAULT_HOST}:{port}").get("connected"):
+                return started
+            errors.append(f"{port}: {started['auto_start']['error'] or '启动后未通过健康检查'}")
+        self.auto_start_error = "；".join(errors) or "未找到可用的 Vault 端口"
+        return self.status()
 
     def stop(self) -> dict[str, Any]:
         if self.process is None:
@@ -442,7 +503,7 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
                     base_url = str(payload["base_url"]).strip().rstrip("/")
                 else:
                     host = _coerce_local_host(payload.get("host"))
-                    port = _coerce_port(payload.get("port", 8765))
+                    port = _coerce_port(payload.get("port", DEFAULT_VAULT_PORT))
                     base_url = f"http://{host}:{port}"
                 VAULT_MANAGER.connect(base_url)
                 self._send_json(200, self._vault_status_payload())
@@ -450,7 +511,7 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
             if self.command == "POST" and parsed_request.path == "/lore-api/vault/start":
                 payload = self._read_json_body()
                 host = _coerce_local_host(payload.get("host"))
-                port = _coerce_port(payload.get("port", 8765))
+                port = _coerce_port(payload.get("port", DEFAULT_VAULT_PORT))
                 vault_path = Path(str(payload.get("vault_path") or DEFAULT_VAULT_CHECKOUT))
                 database_path = Path(str(payload["database_path"])) if str(payload.get("database_path") or "").strip() else DEFAULT_VAULT_DATABASE
                 python_path = Path(str(payload["python_path"])) if str(payload.get("python_path") or "").strip() else None

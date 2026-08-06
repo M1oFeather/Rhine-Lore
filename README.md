@@ -96,11 +96,13 @@ The console prints the exact LAN address on startup. If a phone cannot open
 it, allow Python through Windows Defender Firewall for private networks, or
 run locally only with `python main.py --host 127.0.0.1`.
 
-On startup Rhine-Lore tries to bring up the default Rhine-Vault Core for its own
-workspace:
+On startup Rhine-Lore tries to bring up the default Rhine-Vault Core for its
+own workspace. Port `8765` is intentionally not used because common local
+tools (for example the Blender MCP host) bind it; Lore tries `8795`, then
+`8796`, then `8797` automatically:
 
 ```text
-http://127.0.0.1:8765/
+http://127.0.0.1:8795/
 ```
 
 The default Core checkout is the sibling `Rhine-Vault` project, and the default
@@ -125,7 +127,7 @@ Rhine-Lore has three Vault paths:
 Open `设置 -> 高级设置 -> Rhine-Vault` to adjust:
 
 - `Rhine-Vault 项目路径`: a local checkout containing `main.py`;
-- `主机` / `端口`: local bind target, usually `127.0.0.1:8765`;
+- `主机` / `端口`: local bind target, usually `127.0.0.1:8795`;
 - `数据库路径`: SQLite database path, defaulting to Rhine-Lore's `data/`;
 - `Python 解释器`: optional, otherwise Rhine-Lore prefers the Vault checkout's
   `.venv\Scripts\python.exe` and falls back to the current Python runtime.

@@ -76,7 +76,11 @@ const vaultStatus = ref<VaultRuntimeStatus | null>(null);
 const vaultWebStatus = ref<VaultWebStatus | null>(null);
 const vaultPath = ref(localStorage.getItem("rhine-lore-vault-path") || "");
 const vaultHost = ref(localStorage.getItem("rhine-lore-vault-host") || "127.0.0.1");
-const vaultPort = ref(Number(localStorage.getItem("rhine-lore-vault-port") || "8765"));
+const vaultPort = ref(Number(localStorage.getItem("rhine-lore-vault-port") || "8795"));
+if (localStorage.getItem("rhine-lore-vault-port") === "8765" && !localStorage.getItem("rhine-lore-external-vault-url")) {
+  localStorage.setItem("rhine-lore-vault-port", "8795");
+  vaultPort.value = 8795;
+}
 const vaultDatabasePath = ref(localStorage.getItem("rhine-lore-vault-database-path") || "");
 const vaultPythonPath = ref(localStorage.getItem("rhine-lore-vault-python-path") || "");
 const externalVaultUrl = ref(localStorage.getItem("rhine-lore-external-vault-url") || "");
@@ -208,7 +212,7 @@ const vaultRuntimeLabel = computed(() => {
     return `由 Rhine-Lore 启动 · PID ${manager.pid}`;
   }
   if (vaultStatus.value?.connected) {
-    return "已连接到外部 Rhine-Vault";
+    return manager?.mode === "default-core" ? "已连接默认资料库" : "已连接到外部 Rhine-Vault";
   }
   return "尚未连接资料库后端";
 });
@@ -228,7 +232,7 @@ const vaultWebLabel = computed(() => {
 });
 
 const vaultWebUrl = computed(() => {
-  return vaultWebStatus.value?.url || vaultStatus.value?.manager.base_url || "http://127.0.0.1:8765/";
+  return vaultWebStatus.value?.url || vaultStatus.value?.manager.base_url || "http://127.0.0.1:8795/";
 });
 
 const backendStatusTone = computed(() => {
@@ -1042,7 +1046,7 @@ async function createWorkspace(): Promise<void> {
 function persistVaultRuntimeConfig(): void {
   localStorage.setItem("rhine-lore-vault-path", vaultPath.value.trim());
   localStorage.setItem("rhine-lore-vault-host", vaultHost.value.trim() || "127.0.0.1");
-  localStorage.setItem("rhine-lore-vault-port", String(vaultPort.value || 8765));
+  localStorage.setItem("rhine-lore-vault-port", String(vaultPort.value || 8795));
   localStorage.setItem("rhine-lore-vault-database-path", vaultDatabasePath.value.trim());
   localStorage.setItem("rhine-lore-vault-python-path", vaultPythonPath.value.trim());
   localStorage.setItem("rhine-lore-external-vault-url", externalVaultUrl.value.trim());
@@ -1098,7 +1102,7 @@ async function connectVault(): Promise<void> {
   const baseUrl = externalVaultUrl.value.trim();
   const result = await perform("应用资料库连接", () =>
     connectVaultRuntime(
-      baseUrl ? {base_url: baseUrl} : {host: vaultHost.value.trim() || "127.0.0.1", port: vaultPort.value || 8765},
+      baseUrl ? {base_url: baseUrl} : {host: vaultHost.value.trim() || "127.0.0.1", port: vaultPort.value || 8795},
     ),
   );
   if (result) {
@@ -1121,7 +1125,7 @@ async function startVault(): Promise<void> {
     startVaultRuntime({
       vault_path: vaultPath.value.trim(),
       host: vaultHost.value.trim() || "127.0.0.1",
-      port: vaultPort.value || 8765,
+      port: vaultPort.value || 8795,
       database_path: vaultDatabasePath.value.trim(),
       python_path: vaultPythonPath.value.trim(),
       base_url: "",
@@ -2360,7 +2364,7 @@ onUnmounted(() => {
                       <div class="vault-status-card">
                         <strong>{{ backendStatusLabel }} · {{ vaultModeLabel }}</strong>
                         <span>{{ vaultRuntimeLabel }}</span>
-                        <small>{{ vaultStatus?.manager.base_url || 'http://127.0.0.1:8765' }}</small>
+                        <small>{{ vaultStatus?.manager.base_url || 'http://127.0.0.1:8795' }}</small>
                         <small>{{ vaultWebLabel }}</small>
                         <el-space wrap class="vault-status-actions">
                           <el-button
@@ -2397,12 +2401,12 @@ onUnmounted(() => {
                     <div class="vault-status-card">
                       <strong>{{ backendStatusLabel }} · {{ vaultModeLabel }}</strong>
                       <span>{{ vaultRuntimeLabel }}</span>
-                      <small>{{ vaultStatus?.manager.base_url || 'http://127.0.0.1:8765' }}</small>
+                      <small>{{ vaultStatus?.manager.base_url || 'http://127.0.0.1:8795' }}</small>
                       <small>默认路径：{{ vaultStatus?.config.vault_path || vaultPath }}</small>
                       <small>默认数据库：{{ vaultStatus?.config.database_path || vaultDatabasePath }}</small>
                       <small v-if="vaultStatus?.error">{{ vaultStatus.error }}</small>
                       <small v-if="vaultStatus?.manager.auto_start.error">
-                        自动启动：{{ vaultStatus.manager.auto_start.error }}
+                        启动错误：{{ vaultStatus.manager.auto_start.error }}
                       </small>
                       <el-space wrap class="vault-status-actions">
                         <el-button
@@ -2438,7 +2442,7 @@ onUnmounted(() => {
 
                       <el-form label-position="top" class="vault-deploy-form">
                         <el-form-item label="外部 Vault Web / API 链接">
-                          <el-input v-model="externalVaultUrl" placeholder="http://127.0.0.1:8765" />
+                          <el-input v-model="externalVaultUrl" placeholder="http://127.0.0.1:8795" />
                         </el-form-item>
                         <el-row :gutter="10">
                           <el-col :xs="24" :sm="12">

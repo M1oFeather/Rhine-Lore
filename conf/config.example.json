@@ -1,7 +1,6 @@
 {
-  "rhineVaultBaseUrl": "http://127.0.0.1:8765",
+  "rhineVaultBaseUrl": "http://127.0.0.1:8795",
   "workspaceId": "story-workspace",
   "retrievalProfileId": "semantic-knowledge-base",
   "resultLimit": 8
 }
-

@@ -12,6 +12,8 @@ if str(SRC) not in sys.path:
 
 from rhine_lore.server import (
     DEFAULT_VAULT_DATABASE,
+    DEFAULT_VAULT_PORT,
+    DEFAULT_VAULT_PORT_CANDIDATES,
     _coerce_local_host,
     _coerce_port,
     _default_vault_config,
@@ -64,6 +66,12 @@ class ProxySafetyTests(unittest.TestCase):
 
     def test_default_vault_config_uses_lore_data_database(self) -> None:
         self.assertEqual(_default_vault_config()["database_path"], str(DEFAULT_VAULT_DATABASE))
+        self.assertEqual(_default_vault_config()["port"], DEFAULT_VAULT_PORT)
+
+    def test_default_vault_port_avoids_blender_conflict(self) -> None:
+        self.assertEqual(DEFAULT_VAULT_PORT, 8795)
+        self.assertNotIn(8765, DEFAULT_VAULT_PORT_CANDIDATES)
+        self.assertEqual(DEFAULT_VAULT_PORT_CANDIDATES[0], DEFAULT_VAULT_PORT)
 
     def test_vault_web_status_detects_installable_ui(self) -> None:
         with tempfile.TemporaryDirectory() as raw_dir:
