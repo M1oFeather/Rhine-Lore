@@ -19,6 +19,8 @@ import { ElRadio, ElRadioButton, ElRadioGroup } from "element-plus/es/components
 import { ElRow } from "element-plus/es/components/row/index.mjs";
 import { ElScrollbar } from "element-plus/es/components/scrollbar/index.mjs";
 import { ElSpace } from "element-plus/es/components/space/index.mjs";
+import { ElSlider } from "element-plus/es/components/slider/index.mjs";
+import { ElSwitch } from "element-plus/es/components/switch/index.mjs";
 import { ElTable, ElTableColumn } from "element-plus/es/components/table/index.mjs";
 import { ElTabs, ElTabPane } from "element-plus/es/components/tabs/index.mjs";
 import { ElTag } from "element-plus/es/components/tag/index.mjs";
@@ -51,7 +53,9 @@ const app = createApp(App);
   ElRow,
   ElScrollbar,
   ElSelect,
+  ElSlider,
   ElSpace,
+  ElSwitch,
   ElTable,
   ElTableColumn,
   ElTabs,

@@ -26,6 +26,16 @@ state, snapshots, and long-term retrieval.
 - A novel reader/editor page with chapter navigation, formatted reading view,
   character count, chapter progress, auto-save status, and long-form text
   editing.
+- An evolution sandbox that advances the story itself turn by turn: characters
+  meet, clash, ally, uncover secrets, and betray; the world tension rises and
+  falls. Branch moments can be decided by the player or by the "fate dice",
+  and an auto-play mode lets the world run on its own.
+- A limited-perspective novel view that only shows what one viewpoint
+  character personally experienced or witnessed, with one-click acceptance of
+  the evolution record into the manuscript.
+- Deterministic evolution runs: every run has a seed, so the same seed plus
+  the same choices always produces the same story. Runs are saved locally
+  under `data/projects/`.
 - Simple writing-first entry points, with backend and AI-related details kept in
   settings and advanced settings.
 - A four-item mobile navigation bar for the workbench, conversation, manuscript,
@@ -49,6 +59,7 @@ Rhine-Lore/
 ├─ src/
 │  └─ rhine_lore/
 │     ├─ core.py
+│     ├─ engine.py                  # deterministic story evolution engine
 │     └─ server.py
 ├─ ui/                           # Vite + Vue + Element Plus primary UI
 │  ├─ src/
@@ -112,6 +123,25 @@ Open `设置 -> 高级设置 -> Rhine-Vault` to adjust:
 
 The launcher only starts a fixed local command, never an arbitrary shell command.
 The normal `/api/*` calls proxy to the selected local Vault URL.
+
+## Evolution Sandbox
+
+Open the `演化` activity for any story project to create an evolution run:
+
+- The engine advances the story one turn at a time. Event choices are shaped
+  by the genre, character drives, world tension, and the chaos setting.
+- At branch moments you can pick an option or roll the "fate dice"; in
+  auto-play mode branches resolve themselves and the world keeps moving.
+- The sandbox view shows every event, world state, plot threads, open
+  foreshadowing, and character relations. The novel view only renders what
+  the selected viewpoint character knows, so the story can be read as an
+  immersive limited-perspective novel.
+- Evolution runs are Lore-owned local files (`data/projects/*.evolution.json`);
+  they never enter the Rhine-Vault approval workflow. "接收进正文" appends the
+  current evolution record to the active chapter.
+- The engine is deterministic pure Python and works offline. Real-LLM prose
+  expansion through the Vault OpenAI-compatible endpoint is a future switch;
+  conversation drafting still uses the offline FakeLLM by default.
 
 ## Frontend
 

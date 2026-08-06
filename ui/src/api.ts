@@ -80,6 +80,125 @@ export type VaultWebStatus = {
   install?: ApiRecord;
 };
 
+export type EvolutionSettings = {
+  chaos: number;
+  branch_frequency: number;
+  events_per_turn: number;
+  auto_resolve: boolean;
+};
+
+export type EvolutionCastMember = {
+  id: string;
+  name: string;
+  role: string;
+  drive: string;
+  fear: string;
+  stance: string;
+  alive: boolean;
+  relations: Record<string, number>;
+};
+
+export type EvolutionFaction = {
+  id: string;
+  name: string;
+  attitude: number;
+};
+
+export type EvolutionWorld = {
+  locations: string[];
+  factions: EvolutionFaction[];
+  facts: string[];
+  tension: number;
+};
+
+export type EvolutionThread = {
+  id: string;
+  title: string;
+  kind: string;
+  status: string;
+  seed_turn: number;
+  resolve_turn: number | null;
+  participants: string[];
+  secret: string;
+};
+
+export type EvolutionBranchOption = {
+  id: string;
+  label: string;
+  hint: string;
+  effects: ApiRecord;
+};
+
+export type EvolutionBranch = {
+  question: string;
+  options: EvolutionBranchOption[];
+};
+
+export type EvolutionEvent = {
+  id: string;
+  turn: number;
+  kind: string;
+  title: string;
+  summary: string;
+  participants: string[];
+  witnesses: string[];
+  location: string;
+  effects: ApiRecord;
+  branch: EvolutionBranch | null;
+  chosen_option_id: string | null;
+  chosen_option_label: string | null;
+};
+
+export type EvolutionState = {
+  project_id: string;
+  project_name: string;
+  genre: string;
+  seed: number;
+  turn: number;
+  clock: number;
+  cast: EvolutionCastMember[];
+  world: EvolutionWorld;
+  threads: EvolutionThread[];
+  history: EvolutionEvent[];
+  pending_branch: EvolutionBranch | null;
+  ending: string;
+  settings: EvolutionSettings;
+  updated_at: string;
+};
+
+export type EvolutionNovelChapter = {
+  turn: number;
+  title: string;
+  paragraphs: string[];
+};
+
+export type EvolutionNovel = {
+  viewpoint_id: string;
+  viewpoint_name: string;
+  chapters: EvolutionNovelChapter[];
+  hidden_events: number;
+};
+
+export type EvolutionResult = {
+  turn: number;
+  advanced: boolean;
+  awaiting_branch: boolean;
+  branch: EvolutionBranch | null;
+  events: EvolutionEvent[];
+  prose: string;
+  message: string;
+  ending: string;
+};
+
+export type EvolutionView = {
+  state: EvolutionState;
+  sandbox: string;
+  novel: EvolutionNovel;
+  viewpoints: {id: string; name: string}[];
+  result: EvolutionResult | null;
+  message: string;
+};
+
 export const workspaceIdKey = "rhine-lore-workspace-id";
 
 export let workspaceId = localStorage.getItem(workspaceIdKey) || "story-workspace";
@@ -213,5 +332,37 @@ export function getVaultWebStatus(): Promise<VaultWebStatus> {
 
 export function installVaultWeb(body: {vault_path?: string} = {}): Promise<VaultWebStatus> {
   return postJson("/lore-api/vault/web/install", body);
+}
+
+export function getEvolutionState(projectId: string, viewpointId = ""): Promise<EvolutionView> {
+  const params = new URLSearchParams({project_id: projectId});
+  if (viewpointId) {
+    params.set("viewpoint_id", viewpointId);
+  }
+  return getJson(`/lore-api/evolution/state?${params.toString()}`);
+}
+
+export function startEvolutionRun(body: {
+  project_id: string;
+  project_name: string;
+  genre: string;
+  characters: ApiRecord[];
+  world: ApiRecord[];
+  seed?: number | null;
+  settings: Partial<EvolutionSettings>;
+}): Promise<EvolutionView> {
+  return postJson("/lore-api/evolution/start", body);
+}
+
+export function advanceEvolution(body: {
+  project_id: string;
+  choice_id?: string | null;
+  viewpoint_id?: string;
+}): Promise<EvolutionView> {
+  return postJson("/lore-api/evolution/advance", body);
+}
+
+export function resetEvolutionRun(projectId: string): Promise<{ok: boolean}> {
+  return postJson("/lore-api/evolution/reset", {project_id: projectId});
 }
 

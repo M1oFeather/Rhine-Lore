@@ -14,16 +14,32 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, quote, urlencode, urlparse, urlunparse
 from urllib.request import Request, urlopen
 
+from rhine_lore.engine import (
+    EvolutionState,
+    EvolutionStore,
+    TurnResult,
+    advance,
+    evolution_settings_from_dict,
+    evolution_state_to_dict,
+    render_novel,
+    render_sandbox,
+    start_run,
+    turn_result_to_dict,
+    viewpoint_options,
+)
+
 
 ALLOWED_PROXY_HOSTS = {"127.0.0.1", "localhost", "::1"}
 ALLOWED_METHODS = {"GET", "POST", "PATCH"}
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECTS_DIR = PROJECT_ROOT / "data" / "projects"
 DEFAULT_VAULT_HOST = "127.0.0.1"
 DEFAULT_VAULT_PORT = 8765
 DEFAULT_VAULT_URL = f"http://{DEFAULT_VAULT_HOST}:{DEFAULT_VAULT_PORT}"
 DEFAULT_VAULT_CHECKOUT = Path(__file__).resolve().parents[3] / "Rhine-Vault"
 DEFAULT_VAULT_DATABASE = PROJECT_ROOT / "data" / "rhine-vault-core.db"
 VAULT_WEB_INSTALL_TIMEOUT = 300
+EVOLUTION_STORE = EvolutionStore(PROJECTS_DIR)
 
 
 class VaultProcessManager:
@@ -313,6 +329,22 @@ def _vault_health(base_url: str) -> dict[str, Any]:
         return {"connected": False, "error": str(exc)}
 
 
+def _evolution_payload(
+    state: EvolutionState,
+    result: TurnResult | None = None,
+    viewpoint_id: str = "",
+) -> dict[str, Any]:
+    viewpoint = viewpoint_id or (state.cast[0].id if state.cast else "")
+    return {
+        "state": evolution_state_to_dict(state),
+        "sandbox": render_sandbox(state),
+        "novel": render_novel(state, viewpoint),
+        "viewpoints": viewpoint_options(state),
+        "result": turn_result_to_dict(result) if result else None,
+        "message": result.message if result else "",
+    }
+
+
 class RhineLoreHandler(SimpleHTTPRequestHandler):
     server_version = "RhineLore/0.1"
 
@@ -320,7 +352,7 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
         super().__init__(*args, directory=directory, **kwargs)
 
     def do_GET(self) -> None:
-        if self.path.startswith("/lore-api/vault/"):
+        if self.path.startswith("/lore-api/"):
             self._handle_lore_api()
             return
         if self.path.startswith("/vault-proxy") or self.path.startswith("/api/"):
@@ -329,7 +361,7 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
         super().do_GET()
 
     def do_POST(self) -> None:
-        if self.path.startswith("/lore-api/vault/"):
+        if self.path.startswith("/lore-api/"):
             self._handle_lore_api()
             return
         if self.path.startswith("/vault-proxy") or self.path.startswith("/api/"):
@@ -422,6 +454,55 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
             if self.command == "POST" and parsed_request.path == "/lore-api/vault/stop":
                 VAULT_MANAGER.stop()
                 self._send_json(200, self._vault_status_payload())
+                return
+            if self.command == "GET" and parsed_request.path == "/lore-api/evolution/state":
+                query = parse_qs(parsed_request.query)
+                project_id = (query.get("project_id") or [""])[0].strip()
+                viewpoint_id = (query.get("viewpoint_id") or [""])[0].strip()
+                state = EVOLUTION_STORE.load(project_id)
+                if state is None:
+                    self._send_json(404, {"error": "演化尚未开始"})
+                    return
+                self._send_json(200, _evolution_payload(state, viewpoint_id=viewpoint_id))
+                return
+            if self.command == "POST" and parsed_request.path == "/lore-api/evolution/start":
+                payload = self._read_json_body()
+                project_id = str(payload.get("project_id") or "").strip()
+                if not project_id:
+                    raise ValueError("project_id 不能为空")
+                seed_raw = payload.get("seed")
+                seed = int(seed_raw) if seed_raw not in (None, "") else None
+                state = start_run(
+                    project_id=project_id,
+                    project_name=str(payload.get("project_name") or ""),
+                    genre=str(payload.get("genre") or ""),
+                    characters=payload.get("characters") or [],
+                    world=payload.get("world") or [],
+                    settings=evolution_settings_from_dict(payload.get("settings")),
+                    seed=seed,
+                )
+                EVOLUTION_STORE.save(state)
+                self._send_json(200, _evolution_payload(state))
+                return
+            if self.command == "POST" and parsed_request.path == "/lore-api/evolution/advance":
+                payload = self._read_json_body()
+                project_id = str(payload.get("project_id") or "").strip()
+                state = EVOLUTION_STORE.load(project_id)
+                if state is None:
+                    self._send_json(404, {"error": "演化尚未开始"})
+                    return
+                choice_raw = payload.get("choice_id")
+                choice_id = str(choice_raw).strip() if choice_raw not in (None, "") else None
+                viewpoint_id = str(payload.get("viewpoint_id") or "").strip()
+                state, result = advance(state, choice_id=choice_id)
+                EVOLUTION_STORE.save(state)
+                self._send_json(200, _evolution_payload(state, result, viewpoint_id))
+                return
+            if self.command == "POST" and parsed_request.path == "/lore-api/evolution/reset":
+                payload = self._read_json_body()
+                project_id = str(payload.get("project_id") or "").strip()
+                EVOLUTION_STORE.delete(project_id)
+                self._send_json(200, {"ok": True})
                 return
         except subprocess.CalledProcessError as exc:
             self._send_json(

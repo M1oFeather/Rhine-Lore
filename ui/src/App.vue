@@ -1,21 +1,26 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 
 import {
   type ApiRecord,
   type Chapter,
   type CreativeMessage,
+  type EvolutionCastMember,
+  type EvolutionState,
+  type EvolutionView,
   type LoreItem,
   type StoryProject,
   type VaultRuntimeStatus,
   type VaultWebStatus,
   type WorkspaceRecord,
+  advanceEvolution,
   approveStaging,
   buildContextBundle,
   connectVaultRuntime,
   createManualProposal,
   fakeCreativeAnswer,
   generateKnowledgeDocument,
+  getEvolutionState,
   getVaultRuntimeStatus,
   getVaultWebStatus,
   health,
@@ -25,8 +30,10 @@ import {
   listStaging,
   listWorkspaces,
   registerWorkspace,
+  resetEvolutionRun,
   setWorkspaceId,
   stageProposal,
+  startEvolutionRun,
   startVaultRuntime,
   stopVaultRuntime,
   workspaceId,
@@ -34,7 +41,7 @@ import {
 import GameIcon from "./components/GameIcon.vue";
 import type { GameIconName } from "./icons/gameIconPack";
 
-type Activity = "studio" | "story" | "world" | "characters" | "chat" | "novel" | "context" | "settings";
+type Activity = "studio" | "story" | "world" | "characters" | "chat" | "novel" | "context" | "evolution" | "settings";
 type WorkMode = "write" | "advanced";
 type BackendStatus = "checking" | "online" | "offline";
 type CreateDestination = "novel" | "chat";
@@ -42,7 +49,7 @@ type CreateDestination = "novel" | "chat";
 const projectKey = "rhine-lore-projects";
 const activeProjectKey = "rhine-lore-active-project";
 const activeChapterKey = "rhine-lore-active-chapter";
-const primaryActivityIds: Activity[] = ["studio", "chat", "novel", "context"];
+const primaryActivityIds: Activity[] = ["studio", "chat", "novel", "context", "evolution"];
 const storySetupActivities: Activity[] = ["story", "world", "characters"];
 const genreOptions = ["奇幻", "科幻", "悬疑", "都市", "历史", "爱情", "轻小说", "未分类"];
 
@@ -54,6 +61,7 @@ const activities: {id: Activity; label: string; icon: GameIconName; description:
   {id: "chat", label: "对话创作", icon: "nodes", description: "聊剧情，生成草稿"},
   {id: "novel", label: "正文", icon: "book", description: "阅读和编辑章节"},
   {id: "context", label: "资料库", icon: "search", description: "查找设定和参考资料"},
+  {id: "evolution", label: "演化", icon: "nodes", description: "沙盘观演与有限视角小说"},
   {id: "settings", label: "设置", icon: "settings", description: "连接、高级和维护"},
 ];
 
@@ -101,6 +109,17 @@ const settingsTab = ref("basic");
 const saveNotice = ref("");
 const lastSavedAt = ref("");
 let saveNoticeTimer: number | undefined;
+const evolutionView = ref<EvolutionView | null>(null);
+const evolutionTab = ref<"sandbox" | "novel">("sandbox");
+const evolutionViewpoint = ref("");
+const evolutionChaos = ref(45);
+const evolutionBranchFrequency = ref(35);
+const evolutionAutoResolve = ref(false);
+const evolutionAutoPlay = ref(false);
+const evolutionSpeed = ref(4);
+const evolutionSeedInput = ref("");
+let evolutionTimer: number | undefined;
+let evolutionTurnRunning = false;
 
 const promptStarters = [
   "帮我续写当前章节，保持悬念和节奏。",
@@ -390,6 +409,9 @@ async function perform<T>(
 async function openActivity(next: Activity): Promise<void> {
   activity.value = next;
   workMode.value = next === "settings" ? "advanced" : "write";
+  if (next === "evolution") {
+    await loadEvolutionView();
+  }
   if (next === "context") {
     await Promise.allSettled([refreshNodes(), refreshReview()]);
   }
@@ -1143,6 +1165,240 @@ function chapterLength(chapter: Chapter): number {
 function projectLength(project: StoryProject): number {
   return project.chapters.reduce((total, chapter) => total + chapterLength(chapter), 0);
 }
+
+const evolutionState = computed(() => evolutionView.value?.state ?? null);
+
+const evolutionStats = computed(() => {
+  const state = evolutionState.value;
+  if (!state) {
+    return [];
+  }
+  const alive = state.cast.filter((member) => member.alive).length;
+  const activeThreads = state.threads.filter((thread) => thread.status === "active").length;
+  const openSeeds = state.threads.filter((thread) => thread.kind === "伏笔" && thread.status === "active").length;
+  return [
+    {label: "回合", value: state.turn, tone: "blue"},
+    {label: "世界张力", value: state.world.tension, tone: "amber"},
+    {label: "存活角色", value: alive, tone: "green"},
+    {label: "活动线索", value: activeThreads, tone: "gray"},
+    {label: "未回收伏笔", value: openSeeds, tone: "amber"},
+  ];
+});
+
+const evolutionHistory = computed(() => {
+  const events = evolutionState.value?.history ?? [];
+  return [...events].reverse();
+});
+
+const evolutionThreads = computed(() => evolutionState.value?.threads ?? []);
+const evolutionCast = computed(() => evolutionState.value?.cast ?? []);
+const evolutionPendingBranch = computed(() => evolutionState.value?.pending_branch ?? null);
+
+function evolutionCastName(state: EvolutionState | null, memberId: string): string {
+  return state?.cast.find((member) => member.id === memberId)?.name ?? memberId;
+}
+
+function evolutionRelationLabel(member: EvolutionCastMember, targetId: string): string {
+  const score = member.relations[targetId] ?? 0;
+  const labels: Record<number, string> = {
+    "-2": "宿敌",
+    "-1": "疏远",
+    "0": "陌生",
+    "1": "亲近",
+    "2": "羁绊",
+  };
+  return labels[score] ?? String(score);
+}
+
+function stopEvolutionAutoPlay(): void {
+  evolutionAutoPlay.value = false;
+  if (evolutionTimer) {
+    window.clearInterval(evolutionTimer);
+    evolutionTimer = undefined;
+  }
+}
+
+async function loadEvolutionView(): Promise<boolean> {
+  const project = activeProject.value;
+  if (!project) {
+    return false;
+  }
+  try {
+    const view = await getEvolutionState(project.id, evolutionViewpoint.value || "");
+    evolutionView.value = view;
+    if (!evolutionViewpoint.value && view.viewpoints.length > 0) {
+      evolutionViewpoint.value = view.viewpoints[0].id;
+    }
+    return true;
+  } catch {
+    evolutionView.value = null;
+    return false;
+  }
+}
+
+async function beginEvolution(): Promise<void> {
+  const project = activeProject.value;
+  if (!project) {
+    return;
+  }
+  const seedText = evolutionSeedInput.value.trim();
+  let seed: number | null = null;
+  if (seedText) {
+    seed = Number(seedText);
+    if (!Number.isFinite(seed)) {
+      runState.value = {error: "种子必须是数字"};
+      return;
+    }
+  }
+  const view = await perform("开始演化", () =>
+    startEvolutionRun({
+      project_id: project.id,
+      project_name: project.name,
+      genre: project.genre,
+      characters: project.characters,
+      world: project.world,
+      seed,
+      settings: {
+        chaos: evolutionChaos.value,
+        branch_frequency: evolutionBranchFrequency.value,
+        events_per_turn: 1,
+        auto_resolve: evolutionAutoResolve.value,
+      },
+    }),
+  );
+  if (view) {
+    evolutionView.value = view;
+    if (view.viewpoints.length > 0) {
+      evolutionViewpoint.value = view.viewpoints[0].id;
+    }
+    markSaved("演化沙盘已建立，存档在本地 data/projects");
+  }
+}
+
+async function runEvolutionTurn(choiceId?: string): Promise<void> {
+  const project = activeProject.value;
+  const state = evolutionState.value;
+  if (!project || !state || evolutionTurnRunning) {
+    return;
+  }
+  evolutionTurnRunning = true;
+  try {
+    const view = await advanceEvolution({
+      project_id: project.id,
+      choice_id: choiceId ?? null,
+      viewpoint_id: evolutionViewpoint.value || "",
+    });
+    evolutionView.value = view;
+    if (view.message) {
+      markSaved(view.message);
+    }
+  } catch (error) {
+    runState.value = {error: error instanceof Error ? error.message : String(error)};
+  } finally {
+    evolutionTurnRunning = false;
+  }
+}
+
+async function chooseBranch(optionId: string): Promise<void> {
+  await runEvolutionTurn(optionId);
+}
+
+async function fateDice(): Promise<void> {
+  await runEvolutionTurn("fate");
+}
+
+function toggleEvolutionAutoPlay(): void {
+  if (evolutionAutoPlay.value) {
+    stopEvolutionAutoPlay();
+    return;
+  }
+  evolutionAutoPlay.value = true;
+  startEvolutionTimer();
+}
+
+function startEvolutionTimer(): void {
+  if (evolutionTimer) {
+    window.clearInterval(evolutionTimer);
+  }
+  evolutionTimer = window.setInterval(() => {
+    void runEvolutionTurn("fate");
+  }, evolutionSpeed.value * 1000);
+}
+
+function changeEvolutionSpeed(): void {
+  if (evolutionAutoPlay.value) {
+    startEvolutionTimer();
+  }
+}
+
+async function resetEvolution(): Promise<void> {
+  const project = activeProject.value;
+  if (!project || !evolutionState.value) {
+    return;
+  }
+  if (!window.confirm("清空当前演化存档，重新开始？")) {
+    return;
+  }
+  stopEvolutionAutoPlay();
+  const result = await perform("重置演化", () => resetEvolutionRun(project.id));
+  if (result) {
+    evolutionView.value = null;
+    markSaved("演化已重置");
+  }
+}
+
+async function switchEvolutionViewpoint(): Promise<void> {
+  const project = activeProject.value;
+  if (!project || !evolutionState.value) {
+    return;
+  }
+  try {
+    const view = await getEvolutionState(project.id, evolutionViewpoint.value || "");
+    evolutionView.value = view;
+  } catch (error) {
+    runState.value = {error: error instanceof Error ? error.message : String(error)};
+  }
+}
+
+function acceptEvolutionIntoChapter(): void {
+  const project = activeProject.value;
+  const view = evolutionView.value;
+  if (!project || !view) {
+    return;
+  }
+  const novel = view.novel;
+  const sourceTitle = novel?.viewpoint_name ? `${novel.viewpoint_name}的视角` : "演化记录";
+  const chapters = novel?.chapters ?? [];
+  const body =
+    chapters.length > 0
+      ? chapters.map((chapter) => [chapter.title, ...chapter.paragraphs].join("\n\n")).join("\n\n")
+      : view.sandbox;
+  const entry = [
+    `## 演化记录 · ${sourceTitle}（第 ${view.state.turn} 回合）`,
+    "",
+    body,
+  ].join("\n");
+  let chapter = activeChapter.value;
+  if (!chapter) {
+    addChapter();
+    chapter = activeChapter.value;
+  }
+  if (!chapter) {
+    return;
+  }
+  chapter.content = [chapter.content.trim(), entry.trim()].filter(Boolean).join("\n\n");
+  saveProjects();
+  markSaved("演化记录已接收进正文");
+  readerMode.value = "edit";
+  activity.value = "novel";
+}
+
+onUnmounted(() => {
+  if (evolutionTimer) {
+    window.clearInterval(evolutionTimer);
+    evolutionTimer = undefined;
+  }
+});
 </script>
 
 <template>
@@ -1236,6 +1492,7 @@ function projectLength(project: StoryProject): number {
                   {{ activeProject.chapters.length > 0 ? "继续写作" : "写第一章" }}
                 </el-button>
                 <el-button @click="activity = 'chat'">对话创作</el-button>
+                <el-button @click="activity = 'evolution'">演化沙盘</el-button>
               </el-space>
             </el-card>
 
@@ -1334,6 +1591,11 @@ function projectLength(project: StoryProject): number {
                 <span>资料库</span>
                 <strong>保存和查找创作资料</strong>
                 <small>{{ nodes.length }} 条资料</small>
+              </button>
+              <button class="guide-card" type="button" @click="activity = 'evolution'">
+                <span>演化沙盘</span>
+                <strong>让小说自己演下去</strong>
+                <small>{{ evolutionState ? `已进行 ${evolutionState.turn} 回合` : "回合制沙盘与有限视角小说" }}</small>
               </button>
             </div>
 
@@ -1818,6 +2080,263 @@ function projectLength(project: StoryProject): number {
                 </el-table-column>
               </el-table>
             </el-card>
+          </section>
+
+          <section v-else-if="activity === 'evolution'" class="activity-panel evolution-panel">
+            <el-card v-if="!evolutionState" shadow="never" class="evolution-start-card">
+              <template #header>
+                <div class="card-header">
+                  <span>演化沙盘</span>
+                  <small>让小说自己演下去</small>
+                </div>
+              </template>
+              <div class="evolution-intro">
+                <strong>规则很简单：</strong>
+                <p>
+                  引擎会按回合推进故事——角色会相遇、冲突、结盟、发现秘密，世界张力会起伏。分支时刻你可以亲自选择，也可以交给命运骰子。同一颗种子会得到同样的故事，每次演化都会自动保存在本地磁盘。
+                </p>
+              </div>
+              <el-form label-position="top" class="evolution-setup-form">
+                <el-row :gutter="14">
+                  <el-col :xs="24" :sm="12">
+                    <el-form-item label="种子（留空自动生成）">
+                      <el-input v-model="evolutionSeedInput" placeholder="同一颗种子 = 同样的故事" />
+                    </el-form-item>
+                  </el-col>
+                  <el-col :xs="24" :sm="12">
+                    <el-form-item label="混乱度">
+                      <el-slider v-model="evolutionChaos" :min="0" :max="100" />
+                    </el-form-item>
+                  </el-col>
+                </el-row>
+                <el-row :gutter="14">
+                  <el-col :xs="24" :sm="12">
+                    <el-form-item label="分支频率">
+                      <el-slider v-model="evolutionBranchFrequency" :min="0" :max="100" />
+                    </el-form-item>
+                  </el-col>
+                  <el-col :xs="24" :sm="12">
+                    <el-form-item label="分支处理">
+                      <el-switch v-model="evolutionAutoResolve" active-text="命运骰子自动决定" inactive-text="由我选择" />
+                    </el-form-item>
+                  </el-col>
+                </el-row>
+                <div class="evolution-cast-preview">
+                  <strong>参演角色（{{ activeProject.characters.length }}）</strong>
+                  <div class="evolution-cast-chips">
+                    <span v-for="character in activeProject.characters" :key="character.id">
+                      {{ character.title }}
+                    </span>
+                    <span v-if="activeProject.characters.length === 0">还没有角色，会自动生成一位“主人公”</span>
+                  </div>
+                  <small>世界观设定会作为初始地点与势力进入沙盘。</small>
+                </div>
+              </el-form>
+              <el-space wrap>
+                <el-button type="primary" :loading="busyAction === '开始演化'" @click="beginEvolution">
+                  开始演化
+                </el-button>
+                <el-button @click="activity = 'characters'">先补角色</el-button>
+              </el-space>
+            </el-card>
+
+            <template v-else>
+              <el-card shadow="never" class="evolution-control-card">
+                <template #header>
+                  <div class="card-header">
+                    <span>演化控制台 · 第 {{ evolutionState.turn }} 回合</span>
+                    <el-space wrap>
+                      <el-radio-group v-model="evolutionTab" size="small">
+                        <el-radio-button value="sandbox">沙盘</el-radio-button>
+                        <el-radio-button value="novel">小说</el-radio-button>
+                      </el-radio-group>
+                      <el-button
+                        type="primary"
+                        :disabled="!!evolutionPendingBranch"
+                        @click="runEvolutionTurn()"
+                      >
+                        推进一回合
+                      </el-button>
+                      <el-switch
+                        v-model="evolutionAutoPlay"
+                        active-text="自动演化"
+                        inactive-text="手动"
+                        @change="toggleEvolutionAutoPlay"
+                      />
+                      <el-select
+                        v-if="evolutionAutoPlay"
+                        v-model="evolutionSpeed"
+                        size="small"
+                        style="width: 110px"
+                        @change="changeEvolutionSpeed"
+                      >
+                        <el-option :value="2" label="2 秒" />
+                        <el-option :value="4" label="4 秒" />
+                        <el-option :value="8" label="8 秒" />
+                      </el-select>
+                      <el-button size="small" @click="resetEvolution">重新开始</el-button>
+                    </el-space>
+                  </div>
+                </template>
+                <div class="evolution-stats">
+                  <div v-for="stat in evolutionStats" :key="stat.label" class="stat-card" :class="stat.tone">
+                    <b>{{ stat.value }}</b>
+                    <span>{{ stat.label }}</span>
+                  </div>
+                </div>
+                <div v-if="evolutionState.ending" class="evolution-ending">
+                  <strong>尾声</strong>
+                  <span>{{ evolutionState.ending }}</span>
+                </div>
+                <div v-if="evolutionPendingBranch" class="branch-banner">
+                  <strong>{{ evolutionPendingBranch.question }}</strong>
+                  <div class="branch-options">
+                    <el-button
+                      v-for="option in evolutionPendingBranch.options"
+                      :key="option.id"
+                      type="primary"
+                      plain
+                      @click="chooseBranch(option.id)"
+                    >
+                      {{ option.label }}
+                    </el-button>
+                    <el-button @click="fateDice">命运骰子</el-button>
+                  </div>
+                  <small v-if="evolutionPendingBranch.options[0]">
+                    {{ evolutionPendingBranch.options[0].hint }}（选项提示）
+                  </small>
+                </div>
+              </el-card>
+
+              <div v-if="evolutionTab === 'sandbox'" class="evolution-sandbox-grid">
+                <el-card shadow="never" class="evolution-timeline-card">
+                  <template #header>
+                    <div class="card-header">
+                      <span>事件时间线</span>
+                      <small>最新在上</small>
+                    </div>
+                  </template>
+                  <div v-if="evolutionHistory.length === 0" class="product-empty-state compact">
+                    还没有事件，按“推进一回合”开始。
+                  </div>
+                  <div v-for="event in evolutionHistory" :key="event.id" class="evolution-event">
+                    <div class="evolution-event-head">
+                      <span class="evolution-kind">{{ event.kind }}</span>
+                      <strong>{{ event.title }}</strong>
+                      <small>第 {{ event.turn }} 回合</small>
+                    </div>
+                    <p>{{ event.summary }}</p>
+                    <div v-if="event.chosen_option_label" class="evolution-choice-tag">
+                      抉择：{{ event.chosen_option_label }}
+                    </div>
+                    <div class="evolution-event-effects">
+                      <span v-if="event.effects.tension">
+                        张力 {{ event.effects.tension > 0 ? '+' : '' }}{{ event.effects.tension }}
+                      </span>
+                      <span v-for="(targets, fromId) in event.effects.relations" :key="fromId">
+                        {{ evolutionCastName(evolutionState, String(fromId)) }} ↔
+                        {{ Object.keys(targets).map((id) => evolutionCastName(evolutionState, String(id))).join('、') }}
+                      </span>
+                    </div>
+                  </div>
+                </el-card>
+
+                <div class="evolution-side-stack">
+                  <el-card shadow="never">
+                    <template #header><span>世界状态</span></template>
+                    <div class="world-state-block">
+                      <div><strong>张力</strong><span>{{ evolutionState.world.tension }} / 100</span></div>
+                      <div>
+                        <strong>地点</strong>
+                        <span>{{ evolutionState.world.locations.join('、') || '暂无' }}</span>
+                      </div>
+                      <div>
+                        <strong>势力</strong>
+                        <span>{{ evolutionState.world.factions.map((faction) => faction.name).join('、') || '暂无' }}</span>
+                      </div>
+                      <div>
+                        <strong>已知事实</strong>
+                        <span>{{ evolutionState.world.facts.join('；') || '暂无' }}</span>
+                      </div>
+                    </div>
+                  </el-card>
+
+                  <el-card shadow="never">
+                    <template #header><span>线索与伏笔</span></template>
+                    <div v-if="evolutionThreads.length === 0" class="product-empty-state compact">
+                      还没有线索。
+                    </div>
+                    <div v-for="thread in evolutionThreads" :key="thread.id" class="thread-row" :class="thread.status">
+                      <span>{{ thread.status === 'resolved' ? '已回收' : thread.status === 'dormant' ? '潜伏' : '进行中' }}</span>
+                      <strong>{{ thread.title }}</strong>
+                      <small>{{ thread.kind }}<template v-if="thread.secret"> · {{ thread.secret }}</template></small>
+                    </div>
+                  </el-card>
+
+                  <el-card shadow="never">
+                    <template #header><span>角色状态</span></template>
+                    <div v-if="evolutionCast.length === 0" class="product-empty-state compact">
+                      还没有角色。
+                    </div>
+                    <div v-for="member in evolutionCast" :key="member.id" class="cast-row" :class="{dead: !member.alive}">
+                      <strong>{{ member.name }} <small>{{ member.role }}</small></strong>
+                      <span>{{ member.drive }}</span>
+                      <small>恐惧：{{ member.fear }}</small>
+                      <small>
+                        关系：{{
+                          Object.keys(member.relations)
+                            .map((id) => `${evolutionCastName(evolutionState, String(id))} ${evolutionRelationLabel(member, String(id))}`)
+                            .join('；') || '暂无'
+                        }}
+                      </small>
+                    </div>
+                  </el-card>
+                </div>
+              </div>
+
+              <el-card v-else shadow="never" class="evolution-novel-card">
+                <template #header>
+                  <div class="card-header">
+                    <span>有限视角小说</span>
+                    <el-space wrap>
+                      <el-select
+                        v-model="evolutionViewpoint"
+                        size="small"
+                        style="width: 180px"
+                        @change="switchEvolutionViewpoint"
+                      >
+                        <el-option
+                          v-for="viewpoint in evolutionView?.viewpoints ?? []"
+                          :key="viewpoint.id"
+                          :label="`${viewpoint.name} 的视角`"
+                          :value="viewpoint.id"
+                        />
+                      </el-select>
+                      <el-button size="small" type="primary" @click="acceptEvolutionIntoChapter">
+                        接收进正文
+                      </el-button>
+                    </el-space>
+                  </div>
+                </template>
+                <p class="limited-perspective-note">
+                  你只能看到 {{ evolutionView?.novel.viewpoint_name || '主角' }} 亲眼所见或亲身经历的事。
+                  沙盘里还有 <strong>{{ evolutionView?.novel.hidden_events ?? 0 }}</strong> 件未被看见的事件。
+                </p>
+                <div class="evolution-novel-reader" :style="{fontSize: `${readerFontSize}px`}">
+                  <template v-if="(evolutionView?.novel.chapters ?? []).length > 0">
+                    <div v-for="chapter in evolutionView?.novel.chapters" :key="chapter.turn" class="novel-turn-chapter">
+                      <h2>{{ chapter.title }}</h2>
+                      <p v-for="(paragraph, index) in chapter.paragraphs" :key="index">{{ paragraph }}</p>
+                    </div>
+                    <div v-if="evolutionState.ending" class="novel-turn-chapter">
+                      <h2>尾声</h2>
+                      <p>{{ evolutionState.ending }}</p>
+                    </div>
+                  </template>
+                  <p v-else class="empty-paragraph">还没有可读的章节，先推进一回合。</p>
+                </div>
+              </el-card>
+            </template>
           </section>
 
           <section v-else class="activity-panel">
