@@ -115,6 +115,16 @@ class EvolutionApiTests(unittest.TestCase):
         self.assertEqual(status, 404)
         self.assertIn("演化尚未开始", payload["error"])
 
+    def test_ai_prose_requires_api_key(self) -> None:
+        self._start("story-ai")
+        status, payload = self._request(
+            "POST",
+            "/lore-api/evolution/ai-prose",
+            {"project_id": "story-ai", "viewpoint_id": "hero", "llm": {"api_key": ""}},
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("API Key", payload["error"])
+
     def test_reset_deletes_run(self) -> None:
         self._start()
         status, _ = self._request("POST", "/lore-api/evolution/reset", {"project_id": "story-1"})

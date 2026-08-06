@@ -2953,3 +2953,19 @@ body {
   }
 }
 
+.ai-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #e3f0fd;
+  color: #1f6feb;
+  font-size: 12px;
+  vertical-align: middle;
+}
+
+.ai-generating-tag {
+  color: #1f6feb;
+  font-size: 12px;
+}
+

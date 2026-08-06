@@ -16,6 +16,7 @@ from rhine_lore.engine import (  # noqa: E402
     EvolutionState,
     EvolutionStore,
     advance,
+    build_ai_prose_prompt,
     render_novel,
     render_sandbox,
     start_run,
@@ -148,6 +149,16 @@ class StoreTests(unittest.TestCase):
             self.assertEqual(render_sandbox(loaded), render_sandbox(state))
             self.assertEqual(loaded.cast[0].name, "林澈")
             self.assertEqual(len(loaded.history), len(state.history))
+
+    def test_ai_prose_roundtrip(self) -> None:
+        state = start_run("p1", "雾港来信", "悬疑", CHARACTERS, WORLD, seed=9)
+        state.ai_prose["1:hero"] = "林澈沿着河岸往前走。"
+        with tempfile.TemporaryDirectory() as raw_dir:
+            store = EvolutionStore(Path(raw_dir))
+            store.save(state)
+            loaded = store.load("p1")
+        self.assertIsNotNone(loaded)
+        self.assertEqual(loaded.ai_prose, {"1:hero": "林澈沿着河岸往前走。"})
 
     def test_load_missing_returns_none_and_delete(self) -> None:
         with tempfile.TemporaryDirectory() as raw_dir:
@@ -294,6 +305,17 @@ class WorldMapTests(unittest.TestCase):
             member = next(item for item in state.cast if item.id == participant_id)
             self.assertEqual(member.location, event.location)
             self.assertIn(member.location, {"雾港", "旧码头"})
+
+    def test_ai_prose_prompt_contains_viewpoint_and_events(self) -> None:
+        settings = EvolutionSettings(branch_frequency=0)
+        state = start_run("p1", "雾港来信", "悬疑", CHARACTERS, WORLD, settings=settings, seed=5)
+        state, _ = advance(state)
+        messages = build_ai_prose_prompt(state, "hero")
+        self.assertEqual(len(messages), 2)
+        self.assertEqual(messages[0]["role"], "system")
+        self.assertIn("雾港来信", messages[1]["content"])
+        self.assertIn("林澈", messages[1]["content"])
+        self.assertIn("第1回合", messages[1]["content"])
 
 
 class EndingTests(unittest.TestCase):

@@ -10,7 +10,6 @@ import {
   type EvolutionCastMember,
   type EvolutionState,
   type EvolutionView,
-  type LlmChatMessage,
   type LoreItem,
   type StoryMap,
   type StoryMapNode,
@@ -25,6 +24,7 @@ import {
   connectVaultRuntime,
   createManualProposal,
   fakeCreativeAnswer,
+  generateEvolutionProseApi,
   generateKnowledgeDocument,
   getEvolutionState,
   getVaultRuntimeStatus,
@@ -148,6 +148,8 @@ const llmModel = ref(localStorage.getItem("rhine-lore-llm-model") || "deepseek-c
 const llmPreset = ref(localStorage.getItem("rhine-lore-llm-preset") || "deepseek");
 const aiProse = ref("");
 const aiProseBusy = ref(false);
+const aiAutoProse = ref(localStorage.getItem("rhine-lore-ai-auto") !== "0");
+const aiGenerating = ref(false);
 let evolutionTimer: number | undefined;
 let evolutionTurnRunning = false;
 
@@ -1689,6 +1691,9 @@ async function runEvolutionTurn(choiceId?: string): Promise<void> {
       viewpoint_id: evolutionViewpoint.value || "",
     });
     evolutionView.value = view;
+    if (llmApiKey.value.trim() && aiAutoProse.value && view.result?.advanced) {
+      void generateStoredProse();
+    }
     if (view.message) {
       markSaved(view.message);
     }
@@ -1839,40 +1844,56 @@ function saveLlmConfig(): void {
   markSaved("模型设置已保存");
 }
 
-function buildEvolutionProsePrompt(): LlmChatMessage[] {
+function toggleAiAutoProse(): void {
+  localStorage.setItem("rhine-lore-ai-auto", aiAutoProse.value ? "1" : "0");
+}
+
+function evolutionProseKey(state: EvolutionState, viewpointId: string): string {
+  const latestTurn = state.history.length > 0 ? state.history[state.history.length - 1].turn : state.turn;
+  return `${latestTurn}:${viewpointId}`;
+}
+
+const evolutionNovelChapters = computed(() => {
   const state = evolutionState.value;
-  if (!state) {
+  const novel = evolutionView.value?.novel;
+  if (!state || !novel) {
     return [];
   }
-  const viewpoint = state.cast.find((member) => member.id === evolutionViewpoint.value) ?? state.cast[0];
-  const viewpointName = viewpoint?.name ?? "主角";
-  const castLines = state.cast
-    .slice(0, 6)
-    .map(
-      (member) =>
-        `${member.name}（${member.role}${member.identity ? ` · ${member.identity}` : ""}）：欲望=${member.drive || "未设定"}，恐惧=${member.fear || "未设定"}，所在地=${member.location || "未知"}`,
-    )
-    .join("\n");
-  const latestEvents = state.history
-    .slice(-5)
-    .map((event) => `[第${event.turn}回合·${event.kind}] ${event.title}：${event.summary}`)
-    .join("\n");
-  const system =
-    "你是小说续写引擎。只依据给定的事件与设定写作，不要发明未发生的情节、未出场的人物或超出已知世界的设定。用第三人称有限视角，侧重心理描写，语言平实细腻。";
-  const user = [
-    `项目：《${state.project_name}》`,
-    `类型：${state.genre}`,
-    `概要：${state.project_name}（在演化沙盘中自动推进的故事）`,
-    `世界观：${state.world.locations.join("、")}；已知事实：${state.world.facts.slice(0, 5).join("；") || "暂无"}`,
-    `角色：\n${castLines}`,
-    `最近发生的事件：\n${latestEvents || "还没有事件"}`,
-    "",
-    `请以「${viewpointName}」的有限视角，把最近发生的事写成一段 300-500 字的正文。只能写该角色亲身经历或亲眼看到的事，其它角色的秘密与私事一律不写。`,
-  ].join("\n\n");
-  return [
-    {role: "system", content: system},
-    {role: "user", content: user},
-  ];
+  const viewpointId = evolutionViewpoint.value || novel.viewpoint_id;
+  return novel.chapters.map((chapter) => {
+    const aiText = state.ai_prose?.[`${chapter.turn}:${viewpointId}`];
+    if (aiText) {
+      return {...chapter, paragraphs: [aiText], ai: true};
+    }
+    return {...chapter, ai: false};
+  });
+});
+
+async function generateStoredProse(): Promise<void> {
+  const project = activeProject.value;
+  const state = evolutionState.value;
+  if (!project || !state || aiGenerating.value) {
+    return;
+  }
+  aiGenerating.value = true;
+  try {
+    const view = await generateEvolutionProseApi({
+      project_id: project.id,
+      viewpoint_id: evolutionViewpoint.value || "",
+      llm: {
+        base_url: llmBaseUrl.value.trim() || undefined,
+        api_key: llmApiKey.value.trim() || undefined,
+        model: llmModel.value.trim() || undefined,
+      },
+    });
+    if (view) {
+      evolutionView.value = view;
+    }
+  } catch {
+    // 生成失败时保留模板正文，不打断演化。
+  } finally {
+    aiGenerating.value = false;
+  }
 }
 
 async function generateEvolutionProse(): Promise<void> {
@@ -1883,23 +1904,25 @@ async function generateEvolutionProse(): Promise<void> {
   persistLlmConfig();
   aiProseBusy.value = true;
   const result = await perform("AI 扩写", () =>
-    llmChat({
-      base_url: llmBaseUrl.value.trim() || undefined,
-      api_key: llmApiKey.value.trim() || undefined,
-      model: llmModel.value.trim() || undefined,
-      messages: buildEvolutionProsePrompt(),
+    generateEvolutionProseApi({
+      project_id: activeProject.value.id,
+      viewpoint_id: evolutionViewpoint.value || "",
+      llm: {
+        base_url: llmBaseUrl.value.trim() || undefined,
+        api_key: llmApiKey.value.trim() || undefined,
+        model: llmModel.value.trim() || undefined,
+      },
     }),
   );
   aiProseBusy.value = false;
   if (!result) {
     return;
   }
-  const text = String(result.answer ?? result.content ?? "").trim();
-  if (text) {
-    aiProse.value = text;
-    markSaved("AI 扩写完成，可编辑后接收进正文");
-  } else {
-    runState.value = {error: "AI 返回为空，请检查模型配置"};
+  evolutionView.value = result;
+  const viewpointId = evolutionViewpoint.value || (result.state.cast[0]?.id ?? "");
+  aiProse.value = result.state.ai_prose?.[evolutionProseKey(result.state, viewpointId)] ?? "";
+  if (aiProse.value) {
+    markSaved("AI 扩写完成，已保存到演化存档");
   }
 }
 
@@ -2958,6 +2981,14 @@ onUnmounted(() => {
                         inactive-text="手动"
                         @change="toggleEvolutionAutoPlay"
                       />
+                      <el-switch
+                        v-model="aiAutoProse"
+                        active-text="AI 扩写"
+                        inactive-text="模板"
+                        :disabled="!llmApiKey.trim()"
+                        @change="toggleAiAutoProse"
+                      />
+                      <span v-if="aiGenerating" class="ai-generating-tag">AI 生成中…</span>
                       <el-select
                         v-if="evolutionAutoPlay"
                         v-model="evolutionSpeed"
@@ -3148,9 +3179,9 @@ onUnmounted(() => {
                   />
                 </div>
                 <div class="evolution-novel-reader" :style="{fontSize: `${readerFontSize}px`}">
-                  <template v-if="(evolutionView?.novel.chapters ?? []).length > 0">
-                    <div v-for="chapter in evolutionView?.novel.chapters" :key="chapter.turn" class="novel-turn-chapter">
-                      <h2>{{ chapter.title }}</h2>
+                  <template v-if="evolutionNovelChapters.length > 0">
+                    <div v-for="chapter in evolutionNovelChapters" :key="chapter.turn" class="novel-turn-chapter">
+                      <h2>{{ chapter.title }} <span v-if="chapter.ai" class="ai-badge">AI</span></h2>
                       <p v-for="(paragraph, index) in chapter.paragraphs" :key="index">{{ paragraph }}</p>
                     </div>
                     <div v-if="evolutionState.ending" class="novel-turn-chapter">

@@ -168,6 +168,7 @@ class EvolutionState:
     ending: str = ""
     settings: EvolutionSettings = field(default_factory=EvolutionSettings)
     updated_at: str = ""
+    ai_prose: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -1001,6 +1002,49 @@ def viewpoint_options(state: EvolutionState) -> list[dict[str, str]]:
     return [{"id": member.id, "name": member.name} for member in state.cast]
 
 
+def build_ai_prose_prompt(state: EvolutionState, viewpoint_id: str = "") -> list[dict[str, str]]:
+    """Build an OpenAI-compatible chat prompt for the latest evolution turn."""
+    viewpoint = _member(state, viewpoint_id) if viewpoint_id else None
+    if viewpoint is None:
+        viewpoint = state.cast[0] if state.cast else None
+    viewpoint_name = viewpoint.name if viewpoint else "主角"
+    cast_lines = [
+        (
+            f"{member.name}（{member.role}"
+            f"{(' · ' + member.identity) if member.identity else ''}）："
+            f"欲望={member.drive or '未设定'}，恐惧={member.fear or '未设定'}，所在地={member.location or '未知'}"
+        )
+        for member in state.cast[:6]
+    ]
+    latest_events = state.history[-5:]
+    event_lines = [
+        (
+            f"[第{event.turn}回合·{event.kind}] {event.title}：{event.summary}"
+            + (f"（抉择：{event.chosen_option_label}）" if event.chosen_option_label else "")
+        )
+        for event in latest_events
+    ]
+    system = (
+        "你是小说续写引擎。只依据给定的事件与设定写作，不要发明未发生的情节、"
+        "未出场的人物或超出已知世界的设定。用第三人称有限视角，侧重心理描写，语言平实细腻。"
+    )
+    user = [
+        f"项目：《{state.project_name or '未命名故事'}》",
+        f"类型：{state.genre}",
+        f"世界观地点：{'、'.join(state.world.locations)}",
+        f"已知事实：{'；'.join(state.world.facts[:5]) or '暂无'}",
+        f"角色：\n" + "\n".join(cast_lines) if cast_lines else "角色：暂无",
+        f"最近发生的事件：\n" + "\n".join(event_lines) if event_lines else "最近发生的事件：暂无",
+        "",
+        f"请以「{viewpoint_name}」的有限视角，把最近发生的事写成一段 300-500 字的正文。"
+        "只能写该角色亲身经历或亲眼看到的事，其它角色的秘密与私事一律不写。",
+    ]
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": "\n\n".join(user)},
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Serialization
 # ---------------------------------------------------------------------------
@@ -1107,6 +1151,7 @@ def evolution_state_from_dict(data: dict[str, Any]) -> EvolutionState:
         ending=str(data.get("ending") or ""),
         settings=settings,
         updated_at=str(data.get("updated_at") or ""),
+        ai_prose={str(key): str(value) for key, value in (data.get("ai_prose") or {}).items()},
     )
 
 

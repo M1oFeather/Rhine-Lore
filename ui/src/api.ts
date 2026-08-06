@@ -227,6 +227,7 @@ export type EvolutionState = {
   ending: string;
   settings: EvolutionSettings;
   updated_at: string;
+  ai_prose: Record<string, string>;
 };
 
 export type EvolutionNovelChapter = {
@@ -428,6 +429,18 @@ export function advanceEvolution(body: {
 
 export function resetEvolutionRun(projectId: string): Promise<{ok: boolean}> {
   return postJson("/lore-api/evolution/reset", {project_id: projectId});
+}
+
+export function generateEvolutionProseApi(body: {
+  project_id: string;
+  viewpoint_id?: string;
+  llm: {
+    base_url?: string;
+    api_key?: string;
+    model?: string;
+  };
+}): Promise<EvolutionView> {
+  return postJson("/lore-api/evolution/ai-prose", body);
 }
 
 export type LlmChatMessage = {

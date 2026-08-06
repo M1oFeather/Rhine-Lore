@@ -22,6 +22,7 @@ from rhine_lore.engine import (
     EvolutionStore,
     TurnResult,
     advance,
+    build_ai_prose_prompt,
     evolution_settings_from_dict,
     evolution_state_to_dict,
     render_novel,
@@ -573,6 +574,61 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
                 state, result = advance(state, choice_id=choice_id)
                 EVOLUTION_STORE.save(state)
                 self._send_json(200, _evolution_payload(state, result, viewpoint_id))
+                return
+            if self.command == "POST" and parsed_request.path == "/lore-api/evolution/ai-prose":
+                payload = self._read_json_body()
+                project_id = str(payload.get("project_id") or "").strip()
+                state = EVOLUTION_STORE.load(project_id)
+                if state is None:
+                    self._send_json(404, {"error": "演化尚未开始"})
+                    return
+                viewpoint_id = str(payload.get("viewpoint_id") or "").strip()
+                llm = payload.get("llm") or {}
+                api_key = str(llm.get("api_key") or "").strip()
+                if not api_key:
+                    self._send_json(400, {"error": "未配置 API Key"})
+                    return
+                messages = build_ai_prose_prompt(state, viewpoint_id)
+                chat_body = {
+                    "workspace_id": "story-workspace",
+                    "base_url": str(llm.get("base_url") or "").strip() or None,
+                    "api_key": api_key,
+                    "model": str(llm.get("model") or "").strip() or None,
+                    "messages": messages,
+                }
+                vault_base = VAULT_MANAGER.status()["base_url"]
+                try:
+                    target = _join_base_and_path(vault_base, "/api/llm/openai-compatible/chat")
+                    request = Request(
+                        target,
+                        data=json.dumps(chat_body, ensure_ascii=False).encode("utf-8"),
+                        headers={"Content-Type": "application/json"},
+                        method="POST",
+                    )
+                    with urlopen(request, timeout=60) as response:
+                        result = json.loads(response.read().decode("utf-8"))
+                except HTTPError as exc:
+                    detail = exc.read().decode("utf-8", errors="replace")[-300:]
+                    self._send_json(502, {"error": f"AI 生成失败：{detail or exc}"})
+                    return
+                except (URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+                    self._send_json(502, {"error": f"AI 生成失败：{exc}"})
+                    return
+                text = str(result.get("answer") or "").strip()
+                if not text:
+                    self._send_json(502, {"error": "AI 返回为空"})
+                    return
+                latest_turn = state.history[-1].turn if state.history else state.turn
+                prose_key = f"{latest_turn}:{viewpoint_id or (state.cast[0].id if state.cast else '')}"
+                state.ai_prose[prose_key] = text
+                min_turn = max(1, state.turn - 20)
+                state.ai_prose = {
+                    key: value
+                    for key, value in state.ai_prose.items()
+                    if int(key.split(":")[0]) >= min_turn
+                }
+                EVOLUTION_STORE.save(state)
+                self._send_json(200, _evolution_payload(state, viewpoint_id=viewpoint_id))
                 return
             if self.command == "POST" and parsed_request.path == "/lore-api/evolution/reset":
                 payload = self._read_json_body()
