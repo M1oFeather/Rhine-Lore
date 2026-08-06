@@ -10,6 +10,7 @@ import {
   type EvolutionCastMember,
   type EvolutionState,
   type EvolutionView,
+  type LlmChatMessage,
   type LoreItem,
   type StoryMap,
   type StoryMapNode,
@@ -30,6 +31,8 @@ import {
   getVaultWebStatus,
   health,
   installVaultWeb,
+  llmChat,
+  llmPing,
   listNodes,
   listProposals,
   listStaging,
@@ -139,6 +142,11 @@ const mapConnectMode = ref(false);
 const mapPendingNodeId = ref("");
 const mapZoom = ref(1);
 const mapDragging = ref<{id: string; dx: number; dy: number} | null>(null);
+const llmBaseUrl = ref(localStorage.getItem("rhine-lore-llm-base-url") || "https://api.deepseek.com/v1");
+const llmApiKey = ref(localStorage.getItem("rhine-lore-llm-api-key") || "");
+const llmModel = ref(localStorage.getItem("rhine-lore-llm-model") || "deepseek-chat");
+const aiProse = ref("");
+const aiProseBusy = ref(false);
 let evolutionTimer: number | undefined;
 let evolutionTurnRunning = false;
 
@@ -1769,6 +1777,124 @@ function acceptEvolutionIntoChapter(): void {
   activity.value = "novel";
 }
 
+function persistLlmConfig(): void {
+  localStorage.setItem("rhine-lore-llm-base-url", llmBaseUrl.value.trim());
+  localStorage.setItem("rhine-lore-llm-api-key", llmApiKey.value.trim());
+  localStorage.setItem("rhine-lore-llm-model", llmModel.value.trim());
+}
+
+function saveLlmConfig(): void {
+  persistLlmConfig();
+  markSaved("模型设置已保存");
+}
+
+function buildEvolutionProsePrompt(): LlmChatMessage[] {
+  const state = evolutionState.value;
+  if (!state) {
+    return [];
+  }
+  const viewpoint = state.cast.find((member) => member.id === evolutionViewpoint.value) ?? state.cast[0];
+  const viewpointName = viewpoint?.name ?? "主角";
+  const castLines = state.cast
+    .slice(0, 6)
+    .map(
+      (member) =>
+        `${member.name}（${member.role}${member.identity ? ` · ${member.identity}` : ""}）：欲望=${member.drive || "未设定"}，恐惧=${member.fear || "未设定"}，所在地=${member.location || "未知"}`,
+    )
+    .join("\n");
+  const latestEvents = state.history
+    .slice(-5)
+    .map((event) => `[第${event.turn}回合·${event.kind}] ${event.title}：${event.summary}`)
+    .join("\n");
+  const system =
+    "你是小说续写引擎。只依据给定的事件与设定写作，不要发明未发生的情节、未出场的人物或超出已知世界的设定。用第三人称有限视角，侧重心理描写，语言平实细腻。";
+  const user = [
+    `项目：《${state.project_name}》`,
+    `类型：${state.genre}`,
+    `概要：${state.project_name}（在演化沙盘中自动推进的故事）`,
+    `世界观：${state.world.locations.join("、")}；已知事实：${state.world.facts.slice(0, 5).join("；") || "暂无"}`,
+    `角色：\n${castLines}`,
+    `最近发生的事件：\n${latestEvents || "还没有事件"}`,
+    "",
+    `请以「${viewpointName}」的有限视角，把最近发生的事写成一段 300-500 字的正文。只能写该角色亲身经历或亲眼看到的事，其它角色的秘密与私事一律不写。`,
+  ].join("\n\n");
+  return [
+    {role: "system", content: system},
+    {role: "user", content: user},
+  ];
+}
+
+async function generateEvolutionProse(): Promise<void> {
+  const state = evolutionState.value;
+  if (!state || aiProseBusy.value) {
+    return;
+  }
+  persistLlmConfig();
+  aiProseBusy.value = true;
+  const result = await perform("AI 扩写", () =>
+    llmChat({
+      base_url: llmBaseUrl.value.trim() || undefined,
+      api_key: llmApiKey.value.trim() || undefined,
+      model: llmModel.value.trim() || undefined,
+      messages: buildEvolutionProsePrompt(),
+    }),
+  );
+  aiProseBusy.value = false;
+  if (!result) {
+    return;
+  }
+  const text = String(result.answer ?? result.content ?? "").trim();
+  if (text) {
+    aiProse.value = text;
+    markSaved("AI 扩写完成，可编辑后接收进正文");
+  } else {
+    runState.value = {error: "AI 返回为空，请检查模型配置"};
+  }
+}
+
+function appendAIProseToChapter(): void {
+  const text = aiProse.value.trim();
+  const state = evolutionState.value;
+  if (!text || !state) {
+    return;
+  }
+  let chapter = activeChapter.value;
+  if (!chapter) {
+    addChapter();
+    chapter = activeChapter.value;
+  }
+  if (!chapter) {
+    return;
+  }
+  chapter.content = [
+    chapter.content.trim(),
+    `## AI 扩写 · 第 ${state.turn} 回合`,
+    "",
+    text,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+  saveProjects();
+  markSaved("AI 扩写已追加进正文");
+  readerMode.value = "edit";
+  activity.value = "novel";
+}
+
+async function testLlmConnection(): Promise<void> {
+  persistLlmConfig();
+  const result = await perform("测试模型连接", () =>
+    llmPing({
+      base_url: llmBaseUrl.value.trim() || undefined,
+      api_key: llmApiKey.value.trim() || undefined,
+      model: llmModel.value.trim() || undefined,
+      message: "你好",
+    }),
+  );
+  if (result?.answer) {
+    markSaved(`连接成功：${String(result.model || llmModel.value)}`);
+  }
+}
+
 onUnmounted(() => {
   if (evolutionTimer) {
     window.clearInterval(evolutionTimer);
@@ -2725,7 +2851,10 @@ onUnmounted(() => {
               <el-card shadow="never" class="evolution-control-card">
                 <template #header>
                   <div class="card-header">
-                    <span>演化控制台 · 第 {{ evolutionState.turn }} 回合</span>
+                    <span>
+                      演化控制台 · 第 {{ evolutionState.turn }} 回合
+                      <small class="evolution-seed">种子 {{ evolutionState.seed }}</small>
+                    </span>
                     <el-space wrap>
                       <el-radio-group v-model="evolutionTab" size="small">
                         <el-radio-button value="sandbox">沙盘</el-radio-button>
@@ -2802,7 +2931,7 @@ onUnmounted(() => {
                   </div>
                   <div v-for="event in evolutionHistory" :key="event.id" class="evolution-event">
                     <div class="evolution-event-head">
-                      <span class="evolution-kind">{{ event.kind }}</span>
+                      <span class="evolution-kind" :class="`kind-${event.kind}`">{{ event.kind }}</span>
                       <strong>{{ event.title }}</strong>
                       <small>第 {{ event.turn }} 回合</small>
                     </div>
@@ -2908,6 +3037,31 @@ onUnmounted(() => {
                   你只能看到 {{ evolutionView?.novel.viewpoint_name || '主角' }} 亲眼所见或亲身经历的事。
                   沙盘里还有 <strong>{{ evolutionView?.novel.hidden_events ?? 0 }}</strong> 件未被看见的事件。
                 </p>
+                <div class="ai-prose-panel">
+                  <div class="ai-prose-actions">
+                    <el-button
+                      size="small"
+                      type="primary"
+                      :loading="aiProseBusy || busyAction === 'AI 扩写'"
+                      @click="generateEvolutionProse"
+                    >
+                      AI 扩写当前回合
+                    </el-button>
+                    <el-button size="small" :disabled="!aiProse.trim()" @click="appendAIProseToChapter">
+                      追加进正文
+                    </el-button>
+                    <el-button size="small" :disabled="!aiProse" @click="aiProse = ''">清空</el-button>
+                    <small>在设置 → 高级设置中配置模型；未配置时使用本地模板正文</small>
+                  </div>
+                  <el-input
+                    v-if="aiProse"
+                    v-model="aiProse"
+                    type="textarea"
+                    :rows="7"
+                    class="ai-prose-editor"
+                    placeholder="AI 生成的正文草稿，可在这里修改"
+                  />
+                </div>
                 <div class="evolution-novel-reader" :style="{fontSize: `${readerFontSize}px`}">
                   <template v-if="(evolutionView?.novel.chapters ?? []).length > 0">
                     <div v-for="chapter in evolutionView?.novel.chapters" :key="chapter.turn" class="novel-turn-chapter">
@@ -3056,6 +3210,48 @@ onUnmounted(() => {
                       </el-form>
                     </div>
                   </div>
+                </el-card>
+
+                <el-card shadow="never" class="llm-config-card">
+                  <template #header>
+                    <div class="card-header">
+                      <span>AI 正文扩写（OpenAI 兼容）</span>
+                      <el-space wrap>
+                        <el-button size="small" :loading="busyAction === '测试模型连接'" @click="testLlmConnection">
+                          测试连接
+                        </el-button>
+                        <el-button size="small" type="primary" @click="saveLlmConfig">保存设置</el-button>
+                      </el-space>
+                    </div>
+                  </template>
+                  <el-form label-position="top" class="vault-deploy-form">
+                    <el-row :gutter="10">
+                      <el-col :xs="24" :sm="8">
+                        <el-form-item label="API 地址">
+                          <el-input v-model="llmBaseUrl" placeholder="https://api.deepseek.com/v1" />
+                        </el-form-item>
+                      </el-col>
+                      <el-col :xs="24" :sm="8">
+                        <el-form-item label="模型名称">
+                          <el-input v-model="llmModel" placeholder="deepseek-chat" />
+                        </el-form-item>
+                      </el-col>
+                      <el-col :xs="24" :sm="8">
+                        <el-form-item label="API Key">
+                          <el-input
+                            v-model="llmApiKey"
+                            type="password"
+                            show-password
+                            placeholder="仅保存在本机浏览器"
+                          />
+                        </el-form-item>
+                      </el-col>
+                    </el-row>
+                    <p class="knowledge-flow-note">
+                      生成请求经本机 Rhine-Vault 转发；密钥只存在浏览器 localStorage，不写入磁盘，也不会发送给资料库以外的地方。
+                      演化引擎本身仍离线可用，配置模型后只是把“场景简报”扩写成更完整的正文。
+                    </p>
+                  </el-form>
                 </el-card>
 
                 <el-row :gutter="14">

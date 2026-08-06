@@ -166,6 +166,14 @@ Open the `演化` activity for any story project to create an evolution run:
   expansion through the Vault OpenAI-compatible endpoint is a future switch;
   conversation drafting still uses the offline FakeLLM by default.
 
+### AI 正文扩写
+
+设置 → 高级设置 → AI 正文扩写（OpenAI 兼容）中可以填写 API 地址、模型名称
+和 API Key（仅保存在浏览器 localStorage，经本机 Vault 转发）。配置后，演化
+页“小说”视图的“AI 扩写当前回合”会把最近事件和角色/世界观信息组成场景简报，
+生成 300-500 字的有限视角正文；结果可编辑并一键追加进章节。未配置时演化
+仍然完全可用，正文使用本地模板。
+
 ## Frontend
 
 Rhine-Lore follows the Rhine-Vault frontend architecture:

@@ -430,3 +430,26 @@ export function resetEvolutionRun(projectId: string): Promise<{ok: boolean}> {
   return postJson("/lore-api/evolution/reset", {project_id: projectId});
 }
 
+export type LlmChatMessage = {
+  role: string;
+  content: string;
+};
+
+export function llmPing(body: {
+  base_url?: string;
+  api_key?: string;
+  model?: string;
+  message?: string;
+}): Promise<ApiRecord> {
+  return postJson("/api/llm/openai-compatible/ping", {workspace_id: workspaceId, ...body});
+}
+
+export function llmChat(body: {
+  base_url?: string;
+  api_key?: string;
+  model?: string;
+  messages: LlmChatMessage[];
+}): Promise<ApiRecord> {
+  return postJson("/api/llm/openai-compatible/chat", {workspace_id: workspaceId, ...body});
+}
+

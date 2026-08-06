@@ -2784,3 +2784,102 @@ body {
   }
 }
 
+/* Evolution UI polish and AI prose */
+.evolution-seed {
+  margin-left: 8px;
+  font-size: 12px;
+  font-weight: 400;
+  color: #5b6b7c;
+}
+
+.evolution-kind.kind-相遇 {
+  background: #e3f0fd;
+  color: #1f6feb;
+}
+
+.evolution-kind.kind-冲突 {
+  background: #fde8e8;
+  color: #c03030;
+}
+
+.evolution-kind.kind-秘密 {
+  background: #f0e7fb;
+  color: #7a3fc0;
+}
+
+.evolution-kind.kind-失去 {
+  background: #edf0f3;
+  color: #5b6b7c;
+}
+
+.evolution-kind.kind-背叛 {
+  background: #fbe4ee;
+  color: #a13563;
+}
+
+.evolution-kind.kind-结盟 {
+  background: #e5f7ec;
+  color: #2e8b57;
+}
+
+.evolution-kind.kind-发现 {
+  background: #e0f7f5;
+  color: #0f7b75;
+}
+
+.evolution-kind.kind-威胁 {
+  background: #fdf0df;
+  color: #c0691d;
+}
+
+.evolution-kind.kind-回归 {
+  background: #e4f0ef;
+  color: #3b7772;
+}
+
+.evolution-kind.kind-平静 {
+  background: #f0f4f8;
+  color: #64748b;
+}
+
+.ai-prose-panel {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border: 1px solid #c9d7e8;
+  border-radius: 10px;
+  background: #f7faff;
+}
+
+.ai-prose-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.ai-prose-actions small {
+  color: #5b6b7c;
+}
+
+.llm-config-card {
+  margin-bottom: 14px;
+}
+
+@media (max-width: 720px) {
+  .ai-prose-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ai-prose-actions .el-button {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .ai-prose-actions small {
+    grid-column: 1 / -1;
+  }
+}
+
