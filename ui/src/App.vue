@@ -1,0 +1,2092 @@
+<script setup lang="ts">
+import { computed, onMounted, ref } from "vue";
+
+import {
+  type ApiRecord,
+  type Chapter,
+  type CreativeMessage,
+  type LoreItem,
+  type StoryProject,
+  type VaultRuntimeStatus,
+  type VaultWebStatus,
+  type WorkspaceRecord,
+  approveStaging,
+  buildContextBundle,
+  connectVaultRuntime,
+  createManualProposal,
+  fakeCreativeAnswer,
+  generateKnowledgeDocument,
+  getVaultRuntimeStatus,
+  getVaultWebStatus,
+  health,
+  installVaultWeb,
+  listNodes,
+  listProposals,
+  listStaging,
+  listWorkspaces,
+  registerWorkspace,
+  setWorkspaceId,
+  stageProposal,
+  startVaultRuntime,
+  stopVaultRuntime,
+  workspaceId,
+} from "./api";
+import GameIcon from "./components/GameIcon.vue";
+import type { GameIconName } from "./icons/gameIconPack";
+
+type Activity = "studio" | "story" | "world" | "characters" | "chat" | "novel" | "context" | "settings";
+type WorkMode = "write" | "advanced";
+type BackendStatus = "checking" | "online" | "offline";
+type CreateDestination = "novel" | "chat";
+
+const projectKey = "rhine-lore-projects";
+const activeProjectKey = "rhine-lore-active-project";
+const activeChapterKey = "rhine-lore-active-chapter";
+const primaryActivityIds: Activity[] = ["studio", "chat", "novel", "context"];
+const storySetupActivities: Activity[] = ["story", "world", "characters"];
+const genreOptions = ["奇幻", "科幻", "悬疑", "都市", "历史", "爱情", "轻小说", "未分类"];
+
+const activities: {id: Activity; label: string; icon: GameIconName; description: string}[] = [
+  {id: "studio", label: "工作台", icon: "book", description: "选择故事和开始写作"},
+  {id: "story", label: "故事档案", icon: "book", description: "名称、类型和概要"},
+  {id: "world", label: "世界观", icon: "nodes", description: "规则、地点和历史"},
+  {id: "characters", label: "角色", icon: "nodes", description: "人物、动机和关系"},
+  {id: "chat", label: "对话创作", icon: "nodes", description: "聊剧情，生成草稿"},
+  {id: "novel", label: "正文", icon: "book", description: "阅读和编辑章节"},
+  {id: "context", label: "资料库", icon: "search", description: "查找设定和参考资料"},
+  {id: "settings", label: "设置", icon: "settings", description: "连接、高级和维护"},
+];
+
+const activity = ref<Activity>("studio");
+const sidebarCollapsed = ref(false);
+const notice = ref("就绪");
+const busyAction = ref("");
+const runState = ref<Record<string, unknown> | null>(null);
+const workMode = ref<WorkMode>("write");
+const backendStatus = ref<BackendStatus>("checking");
+const vaultStatus = ref<VaultRuntimeStatus | null>(null);
+const vaultWebStatus = ref<VaultWebStatus | null>(null);
+const vaultPath = ref(localStorage.getItem("rhine-lore-vault-path") || "");
+const vaultHost = ref(localStorage.getItem("rhine-lore-vault-host") || "127.0.0.1");
+const vaultPort = ref(Number(localStorage.getItem("rhine-lore-vault-port") || "8765"));
+const vaultDatabasePath = ref(localStorage.getItem("rhine-lore-vault-database-path") || "");
+const vaultPythonPath = ref(localStorage.getItem("rhine-lore-vault-python-path") || "");
+const externalVaultUrl = ref(localStorage.getItem("rhine-lore-external-vault-url") || "");
+const activeProjectId = ref(localStorage.getItem(activeProjectKey) || "");
+const activeChapterId = ref(localStorage.getItem(activeChapterKey) || "");
+const projectImportInput = ref<HTMLInputElement | null>(null);
+const createDialogVisible = ref(false);
+const newProjectName = ref("");
+const newProjectGenre = ref("未分类");
+const newProjectIdea = ref("");
+const projects = ref<StoryProject[]>(loadProjects());
+const workspaces = ref<WorkspaceRecord[]>([]);
+const selectedWorkspaceId = ref(workspaceId);
+const newWorkspaceId = ref("story-workspace");
+const newWorkspaceDisplayName = ref("Story Workspace");
+const contextQuery = ref("story rules and character constraints");
+const manualKnowledgeTitle = ref("");
+const manualKnowledgeContent = ref("");
+const manualKnowledgeTags = ref("lore, draft");
+const profileId = ref("semantic-knowledge-base");
+const resultLimit = ref(8);
+const nodes = ref<ApiRecord[]>([]);
+const selectedKnowledgeIds = ref<string[]>([]);
+const proposals = ref<ApiRecord[]>([]);
+const stagingEntries = ref<ApiRecord[]>([]);
+const chatInput = ref("");
+const readerMode = ref<"read" | "edit">("read");
+const readerFontSize = ref(18);
+const settingsTab = ref("basic");
+const saveNotice = ref("");
+const lastSavedAt = ref("");
+let saveNoticeTimer: number | undefined;
+
+const promptStarters = [
+  "帮我续写当前章节，保持悬念和节奏。",
+  "整理这一章里值得保存的设定。",
+  "帮我设计下一场冲突，但不要直接改正文。",
+  "检查角色动机是否前后一致。",
+  "结合选中的资料，帮我续写下一段。",
+];
+
+if (!projects.value.some((project) => project.id === activeProjectId.value) && projects.value.length > 0) {
+  activeProjectId.value = projects.value[0].id;
+}
+const initialProject = projects.value.find((project) => project.id === activeProjectId.value);
+if (initialProject && !initialProject.chapters.some((chapter) => chapter.id === activeChapterId.value)) {
+  activeChapterId.value = initialProject.chapters[0]?.id ?? "";
+}
+
+const activeTabMeta = computed(() => {
+  return activities.find((item) => item.id === activity.value) ?? activities[0];
+});
+
+const activeProject = computed(() => {
+  return projects.value.find((project) => project.id === activeProjectId.value) ?? projects.value[0];
+});
+
+const activeChapter = computed(() => {
+  const project = activeProject.value;
+  if (!project) {
+    return null;
+  }
+  return project.chapters.find((chapter) => chapter.id === activeChapterId.value) ?? project.chapters[0] ?? null;
+});
+
+const stats = computed(() => [
+  {label: "设定", value: activeProject.value?.world.length ?? 0, tone: "blue"},
+  {label: "角色", value: activeProject.value?.characters.length ?? 0, tone: "green"},
+  {label: "章节", value: activeProject.value?.chapters.length ?? 0, tone: "amber"},
+  {label: "资料", value: nodes.value.length, tone: "gray"},
+]);
+
+const knowledgePipelineStats = computed(() => [
+  {label: "资料草稿", value: proposals.value.length, tone: "amber"},
+  {label: "待入库", value: stagingEntries.value.length, tone: "blue"},
+  {label: "已入库", value: nodes.value.length, tone: "green"},
+]);
+
+const knowledgePipelineHint = computed(() => {
+  if (proposals.value.length > 0) {
+    return `${proposals.value.length} 条资料草稿等待整理`;
+  }
+  if (stagingEntries.value.length > 0) {
+    return `${stagingEntries.value.length} 条待确认资料可以入库`;
+  }
+  if (nodes.value.length > 0) {
+    return `已有 ${nodes.value.length} 条资料可用于对话参考`;
+  }
+  return "还没有资料，先从章节或对话保存一条草稿";
+});
+
+const chatReferenceNodes = computed(() => nodes.value.slice(0, 10));
+
+const selectedKnowledgeNodes = computed(() => {
+  const ids = new Set(selectedKnowledgeIds.value);
+  return nodes.value.filter((node) => ids.has(recordId(node)));
+});
+
+const chatContextLabel = computed(() => {
+  const chapterText = activeChapter.value ? `《${activeChapter.value.title}》` : "未选择章节";
+  const referenceText = selectedKnowledgeNodes.value.length > 0 ? `${selectedKnowledgeNodes.value.length} 条资料` : "未选择资料";
+  return `${chapterText} · ${referenceText}`;
+});
+
+const backendStatusLabel = computed(() => {
+  if (backendStatus.value === "online") {
+    return "资料库可用";
+  }
+  if (backendStatus.value === "offline") {
+    return "资料库离线";
+  }
+  return "正在检查";
+});
+
+const vaultRuntimeLabel = computed(() => {
+  const manager = vaultStatus.value?.manager;
+  if (manager?.running) {
+    return `由 Rhine-Lore 启动 · PID ${manager.pid}`;
+  }
+  if (vaultStatus.value?.connected) {
+    return "已连接到外部 Rhine-Vault";
+  }
+  return "尚未连接资料库后端";
+});
+
+const vaultModeLabel = computed(() => {
+  return vaultStatus.value?.manager.mode === "external" ? "外部 Vault" : "默认 Core";
+});
+
+const vaultWebLabel = computed(() => {
+  if (vaultWebStatus.value?.installed) {
+    return "Vault Web 已准备好";
+  }
+  if (vaultWebStatus.value?.installable) {
+    return "Vault Web 可安装";
+  }
+  return "Vault Web 未发现";
+});
+
+const vaultWebUrl = computed(() => {
+  return vaultWebStatus.value?.url || vaultStatus.value?.manager.base_url || "http://127.0.0.1:8765/";
+});
+
+const backendStatusTone = computed(() => {
+  if (backendStatus.value === "online") {
+    return "online";
+  }
+  if (backendStatus.value === "offline") {
+    return "offline";
+  }
+  return "checking";
+});
+
+const activeChapterParagraphs = computed(() => {
+  const content = activeChapter.value?.content ?? "";
+  return content
+    .split(/\n{2,}/)
+    .map((paragraph) => paragraph.trim())
+    .filter(Boolean);
+});
+
+const activeChapterIndex = computed(() => {
+  const chapterId = activeChapter.value?.id;
+  if (!chapterId) {
+    return -1;
+  }
+  return activeProject.value.chapters.findIndex((chapter) => chapter.id === chapterId);
+});
+
+const chapterCharacterCount = computed(() => activeChapter.value?.content.trim().length ?? 0);
+
+const projectCharacterCount = computed(() => {
+  return activeProject.value.chapters.reduce((total, chapter) => total + chapter.content.trim().length, 0);
+});
+
+const latestChapter = computed(() => {
+  const chapters = activeProject.value.chapters;
+  return chapters[chapters.length - 1] ?? null;
+});
+
+const hasStoryIdentity = computed(() => {
+  const name = activeProject.value.name.trim();
+  return Boolean(name && !["我的故事", "新的故事", "Untitled Lore", "New Lore Project"].includes(name));
+});
+
+const hasStartedCreating = computed(() => {
+  return projectCharacterCount.value > 0 || activeProject.value.chat.length > 0;
+});
+
+const projectSetupSteps = computed(() => [
+  {label: "给故事起个名字", complete: hasStoryIdentity.value},
+  {label: "准备第一章", complete: activeProject.value.chapters.length > 0},
+  {label: "写下第一段或聊聊想法", complete: hasStartedCreating.value},
+]);
+
+const needsProjectGuidance = computed(() => !projectSetupSteps.value.every((step) => step.complete));
+
+const nextStepLabel = computed(() => {
+  if (!hasStoryIdentity.value) {
+    return "补充故事信息";
+  }
+  if (activeProject.value.chapters.length === 0) {
+    return "创建第一章";
+  }
+  return "开始创作";
+});
+
+const chapterNavigationLabel = computed(() => {
+  const total = activeProject.value.chapters.length;
+  if (activeChapterIndex.value < 0 || total === 0) {
+    return "暂无章节";
+  }
+  return `${activeChapterIndex.value + 1} / ${total}`;
+});
+
+onMounted(async () => {
+  await perform("初始化", async () => {
+    await Promise.allSettled([updateBackendStatus(), refreshWorkspaces(), refreshNodes(), refreshReview()]);
+    return {ready: true};
+  }, {collapseOutput: true});
+});
+
+function loadProjects(): StoryProject[] {
+  const raw = localStorage.getItem(projectKey);
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw) as Partial<StoryProject>[];
+      return parsed.map(normalizeProject);
+    } catch {
+      localStorage.removeItem(projectKey);
+    }
+  }
+  return [
+    {
+      id: `project-${Date.now()}`,
+      name: "我的故事",
+      genre: "未分类",
+      summary: "",
+      world: [],
+      characters: [],
+      chapters: [],
+      chat: [],
+    },
+  ];
+}
+
+function normalizeProject(project: Partial<StoryProject>): StoryProject {
+  const chat = (project.chat ?? []).map((message) => {
+    if (
+      message.role === "assistant" &&
+      typeof message.content === "string" &&
+      message.content.startsWith("FakeLLM answer for:")
+    ) {
+      return {
+        ...message,
+        content: "这条旧的离线测试回复已整理。你可以继续发起新的创作请求，新的回复会以可编辑草稿呈现。",
+      };
+    }
+    return message;
+  });
+  return {
+    id: project.id || `project-${Date.now()}`,
+    name: project.name || "未命名故事",
+    genre: project.genre || "未分类",
+    summary: project.summary || "",
+    world: project.world ?? [],
+    characters: project.characters ?? [],
+    chapters: project.chapters ?? [],
+    chat,
+  };
+}
+
+function saveProjects(): void {
+  localStorage.setItem(projectKey, JSON.stringify(projects.value));
+  localStorage.setItem(activeProjectKey, activeProjectId.value);
+  localStorage.setItem(activeChapterKey, activeChapterId.value);
+  lastSavedAt.value = new Date().toLocaleTimeString("zh-CN", {hour: "2-digit", minute: "2-digit"});
+}
+
+function markSaved(message: string): void {
+  saveNotice.value = message;
+  lastSavedAt.value = new Date().toLocaleTimeString("zh-CN", {hour: "2-digit", minute: "2-digit"});
+  if (saveNoticeTimer) {
+    window.clearTimeout(saveNoticeTimer);
+  }
+  saveNoticeTimer = window.setTimeout(() => {
+    saveNotice.value = "";
+  }, 4200);
+}
+
+function uid(prefix: string): string {
+  return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+}
+
+async function perform<T>(
+  label: string,
+  task: () => Promise<T>,
+  options: {collapseOutput?: boolean} = {},
+): Promise<T | null> {
+  busyAction.value = label;
+  notice.value = `${label}...`;
+  try {
+    const result = await task();
+    if (result !== undefined) {
+      runState.value = result as Record<string, unknown>;
+    }
+    notice.value = `${label}完成`;
+    return result;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    runState.value = {error: message, action: label};
+    notice.value = `${label}失败`;
+    return null;
+  } finally {
+    busyAction.value = "";
+  }
+}
+
+async function openActivity(next: Activity): Promise<void> {
+  activity.value = next;
+  workMode.value = next === "settings" ? "advanced" : "write";
+  if (next === "context") {
+    await Promise.allSettled([refreshNodes(), refreshReview()]);
+  }
+  if (next === "settings") {
+    await Promise.allSettled([refreshWorkspaces(), refreshReview()]);
+  }
+}
+
+async function openKnowledgeIntake(): Promise<void> {
+  await openActivity("context");
+}
+
+function createProject(): void {
+  newProjectName.value = "";
+  newProjectGenre.value = "未分类";
+  newProjectIdea.value = "";
+  createDialogVisible.value = true;
+}
+
+function confirmCreateProject(destination: CreateDestination): void {
+  const projectName = newProjectName.value.trim() || "我的故事";
+  const project: StoryProject = {
+    id: uid("project"),
+    name: projectName,
+    genre: newProjectGenre.value.trim() || "未分类",
+    summary: newProjectIdea.value.trim(),
+    world: [],
+    characters: [],
+    chapters: [{id: uid("chapter"), title: "第一章", content: ""}],
+    chat: [],
+  };
+  projects.value.push(project);
+  activeProjectId.value = project.id;
+  activeChapterId.value = project.chapters[0].id;
+  createDialogVisible.value = false;
+  saveProjects();
+  markSaved("故事已创建");
+  if (destination === "novel") {
+    readerMode.value = "edit";
+  }
+  activity.value = destination;
+}
+
+function selectProject(projectId: string, next: Activity = "studio"): void {
+  activeProjectId.value = projectId;
+  activity.value = next;
+  activeChapterId.value = activeProject.value.chapters[0]?.id ?? "";
+  saveProjects();
+}
+
+function handleProjectChange(): void {
+  activeChapterId.value = activeProject.value.chapters[0]?.id ?? "";
+  saveProjects();
+}
+
+function selectChapter(chapterId: string): void {
+  activeChapterId.value = chapterId;
+  localStorage.setItem(activeChapterKey, chapterId);
+}
+
+function duplicateProject(): void {
+  const source = activeProject.value;
+  const copy = normalizeProject(JSON.parse(JSON.stringify(source)) as Partial<StoryProject>);
+  copy.id = uid("project");
+  copy.name = `${source.name || "未命名故事"} 副本`;
+  copy.chapters = copy.chapters.map((chapter) => ({...chapter, id: uid("chapter")}));
+  copy.world = copy.world.map((item) => ({...item, id: uid("world")}));
+  copy.characters = copy.characters.map((item) => ({...item, id: uid("characters")}));
+  copy.chat = copy.chat.map((message) => ({...message, id: uid("message")}));
+  projects.value.push(copy);
+  activeProjectId.value = copy.id;
+  activeChapterId.value = copy.chapters[0]?.id ?? "";
+  saveProjects();
+  markSaved("故事已复制");
+}
+
+function exportActiveProject(): void {
+  const payload = JSON.stringify(activeProject.value, null, 2);
+  const blob = new Blob([payload], {type: "application/json;charset=utf-8"});
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  const safeName = (activeProject.value.name || "rhine-lore-project").replace(/[\\/:*?"<>|]+/g, "-");
+  link.href = url;
+  link.download = `${safeName}.json`;
+  link.click();
+  URL.revokeObjectURL(url);
+  markSaved("故事已导出");
+}
+
+function requestProjectImport(): void {
+  projectImportInput.value?.click();
+}
+
+async function importProjectFile(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file) {
+    return;
+  }
+  try {
+    const raw = await file.text();
+    const imported = normalizeProject(JSON.parse(raw) as Partial<StoryProject>);
+    if (projects.value.some((project) => project.id === imported.id)) {
+      imported.id = uid("project");
+      imported.name = `${imported.name || "未命名故事"} 导入`;
+    }
+    projects.value.push(imported);
+    activeProjectId.value = imported.id;
+    activeChapterId.value = imported.chapters[0]?.id ?? "";
+    saveProjects();
+    markSaved("故事已导入");
+  } catch (error) {
+    runState.value = {error: error instanceof Error ? error.message : String(error)};
+  } finally {
+    input.value = "";
+  }
+}
+
+function switchWorkMode(mode: WorkMode): void {
+  workMode.value = mode;
+  activity.value = mode === "advanced" ? "settings" : "studio";
+}
+
+function isPrimaryActivity(next: Activity): boolean {
+  return primaryActivityIds.includes(next);
+}
+
+function isStudioChildActivity(next: Activity): boolean {
+  return next === "studio" && storySetupActivities.includes(activity.value);
+}
+
+function startWriting(): void {
+  if (activeProject.value.chapters.length === 0) {
+    addChapter();
+  } else if (latestChapter.value) {
+    activeChapterId.value = latestChapter.value.id;
+  }
+  readerMode.value = "edit";
+  activity.value = "novel";
+}
+
+function continueSetup(): void {
+  if (!hasStoryIdentity.value) {
+    activity.value = "story";
+    return;
+  }
+  if (activeProject.value.chapters.length === 0) {
+    startWriting();
+    return;
+  }
+  activity.value = "chat";
+}
+
+function addLoreItem(kind: "world" | "characters"): void {
+  const project = activeProject.value;
+  const item: LoreItem = {
+    id: uid(kind),
+    title: kind === "world" ? "新设定" : "新角色",
+    content: "",
+  };
+  project[kind].push(item);
+  saveProjects();
+}
+
+function addChapter(): void {
+  const project = activeProject.value;
+  const chapter: Chapter = {
+    id: uid("chapter"),
+    title: `第${project.chapters.length + 1}章`,
+    content: "",
+  };
+  project.chapters.push(chapter);
+  activeChapterId.value = chapter.id;
+  saveProjects();
+}
+
+function appendChat(role: CreativeMessage["role"], content: string): CreativeMessage {
+  const message: CreativeMessage = {
+    id: uid("message"),
+    role,
+    content,
+    created_at: new Date().toISOString(),
+  };
+  activeProject.value.chat.push(message);
+  saveProjects();
+  return message;
+}
+
+function buildCreativePrompt(userText: string): string {
+  const chapter = activeChapter.value;
+  const world = activeProject.value.world
+    .slice(0, 5)
+    .map((item) => `${item.title}: ${item.content}`)
+    .join("\n");
+  const characters = activeProject.value.characters
+    .slice(0, 5)
+    .map((item) => `${item.title}: ${item.content}`)
+    .join("\n");
+  const selectedReferences = selectedKnowledgeNodes.value
+    .slice(0, 6)
+    .map((item) => `${recordTitle(item)}: ${String(item.content ?? item.summary ?? "").slice(0, 700)}`)
+    .join("\n");
+  return [
+    `项目：${activeProject.value.name}`,
+    `类型：${activeProject.value.genre}`,
+    `概要：${activeProject.value.summary}`,
+    world ? `世界观：\n${world}` : "",
+    characters ? `角色：\n${characters}` : "",
+    selectedReferences ? `选中的资料库参考：\n${selectedReferences}` : "",
+    chapter ? `当前章节：${chapter.title}\n${chapter.content.slice(0, 1200)}` : "",
+    `创作请求：${userText}`,
+  ].filter(Boolean).join("\n\n");
+}
+
+function extractAssistantText(payload: ApiRecord, fallback: string): string {
+  const candidates = [
+    payload.answer,
+    payload.content,
+    payload.text,
+    payload.message,
+    payload.response,
+  ];
+  const found = candidates.find((value) => typeof value === "string" && value.trim());
+  if (found) {
+    const text = String(found);
+    if (text.startsWith("FakeLLM answer for:")) {
+      return fallback;
+    }
+    return text;
+  }
+  return fallback;
+}
+
+function localCreativeDraft(userText: string): string {
+  const chapter = activeChapter.value;
+  const chapterTitle = chapter?.title ?? "新章节";
+  return [
+    `《${chapterTitle}》续写草稿`,
+    "",
+    "雨声停得太突然，走廊里只剩下通风管道低低的回响。",
+    "",
+    "“你也听见了？”她没有回头，指尖却已经按在记录本的锁扣上。",
+    "",
+    "门外的人停在半明半暗的灯下，声音比脚步更轻：“我听见的不是脚步，是有人在念你的名字。”",
+    "",
+    "她终于转身。那人手里没有武器，只有一张被雨水泡皱的旧照片。照片背面写着一行字：不要相信今晚醒来的人。",
+    "",
+    `本轮请求：${userText}`,
+  ].join("\n");
+}
+
+async function sendCreativeMessage(): Promise<void> {
+  const text = chatInput.value.trim();
+  if (!text) {
+    return;
+  }
+  appendChat("user", text);
+  chatInput.value = "";
+  const prompt = buildCreativePrompt(text);
+  const fallback = localCreativeDraft(text);
+  const result = await perform("对话创作", () =>
+    fakeCreativeAnswer({
+      query: prompt,
+      profile_id: profileId.value,
+      result_limit: resultLimit.value,
+      tags: ["lore"],
+    }),
+  );
+  appendChat("assistant", result ? extractAssistantText(result, fallback) : fallback);
+}
+
+function insertMessageIntoChapter(message: CreativeMessage): void {
+  let chapter = activeChapter.value;
+  if (!chapter) {
+    addChapter();
+    chapter = activeChapter.value;
+  }
+  if (!chapter) {
+    return;
+  }
+  chapter.content = [chapter.content.trim(), message.content.trim()].filter(Boolean).join("\n\n");
+  saveProjects();
+  markSaved("已插入正文");
+  readerMode.value = "edit";
+  activity.value = "novel";
+}
+
+function clearProjectChat(): void {
+  activeProject.value.chat = [];
+  saveProjects();
+}
+
+function usePromptStarter(text: string): void {
+  chatInput.value = text;
+}
+
+function recordId(record: ApiRecord): string {
+  return String(record.node_id ?? record.id ?? record.title ?? record.proposal_id ?? record.entry_id ?? "");
+}
+
+function recordTitle(record: ApiRecord): string {
+  return String(record.title ?? record.node_id ?? record.id ?? "未命名资料");
+}
+
+function recordPreview(record: ApiRecord, length = 96): string {
+  return preview(record.content ?? record.summary ?? record.text ?? record.markdown ?? "", length);
+}
+
+function draftPreview(record: ApiRecord, length = 96): string {
+  const proposedNodes = Array.isArray(record.proposed_nodes) ? record.proposed_nodes : [];
+  const firstNode = proposedNodes[0] as ApiRecord | undefined;
+  return recordPreview(firstNode ?? record, length) || "暂无预览";
+}
+
+function isKnowledgeSelected(record: ApiRecord): boolean {
+  return selectedKnowledgeIds.value.includes(recordId(record));
+}
+
+function toggleKnowledgeReference(record: ApiRecord): void {
+  const id = recordId(record);
+  if (!id) {
+    return;
+  }
+  if (selectedKnowledgeIds.value.includes(id)) {
+    selectedKnowledgeIds.value = selectedKnowledgeIds.value.filter((item) => item !== id);
+    return;
+  }
+  selectedKnowledgeIds.value = [...selectedKnowledgeIds.value, id].slice(-6);
+}
+
+function addKnowledgeToChat(record: ApiRecord): void {
+  const id = recordId(record);
+  if (id && !selectedKnowledgeIds.value.includes(id)) {
+    selectedKnowledgeIds.value = [...selectedKnowledgeIds.value, id].slice(-6);
+  }
+  activity.value = "chat";
+  markSaved("资料已加入对话参考");
+}
+
+function removeKnowledgeReference(record: ApiRecord): void {
+  const id = recordId(record);
+  selectedKnowledgeIds.value = selectedKnowledgeIds.value.filter((item) => item !== id);
+}
+
+async function refreshChatReferences(): Promise<void> {
+  await refreshNodes();
+  markSaved("资料列表已刷新");
+}
+
+async function saveMessageAsKnowledge(message: CreativeMessage): Promise<void> {
+  const result = await perform("保存资料", () =>
+    createManualProposal({
+      title: `创作资料：${activeProject.value.name}`,
+      node_type: "Note",
+      content: [
+        `# ${activeProject.value.name} 创作资料`,
+        "",
+        `来源：对话创作 / ${message.role === "user" ? "用户输入" : "助手回复"}`,
+        activeChapter.value ? `当前章节：${activeChapter.value.title}` : "",
+        "",
+        message.content,
+      ].filter(Boolean).join("\n"),
+      authority: "experimental",
+      tags: ["lore", "chat-extract", activeProject.value.id],
+    }),
+  );
+  if (result) {
+    markSaved("已保存为资料草稿，可在资料入库面板确认")
+    await refreshReview();
+  }
+}
+
+async function saveChatAsKnowledge(): Promise<void> {
+  if (activeProject.value.chat.length === 0) {
+    runState.value = {error: "还没有可保存的对话"};
+    return;
+  }
+  const content = activeProject.value.chat
+    .slice(-8)
+    .map((message) => `${message.role === "user" ? "我" : "Rhine-Lore"}：\n${message.content}`)
+    .join("\n\n");
+  const result = await perform("保存对话资料", () =>
+    createManualProposal({
+      title: `对话资料：${activeProject.value.name}`,
+      node_type: "Note",
+      content: [
+        `# ${activeProject.value.name} 对话资料`,
+        "",
+        activeChapter.value ? `当前章节：${activeChapter.value.title}` : "",
+        "",
+        content,
+      ].filter(Boolean).join("\n"),
+      authority: "experimental",
+      tags: ["lore", "conversation", activeProject.value.id],
+    }),
+  );
+  if (result) {
+    markSaved("最近对话已保存为资料草稿")
+    await refreshReview();
+  }
+}
+
+async function submitLoreItem(kind: "world" | "characters", item: LoreItem): Promise<void> {
+  const project = activeProject.value;
+  const titlePrefix = kind === "world" ? "World" : "Character";
+  const content = [`# ${item.title}`, "", `Project: ${project.name}`, "", item.content].join("\n");
+  const result = await perform("保存资料", () =>
+    createManualProposal({
+      title: `${titlePrefix}: ${item.title}`,
+      node_type: "Note",
+      content,
+      authority: "experimental",
+      tags: ["lore", kind === "world" ? "world" : "character", project.id],
+    }),
+  );
+  if (result) {
+    markSaved("已保存为资料草稿")
+    await refreshReview();
+  }
+}
+
+async function submitChapterExtract(): Promise<void> {
+  const chapter = activeChapter.value;
+  if (!chapter || !chapter.content.trim()) {
+    runState.value = {error: "章节内容为空"};
+    return;
+  }
+  const result = await perform("保存章节资料", () =>
+    createManualProposal({
+      title: `Chapter Extract: ${chapter.title}`,
+      node_type: "Note",
+      content: [
+        `# ${chapter.title}`,
+        "",
+        `项目：${activeProject.value.name}`,
+        "来源：正文章节提取",
+        "",
+        chapter.content,
+      ].join("\n"),
+      authority: "experimental",
+      tags: ["lore", "chapter", "chapter-extract", activeProject.value.id],
+    }),
+  );
+  if (result) {
+    markSaved("章节已保存为资料草稿")
+    await refreshReview();
+  }
+}
+
+function prefillKnowledgeFromChapter(): void {
+  const chapter = activeChapter.value;
+  if (!chapter) {
+    return;
+  }
+  manualKnowledgeTitle.value = `章节资料：${chapter.title}`;
+  manualKnowledgeContent.value = [
+    `# ${chapter.title}`,
+    "",
+    `项目：${activeProject.value.name}`,
+    "来源：正文章节提取",
+    "",
+    chapter.content,
+  ].join("\n");
+  manualKnowledgeTags.value = "lore, chapter, draft";
+  activity.value = "context";
+}
+
+function parseManualKnowledgeTags(): string[] {
+  const tags = manualKnowledgeTags.value
+    .split(/[,\s，、]+/)
+    .map((tag) => tag.trim())
+    .filter(Boolean);
+  return Array.from(new Set(["lore", ...tags]));
+}
+
+async function submitManualKnowledgeDraft(): Promise<void> {
+  const title = manualKnowledgeTitle.value.trim();
+  const content = manualKnowledgeContent.value.trim();
+  if (!title || !content) {
+    runState.value = {error: "资料标题和内容不能为空"};
+    return;
+  }
+  const result = await perform("保存资料草稿", () =>
+    createManualProposal({
+      title,
+      node_type: "Note",
+      content,
+      authority: "experimental",
+      tags: [...parseManualKnowledgeTags(), activeProject.value.id],
+    }),
+  );
+  if (result) {
+    manualKnowledgeTitle.value = "";
+    manualKnowledgeContent.value = "";
+    markSaved("资料草稿已保存");
+    await refreshReview();
+  }
+}
+
+function openAdjacentChapter(direction: -1 | 1): void {
+  const nextIndex = activeChapterIndex.value + direction;
+  const nextChapter = activeProject.value.chapters[nextIndex];
+  if (!nextChapter) {
+    return;
+  }
+  selectChapter(nextChapter.id);
+}
+
+async function loadChapterContext(): Promise<void> {
+  const chapter = activeChapter.value;
+  const query = [
+    activeProject.value.name,
+    activeProject.value.summary,
+    chapter?.title,
+    chapter?.content.slice(0, 900),
+  ].filter(Boolean).join("\n");
+  contextQuery.value = query || contextQuery.value;
+  await buildContext();
+}
+
+async function buildContext(): Promise<void> {
+  await perform("查找资料", () =>
+    buildContextBundle({
+      query: contextQuery.value,
+      profile_id: profileId.value,
+      result_limit: resultLimit.value,
+      tags: ["lore"],
+    }),
+  );
+}
+
+async function generateStoryBible(): Promise<void> {
+  await perform("生成设定文档", () =>
+    generateKnowledgeDocument({
+      query: contextQuery.value || activeProject.value.name,
+      profile_id: profileId.value,
+      result_limit: resultLimit.value,
+      title: `${activeProject.value.name} Story Bible`,
+      audience: "writer",
+      tags: ["lore"],
+    }),
+  );
+}
+
+async function refreshNodes(): Promise<void> {
+  const rows = await perform("刷新资料", () => listNodes(), {collapseOutput: true});
+  if (rows) {
+    nodes.value = rows;
+  }
+}
+
+async function refreshReview(): Promise<void> {
+  const [proposalResult, stagingResult] = await Promise.allSettled([listProposals(), listStaging()]);
+  if (proposalResult.status === "fulfilled") {
+    proposals.value = proposalResult.value;
+  }
+  if (stagingResult.status === "fulfilled") {
+    stagingEntries.value = stagingResult.value;
+  }
+}
+
+function proposalTemporaryIds(proposal: ApiRecord): string[] {
+  return ((proposal.proposed_nodes ?? []) as ApiRecord[])
+    .map((node) => String(node.temporary_id ?? ""))
+    .filter(Boolean);
+}
+
+async function stageAll(proposal: ApiRecord): Promise<void> {
+  const proposalId = String(proposal.proposal_id);
+  const temporaryIds = proposalTemporaryIds(proposal);
+  if (temporaryIds.length === 0) {
+    runState.value = {error: "Proposal 没有可保存的候选节点"};
+    return;
+  }
+  const result = await perform("送去确认", () => stageProposal(proposalId, temporaryIds));
+  if (result) {
+    markSaved("资料已送去确认");
+    await refreshReview();
+  }
+}
+
+async function approveEntry(entry: ApiRecord): Promise<void> {
+  const result = await perform("确认入库", () => approveStaging([String(entry.entry_id)]));
+  if (result) {
+    markSaved("资料已入库");
+    await Promise.allSettled([refreshReview(), refreshNodes()]);
+  }
+}
+
+async function refreshWorkspaces(): Promise<void> {
+  const rows = await listWorkspaces();
+  backendStatus.value = "online";
+  workspaces.value = rows;
+  if (rows.length > 0 && !rows.some((item) => item.workspace_id === selectedWorkspaceId.value)) {
+    selectedWorkspaceId.value = rows[0].workspace_id;
+    setWorkspaceId(selectedWorkspaceId.value);
+  }
+}
+
+async function switchWorkspace(): Promise<void> {
+  setWorkspaceId(selectedWorkspaceId.value);
+  await perform("切换 Workspace", async () => {
+    await Promise.allSettled([refreshNodes(), refreshReview()]);
+    return {workspace_id: selectedWorkspaceId.value};
+  });
+}
+
+async function createWorkspace(): Promise<void> {
+  const workspace = newWorkspaceId.value.trim();
+  if (!workspace) {
+    runState.value = {error: "workspace_id 为空"};
+    return;
+  }
+  const result = await perform("创建 Workspace", () =>
+    registerWorkspace({
+      workspace_id: workspace,
+      workspace_type: "project",
+      display_name: newWorkspaceDisplayName.value.trim() || workspace,
+    }),
+  );
+  if (result) {
+    selectedWorkspaceId.value = workspace;
+    setWorkspaceId(workspace);
+    await refreshWorkspaces();
+  }
+}
+
+function persistVaultRuntimeConfig(): void {
+  localStorage.setItem("rhine-lore-vault-path", vaultPath.value.trim());
+  localStorage.setItem("rhine-lore-vault-host", vaultHost.value.trim() || "127.0.0.1");
+  localStorage.setItem("rhine-lore-vault-port", String(vaultPort.value || 8765));
+  localStorage.setItem("rhine-lore-vault-database-path", vaultDatabasePath.value.trim());
+  localStorage.setItem("rhine-lore-vault-python-path", vaultPythonPath.value.trim());
+  localStorage.setItem("rhine-lore-external-vault-url", externalVaultUrl.value.trim());
+}
+
+function syncVaultRuntimeStatus(status: VaultRuntimeStatus): void {
+  vaultStatus.value = status;
+  backendStatus.value = status.connected ? "online" : "offline";
+  if (!vaultPath.value && status.config.vault_path) {
+    vaultPath.value = status.config.vault_path;
+  }
+  if (!vaultDatabasePath.value && status.config.database_path) {
+    vaultDatabasePath.value = status.config.database_path;
+  }
+  const baseUrl = status.manager.base_url || status.config.base_url;
+  try {
+    const parsed = new URL(baseUrl);
+    vaultHost.value = parsed.hostname || vaultHost.value;
+    vaultPort.value = Number(parsed.port || (parsed.protocol === "https:" ? 443 : 80));
+    if (!externalVaultUrl.value) {
+      externalVaultUrl.value = baseUrl;
+    }
+  } catch {
+    // Keep the editable form values when the backend returns an unexpected URL.
+  }
+}
+
+async function refreshVaultWebStatus(): Promise<void> {
+  vaultWebStatus.value = await getVaultWebStatus();
+}
+
+async function refreshVaultRuntime(): Promise<void> {
+  const status = await getVaultRuntimeStatus();
+  syncVaultRuntimeStatus(status);
+  await refreshVaultWebStatus();
+}
+
+async function testBackend(): Promise<void> {
+  await perform("检查连接", refreshVaultRuntime, {collapseOutput: true});
+}
+
+async function updateBackendStatus(): Promise<void> {
+  backendStatus.value = "checking";
+  try {
+    await refreshVaultRuntime();
+  } catch {
+    backendStatus.value = "offline";
+  }
+}
+
+async function connectVault(): Promise<void> {
+  persistVaultRuntimeConfig();
+  const baseUrl = externalVaultUrl.value.trim();
+  const result = await perform("应用资料库连接", () =>
+    connectVaultRuntime(
+      baseUrl ? {base_url: baseUrl} : {host: vaultHost.value.trim() || "127.0.0.1", port: vaultPort.value || 8765},
+    ),
+  );
+  if (result) {
+    syncVaultRuntimeStatus(result);
+    await Promise.allSettled([refreshWorkspaces(), refreshNodes(), refreshReview()]);
+  }
+}
+
+async function startDefaultVault(): Promise<void> {
+  const result = await perform("启动默认资料库", () => startVaultRuntime({}));
+  if (result) {
+    syncVaultRuntimeStatus(result);
+    window.setTimeout(() => void updateBackendStatus(), 1200);
+  }
+}
+
+async function startVault(): Promise<void> {
+  persistVaultRuntimeConfig();
+  const result = await perform("启动自定义资料库", () =>
+    startVaultRuntime({
+      vault_path: vaultPath.value.trim(),
+      host: vaultHost.value.trim() || "127.0.0.1",
+      port: vaultPort.value || 8765,
+      database_path: vaultDatabasePath.value.trim(),
+      python_path: vaultPythonPath.value.trim(),
+      base_url: "",
+    }),
+  );
+  if (result) {
+    syncVaultRuntimeStatus(result);
+    window.setTimeout(() => void updateBackendStatus(), 1200);
+  }
+}
+
+async function stopVault(): Promise<void> {
+  const result = await perform("停止本机资料库", stopVaultRuntime);
+  if (result) {
+    syncVaultRuntimeStatus(result);
+  }
+}
+
+async function installVaultWebUI(): Promise<void> {
+  persistVaultRuntimeConfig();
+  const result = await perform("安装 Vault Web", () => installVaultWeb({vault_path: vaultPath.value.trim()}));
+  if (result) {
+    vaultWebStatus.value = result;
+    markSaved("Vault Web 已准备好");
+  }
+}
+
+function openVaultWeb(): void {
+  window.open(vaultWebUrl.value, "_blank", "noopener,noreferrer");
+}
+
+function preview(value: unknown, length = 160): string {
+  const text = String(value ?? "");
+  return text.length > length ? `${text.slice(0, length)}...` : text;
+}
+
+function chapterLength(chapter: Chapter): number {
+  return chapter.content.trim().length;
+}
+
+function projectLength(project: StoryProject): number {
+  return project.chapters.reduce((total, chapter) => total + chapterLength(chapter), 0);
+}
+</script>
+
+<template>
+  <div class="app-shell" :class="{'sidebar-collapsed': sidebarCollapsed}">
+    <input
+      ref="projectImportInput"
+      class="sr-only"
+      type="file"
+      accept="application/json"
+      @change="importProjectFile"
+    />
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">RL</div>
+        <strong>Rhine-Lore</strong>
+        <small>Story writing studio</small>
+      </div>
+      <nav class="sidebar-nav">
+        <el-button
+          v-for="item in activities"
+          :key="item.id"
+          class="nav-item"
+          :class="{
+            active: activity === item.id,
+            'nav-item-secondary': !isPrimaryActivity(item.id),
+            'mobile-parent-active': isStudioChildActivity(item.id),
+          }"
+          @click="openActivity(item.id)"
+        >
+          <span class="nav-icon-dot"><GameIcon :name="item.icon" :label="item.label" /></span>
+          <span class="nav-label">
+            <strong>{{ item.label }}</strong>
+            <small>{{ item.description }}</small>
+          </span>
+        </el-button>
+      </nav>
+      <el-button class="collapse-button" @click="sidebarCollapsed = !sidebarCollapsed">
+        {{ sidebarCollapsed ? ">" : "<" }}
+      </el-button>
+    </aside>
+
+    <section class="workspace">
+      <header class="workspace-topbar">
+        <div class="workspace-title-group">
+          <span class="section-icon"><GameIcon :name="activeTabMeta.icon" /></span>
+          <div>
+            <strong>{{ activeTabMeta.label }}</strong>
+            <small>
+              {{ activeProject?.name ?? "未选择故事" }}
+              <span class="topbar-notice"> · {{ notice }}</span>
+            </small>
+          </div>
+        </div>
+        <div class="workspace-topbar-actions">
+          <span v-if="lastSavedAt" class="save-status">已自动保存 {{ lastSavedAt }}</span>
+          <el-select v-model="activeProjectId" class="project-select" @change="handleProjectChange">
+            <el-option
+              v-for="project in projects"
+              :key="project.id"
+              :label="project.name"
+              :value="project.id"
+            />
+          </el-select>
+          <el-radio-group v-model="workMode" size="small" class="mode-switch" @change="switchWorkMode">
+            <el-radio-button value="write">写作</el-radio-button>
+            <el-radio-button value="advanced">高级</el-radio-button>
+          </el-radio-group>
+          <button class="backend-chip" :class="backendStatusTone" type="button" @click="testBackend">
+            <span class="status-dot" />
+            <span>{{ backendStatusLabel }}</span>
+          </button>
+        </div>
+      </header>
+
+      <el-scrollbar class="workspace-main">
+        <main class="content-grid">
+          <section v-if="activity === 'studio'" class="activity-panel">
+            <el-card shadow="never" class="home-hero">
+              <div class="home-hero-copy">
+                <p class="home-kicker">写作引导台</p>
+                <h2>{{ activeProject.name || "未命名故事" }}</h2>
+                <p>{{ activeProject.summary || "选择一个故事，然后进入正文、对话或资料库继续创作。" }}</p>
+                <div class="hero-meta">
+                  <span>{{ activeProject.genre || "未分类" }}</span>
+                  <span>{{ activeProject.chapters.length }} 章</span>
+                  <span>{{ projectCharacterCount }} 字</span>
+                </div>
+              </div>
+              <el-space wrap class="home-hero-actions">
+                <el-button type="primary" @click="startWriting">
+                  {{ activeProject.chapters.length > 0 ? "继续写作" : "写第一章" }}
+                </el-button>
+                <el-button @click="activity = 'chat'">对话创作</el-button>
+              </el-space>
+            </el-card>
+
+            <section v-if="needsProjectGuidance" class="setup-guide">
+              <div class="setup-guide-copy">
+                <span>从这里开始</span>
+                <strong>{{ nextStepLabel }}</strong>
+                <small>不用先配置世界观或 AI，写下第一个想法就可以继续。</small>
+              </div>
+              <div class="setup-steps" aria-label="故事开始进度">
+                <div
+                  v-for="(step, index) in projectSetupSteps"
+                  :key="step.label"
+                  class="setup-step"
+                  :class="{complete: step.complete}"
+                >
+                  <span>{{ step.complete ? "✓" : index + 1 }}</span>
+                  <strong>{{ step.label }}</strong>
+                </div>
+              </div>
+              <el-button type="primary" @click="continueSetup">{{ nextStepLabel }}</el-button>
+            </section>
+
+            <el-card shadow="never" class="story-picker-card">
+              <template #header>
+                <div class="card-header">
+                  <span>我的故事</span>
+                  <el-space wrap>
+                    <el-button size="small" type="primary" @click="createProject">新建故事</el-button>
+                    <el-button size="small" @click="requestProjectImport">导入</el-button>
+                  </el-space>
+                </div>
+              </template>
+              <div class="project-grid">
+                <button
+                  v-for="project in projects"
+                  :key="project.id"
+                  type="button"
+                  class="project-card"
+                  :class="{active: activeProject.id === project.id}"
+                  @click="selectProject(project.id)"
+                >
+                  <span class="project-card-top">
+                    <strong>{{ project.name || "未命名故事" }}</strong>
+                    <small>{{ project.genre || "未分类" }}</small>
+                  </span>
+                  <span class="project-card-summary">
+                    {{ preview(project.summary || "还没有概要。进入故事档案补上它。", 88) }}
+                  </span>
+                  <span class="project-card-meta">
+                    <span>{{ project.chapters.length }} 章</span>
+                    <span>{{ project.world.length }} 设定</span>
+                    <span>{{ project.characters.length }} 角色</span>
+                    <span>{{ projectLength(project) }} 字</span>
+                  </span>
+                </button>
+              </div>
+            </el-card>
+
+            <div class="workbench-continuity">
+              <div>
+                <span>当前进度</span>
+                <strong>{{ latestChapter?.title || "还没有章节" }}</strong>
+                <small>{{ projectCharacterCount }} 字正文 · {{ activeProject.chat.length }} 条创作对话</small>
+              </div>
+              <el-space wrap>
+                <el-button type="primary" @click="startWriting">继续写</el-button>
+                <el-button @click="activity = 'chat'">聊一聊</el-button>
+                <el-button @click="activity = 'story'">故事档案</el-button>
+              </el-space>
+            </div>
+
+            <div class="section-heading">
+              <div>
+                <span>按需完善</span>
+                <small>这些内容不需要一次写完，创作过程中随时补充即可。</small>
+              </div>
+            </div>
+            <div class="guide-grid">
+              <button class="guide-card" type="button" @click="activity = 'story'">
+                <span>故事档案</span>
+                <strong>名称、类型和一句话概要</strong>
+                <small>{{ activeProject.summary ? "已填写概要" : "还可以补充概要" }}</small>
+              </button>
+              <button class="guide-card" type="button" @click="activity = 'world'">
+                <span>世界观</span>
+                <strong>地点、规则和重要背景</strong>
+                <small>{{ activeProject.world.length }} 条设定</small>
+              </button>
+              <button class="guide-card" type="button" @click="activity = 'characters'">
+                <span>角色</span>
+                <strong>人物、动机和关系</strong>
+                <small>{{ activeProject.characters.length }} 个角色</small>
+              </button>
+              <button class="guide-card" type="button" @click="activity = 'context'">
+                <span>资料库</span>
+                <strong>保存和查找创作资料</strong>
+                <small>{{ nodes.length }} 条资料</small>
+              </button>
+            </div>
+
+            <div class="knowledge-home-strip">
+              <div class="knowledge-home-copy">
+                <span>资料流程</span>
+                <strong>{{ knowledgePipelineHint }}</strong>
+                <small>对话和正文会先变成资料草稿，确认后才会进入可检索知识库。</small>
+              </div>
+              <div class="knowledge-pipeline compact">
+                <div v-for="stat in knowledgePipelineStats" :key="stat.label" class="stat-card" :class="stat.tone">
+                  <b>{{ stat.value }}</b>
+                  <span>{{ stat.label }}</span>
+                </div>
+              </div>
+              <el-button @click="openKnowledgeIntake">处理资料</el-button>
+            </div>
+
+          </section>
+
+          <section v-else-if="activity === 'story'" class="activity-panel">
+            <el-row :gutter="14">
+              <el-col :xs="24" :lg="10">
+                <el-card shadow="never">
+                  <template #header>
+                    <div class="card-header">
+                      <span>故事档案</span>
+                      <el-space wrap>
+                        <el-button size="small" @click="createProject">新建故事</el-button>
+                        <el-button size="small" @click="requestProjectImport">导入</el-button>
+                        <el-button size="small" @click="exportActiveProject">导出</el-button>
+                        <el-button size="small" @click="duplicateProject">复制</el-button>
+                      </el-space>
+                    </div>
+                  </template>
+                  <el-form label-position="top">
+                    <el-form-item label="当前故事">
+                      <el-select v-model="activeProjectId" @change="handleProjectChange">
+                        <el-option
+                          v-for="project in projects"
+                          :key="project.id"
+                          :label="project.name"
+                          :value="project.id"
+                        />
+                      </el-select>
+                    </el-form-item>
+                    <el-form-item label="名称">
+                      <el-input v-model="activeProject.name" placeholder="给故事起一个容易记住的名字" @input="saveProjects" />
+                    </el-form-item>
+                    <el-form-item label="类型">
+                      <el-input v-model="activeProject.genre" placeholder="例如：悬疑、奇幻、都市" @input="saveProjects" />
+                    </el-form-item>
+                    <el-form-item label="概要">
+                      <el-input
+                        v-model="activeProject.summary"
+                        type="textarea"
+                        :rows="8"
+                        placeholder="用一两句话写下主角是谁、想做什么、会遇到什么困难"
+                        @input="saveProjects"
+                      />
+                    </el-form-item>
+                  </el-form>
+                </el-card>
+              </el-col>
+              <el-col :xs="24" :lg="14">
+                <el-card shadow="never" class="story-preview-card">
+                  <template #header>故事预览</template>
+                  <h3>{{ activeProject.name || "未命名故事" }}</h3>
+                  <p>{{ activeProject.summary || "这里会显示故事概要，方便你在进入正文前快速找回方向。" }}</p>
+                  <div class="stat-grid">
+                    <div v-for="stat in stats" :key="stat.label" class="stat-card" :class="stat.tone">
+                      <b>{{ stat.value }}</b>
+                      <span>{{ stat.label }}</span>
+                    </div>
+                  </div>
+                  <el-space wrap>
+                    <el-button type="primary" @click="activity = 'novel'">写正文</el-button>
+                    <el-button @click="activity = 'world'">编辑世界观</el-button>
+                    <el-button @click="activity = 'characters'">编辑角色</el-button>
+                  </el-space>
+                </el-card>
+              </el-col>
+            </el-row>
+          </section>
+
+          <section v-else-if="activity === 'world'" class="activity-panel">
+            <el-card shadow="never">
+              <template #header>
+                <div class="card-header">
+                  <span>世界观</span>
+                  <el-button size="small" @click="addLoreItem('world')">添加设定</el-button>
+                </div>
+              </template>
+              <div v-if="activeProject.world.length === 0" class="product-empty-state">
+                <strong>还没有世界观设定</strong>
+                <p>可以先写一个地点、一条规则，或者故事发生前的重要事件。</p>
+                <el-button type="primary" @click="addLoreItem('world')">添加第一条设定</el-button>
+              </div>
+              <div class="lore-editor-grid">
+                <div v-for="item in activeProject.world" :key="item.id" class="editor-block">
+                  <el-input v-model="item.title" @input="saveProjects" />
+                  <el-input v-model="item.content" type="textarea" :rows="7" @input="saveProjects" />
+                  <el-button size="small" @click="submitLoreItem('world', item)">同步到资料库</el-button>
+                </div>
+              </div>
+            </el-card>
+          </section>
+
+          <section v-else-if="activity === 'characters'" class="activity-panel">
+            <el-card shadow="never">
+              <template #header>
+                <div class="card-header">
+                  <span>角色</span>
+                  <el-button size="small" @click="addLoreItem('characters')">添加角色</el-button>
+                </div>
+              </template>
+              <div v-if="activeProject.characters.length === 0" class="product-empty-state">
+                <strong>还没有角色</strong>
+                <p>从主角开始，写下名字、目标，以及此刻最担心的事。</p>
+                <el-button type="primary" @click="addLoreItem('characters')">添加第一个角色</el-button>
+              </div>
+              <div class="lore-editor-grid">
+                <div v-for="item in activeProject.characters" :key="item.id" class="editor-block">
+                  <el-input v-model="item.title" @input="saveProjects" />
+                  <el-input v-model="item.content" type="textarea" :rows="7" @input="saveProjects" />
+                  <el-button size="small" @click="submitLoreItem('characters', item)">同步到资料库</el-button>
+                </div>
+              </div>
+            </el-card>
+          </section>
+
+          <section v-else-if="activity === 'chat'" class="activity-panel chat-panel">
+            <el-card shadow="never" class="chat-thread-card">
+              <template #header>
+                <div class="card-header">
+                  <span>和故事一起往前走</span>
+                  <el-space wrap>
+                    <el-button size="small" @click="saveChatAsKnowledge">保存为资料</el-button>
+                    <el-button size="small" @click="clearProjectChat">清空</el-button>
+                  </el-space>
+                </div>
+              </template>
+              <div class="chat-brief">
+                <div>
+                  <strong>{{ activeProject.name }}</strong>
+                  <span>{{ chatContextLabel }}</span>
+                </div>
+                <el-button class="mobile-reference-button" size="small" @click="activity = 'context'">
+                  选择资料
+                </el-button>
+              </div>
+              <div v-if="selectedKnowledgeNodes.length > 0" class="selected-reference-strip">
+                <button
+                  v-for="node in selectedKnowledgeNodes"
+                  :key="recordId(node)"
+                  type="button"
+                  class="reference-chip"
+                  @click="removeKnowledgeReference(node)"
+                >
+                  {{ recordTitle(node) }}
+                  <span>x</span>
+                </button>
+              </div>
+              <div v-if="saveNotice" class="save-notice">{{ saveNotice }}</div>
+              <div class="prompt-starters">
+                <el-button
+                  v-for="starter in promptStarters"
+                  :key="starter"
+                  size="small"
+                  @click="usePromptStarter(starter)"
+                >
+                  {{ starter }}
+                </el-button>
+              </div>
+              <div class="chat-thread">
+                <div v-if="activeProject.chat.length === 0" class="chat-welcome">
+                  <span>Rhine-Lore</span>
+                  <strong>先说说你想写什么</strong>
+                  <p>可以只给一句模糊的想法，也可以让我续写当前章节、检查角色动机或整理设定。</p>
+                </div>
+                <article
+                  v-for="message in activeProject.chat"
+                  :key="message.id"
+                  class="chat-message"
+                  :class="message.role"
+                >
+                  <div class="chat-message-head">
+                    <strong>{{ message.role === "user" ? "我" : "Rhine-Lore" }}</strong>
+                    <el-space wrap>
+                      <el-button size="small" @click="saveMessageAsKnowledge(message)">
+                        保存为资料
+                      </el-button>
+                      <el-button
+                        v-if="message.role === 'assistant'"
+                        size="small"
+                        @click="insertMessageIntoChapter(message)"
+                      >
+                        插入正文
+                      </el-button>
+                    </el-space>
+                  </div>
+                  <p>{{ message.content }}</p>
+                </article>
+              </div>
+              <div class="chat-composer">
+                <el-input
+                  v-model="chatInput"
+                  type="textarea"
+                  :rows="4"
+                  placeholder="写下这一轮创作请求"
+                  @keydown.ctrl.enter.prevent="sendCreativeMessage"
+                />
+                <el-button type="primary" :loading="busyAction === '对话创作'" @click="sendCreativeMessage">
+                  发送
+                </el-button>
+              </div>
+            </el-card>
+
+            <el-card shadow="never" class="chat-side-card">
+              <template #header>
+                <div class="card-header">
+                  <span>创作上下文</span>
+                  <el-button size="small" @click="refreshChatReferences">刷新资料</el-button>
+                </div>
+              </template>
+              <div v-if="!activeChapter" class="product-empty-state compact">
+                <strong>还没有章节</strong>
+                <p>创建第一章后，就可以在右侧开始对话或写正文。</p>
+                <el-button type="primary" @click="startWriting">创建第一章</el-button>
+              </div>
+              <template v-else>
+                <strong class="side-chapter-title">{{ activeChapter.title }}</strong>
+                <p class="side-chapter-preview">{{ preview(activeChapter.content, 520) }}</p>
+                <el-space wrap>
+                  <el-button @click="activity = 'novel'">打开正文</el-button>
+                  <el-button @click="addChapter">新章节</el-button>
+                  <el-button @click="loadChapterContext">查资料</el-button>
+                  <el-button :disabled="!activeChapter.content.trim()" @click="submitChapterExtract">
+                    本章存为资料
+                  </el-button>
+                </el-space>
+              </template>
+              <div class="reference-picker">
+                <div class="reference-picker-head">
+                  <strong>写作参考</strong>
+                  <span>{{ selectedKnowledgeNodes.length }} / 6</span>
+                </div>
+                <el-empty v-if="chatReferenceNodes.length === 0" description="暂无已入库资料" />
+                <button
+                  v-for="node in chatReferenceNodes"
+                  :key="recordId(node)"
+                  type="button"
+                  class="reference-item"
+                  :class="{active: isKnowledgeSelected(node)}"
+                  @click="toggleKnowledgeReference(node)"
+                >
+                  <strong>{{ recordTitle(node) }}</strong>
+                  <span>{{ recordPreview(node, 92) }}</span>
+                </button>
+                <el-button size="small" @click="activity = 'context'">去资料库管理</el-button>
+              </div>
+            </el-card>
+          </section>
+
+          <section v-else-if="activity === 'novel'" class="activity-panel novel-panel">
+            <el-card shadow="never" class="novel-index-card">
+              <template #header>
+                <div class="card-header">
+                  <span>章节</span>
+                  <el-button size="small" @click="addChapter">添加</el-button>
+                </div>
+              </template>
+              <div class="novel-chapter-list">
+                <el-button
+                  v-for="chapter in activeProject.chapters"
+                  :key="chapter.id"
+                  :type="activeChapter?.id === chapter.id ? 'primary' : 'default'"
+                  @click="selectChapter(chapter.id)"
+                >
+                  <span class="chapter-tab-content">
+                    <strong>{{ chapter.title }}</strong>
+                    <small>{{ chapterLength(chapter) }} 字</small>
+                  </span>
+                </el-button>
+                <div v-if="activeProject.chapters.length === 0" class="product-empty-state compact">
+                  <strong>从第一章开始</strong>
+                  <el-button type="primary" @click="startWriting">创建并编辑</el-button>
+                </div>
+              </div>
+            </el-card>
+
+            <el-card shadow="never" class="novel-reader-card">
+              <template #header>
+                <div class="card-header">
+                  <span>正文</span>
+                  <el-space wrap>
+                    <span class="chapter-meter">{{ chapterNavigationLabel }} · {{ chapterCharacterCount }} 字</span>
+                    <el-button size="small" :disabled="activeChapterIndex <= 0" @click="openAdjacentChapter(-1)">
+                      上一章
+                    </el-button>
+                    <el-button
+                      size="small"
+                      :disabled="activeChapterIndex < 0 || activeChapterIndex >= activeProject.chapters.length - 1"
+                      @click="openAdjacentChapter(1)"
+                    >
+                      下一章
+                    </el-button>
+                    <el-button :type="readerMode === 'read' ? 'primary' : 'default'" @click="readerMode = 'read'">
+                      阅读
+                    </el-button>
+                    <el-button :type="readerMode === 'edit' ? 'primary' : 'default'" @click="readerMode = 'edit'">
+                      编辑
+                    </el-button>
+                    <el-input-number v-model="readerFontSize" :min="15" :max="26" size="small" />
+                    <el-button @click="submitChapterExtract">保存为资料</el-button>
+                  </el-space>
+                </div>
+              </template>
+
+              <div v-if="!activeChapter" class="product-empty-state reader-empty-state">
+                <strong>正文还没有开始</strong>
+                <p>我们会自动创建“第一章”，你可以直接写，也可以先去对话创作找灵感。</p>
+                <el-space wrap>
+                  <el-button type="primary" @click="startWriting">创建第一章</el-button>
+                  <el-button @click="activity = 'chat'">先聊聊想法</el-button>
+                </el-space>
+              </div>
+              <div v-else class="novel-reader-shell">
+                <div v-if="saveNotice" class="save-notice">{{ saveNotice }}</div>
+                <div class="reader-meta-band">
+                  <span>{{ activeProject.name }}</span>
+                  <strong>{{ chapterNavigationLabel }}</strong>
+                  <span>{{ chapterCharacterCount }} 字</span>
+                </div>
+                <el-input v-model="activeChapter.title" class="novel-title-input" @input="saveProjects" />
+                <div
+                  v-if="readerMode === 'read'"
+                  class="novel-reader"
+                  :style="{fontSize: `${readerFontSize}px`}"
+                >
+                  <h2>{{ activeChapter.title }}</h2>
+                  <p v-for="(paragraph, index) in activeChapterParagraphs" :key="index">
+                    {{ paragraph }}
+                  </p>
+                  <p v-if="activeChapterParagraphs.length === 0" class="empty-paragraph">这一章还没有正文。</p>
+                </div>
+                <el-input
+                  v-else
+                  v-model="activeChapter.content"
+                  class="novel-editor"
+                  type="textarea"
+                  :rows="24"
+                  @input="saveProjects"
+                />
+              </div>
+            </el-card>
+          </section>
+
+          <section v-else-if="activity === 'context'" class="activity-panel">
+            <div class="knowledge-pipeline">
+              <div v-for="stat in knowledgePipelineStats" :key="stat.label" class="stat-card" :class="stat.tone">
+                <b>{{ stat.value }}</b>
+                <span>{{ stat.label }}</span>
+              </div>
+            </div>
+            <el-row :gutter="14">
+              <el-col :xs="24" :lg="8">
+                <el-card shadow="never" class="knowledge-create-card">
+                  <template #header>
+                    <div class="card-header">
+                      <span>新增资料草稿</span>
+                      <el-button size="small" :disabled="!activeChapter" @click="prefillKnowledgeFromChapter">
+                        取当前章节
+                      </el-button>
+                    </div>
+                  </template>
+                  <el-form label-position="top">
+                    <el-form-item label="标题">
+                      <el-input v-model="manualKnowledgeTitle" placeholder="例如：城邦禁令、角色秘密、重要伏笔" />
+                    </el-form-item>
+                    <el-form-item label="内容">
+                      <el-input
+                        v-model="manualKnowledgeContent"
+                        type="textarea"
+                        :rows="9"
+                        placeholder="写下需要被记住的设定、事实、约束或素材。"
+                      />
+                    </el-form-item>
+                    <el-form-item label="标签">
+                      <el-input v-model="manualKnowledgeTags" placeholder="lore, character, chapter" />
+                    </el-form-item>
+                    <el-button
+                      type="primary"
+                      :loading="busyAction === '保存资料草稿'"
+                      @click="submitManualKnowledgeDraft"
+                    >
+                      保存为资料草稿
+                    </el-button>
+                  </el-form>
+                </el-card>
+              </el-col>
+
+              <el-col :xs="24" :lg="8">
+                <el-card shadow="never" class="knowledge-search-card">
+                  <template #header>
+                    <div class="card-header">
+                      <span>查找资料</span>
+                      <el-space>
+                        <el-button @click="buildContext">查找</el-button>
+                        <el-button @click="generateStoryBible">生成设定文档</el-button>
+                      </el-space>
+                    </div>
+                  </template>
+                  <el-form label-position="top">
+                    <el-form-item label="想查什么">
+                      <el-input v-model="contextQuery" type="textarea" :rows="8" />
+                    </el-form-item>
+                    <el-form-item label="最多显示几条">
+                      <el-input-number v-model="resultLimit" :min="1" :max="30" />
+                    </el-form-item>
+                  </el-form>
+                </el-card>
+              </el-col>
+
+              <el-col :xs="24" :lg="8">
+                <el-card shadow="never" class="knowledge-review-card">
+                  <template #header>
+                    <div class="card-header">
+                      <span>资料入库</span>
+                      <el-button size="small" @click="refreshReview">刷新</el-button>
+                    </div>
+                  </template>
+                  <p class="knowledge-flow-note">草稿需要先送去确认，再入库成为对话可引用的资料。</p>
+                  <el-table :data="proposals" height="180" class="knowledge-table">
+                    <el-table-column prop="title" label="资料草稿" min-width="140" />
+                    <el-table-column label="下一步" width="110">
+                      <template #default="{row}">
+                        <el-button size="small" @click="stageAll(row)">送去确认</el-button>
+                      </template>
+                    </el-table-column>
+                  </el-table>
+                  <el-table :data="stagingEntries" height="180" class="advanced-table knowledge-table">
+                    <el-table-column prop="title" label="待入库" min-width="140" />
+                    <el-table-column label="下一步" width="96">
+                      <template #default="{row}">
+                        <el-button size="small" type="primary" @click="approveEntry(row)">入库</el-button>
+                      </template>
+                    </el-table-column>
+                  </el-table>
+                </el-card>
+              </el-col>
+            </el-row>
+
+            <el-card shadow="never" class="knowledge-library-card">
+              <template #header>
+                <div class="card-header">
+                  <span>已入库资料</span>
+                  <el-space wrap>
+                    <el-button size="small" @click="refreshNodes">刷新</el-button>
+                    <el-button size="small" :disabled="selectedKnowledgeNodes.length === 0" @click="activity = 'chat'">
+                      去对话使用
+                    </el-button>
+                  </el-space>
+                </div>
+              </template>
+              <el-table :data="nodes" height="360" class="knowledge-table">
+                <el-table-column label="资料" min-width="220">
+                  <template #default="{row}">
+                    <div class="node-title-cell">
+                      <strong>{{ recordTitle(row) }}</strong>
+                      <span>{{ recordPreview(row, 120) }}</span>
+                    </div>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="node_type" label="类型" width="120" />
+                <el-table-column label="对话参考" width="130">
+                  <template #default="{row}">
+                    <el-button size="small" :type="isKnowledgeSelected(row) ? 'primary' : 'default'" @click="addKnowledgeToChat(row)">
+                      {{ isKnowledgeSelected(row) ? "已加入" : "加入" }}
+                    </el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </el-card>
+          </section>
+
+          <section v-else class="activity-panel">
+            <el-tabs v-model="settingsTab" class="settings-tabs">
+              <el-tab-pane label="常用设置" name="basic">
+                <el-row :gutter="14">
+                  <el-col :xs="24" :lg="12">
+                    <el-card shadow="never">
+                      <template #header>当前状态</template>
+                      <el-descriptions :column="1" border>
+                        <el-descriptions-item label="故事">{{ activeProject.name }}</el-descriptions-item>
+                        <el-descriptions-item label="本地草稿">已保存在浏览器</el-descriptions-item>
+                        <el-descriptions-item label="资料库">{{ selectedWorkspaceId }}</el-descriptions-item>
+                        <el-descriptions-item label="状态">{{ notice }}</el-descriptions-item>
+                      </el-descriptions>
+                    </el-card>
+                  </el-col>
+                  <el-col :xs="24" :lg="12">
+                    <el-card shadow="never">
+                      <template #header>资料库连接</template>
+                      <div class="vault-status-card">
+                        <strong>{{ backendStatusLabel }} · {{ vaultModeLabel }}</strong>
+                        <span>{{ vaultRuntimeLabel }}</span>
+                        <small>{{ vaultStatus?.manager.base_url || 'http://127.0.0.1:8765' }}</small>
+                        <small>{{ vaultWebLabel }}</small>
+                        <el-space wrap class="vault-status-actions">
+                          <el-button
+                            type="primary"
+                            :loading="busyAction === '启动默认资料库'"
+                            @click="startDefaultVault"
+                          >
+                            启动默认资料库
+                          </el-button>
+                          <el-button @click="testBackend">检查连接</el-button>
+                          <el-button :disabled="!vaultWebStatus?.installed && !vaultStatus?.connected" @click="openVaultWeb">
+                            打开 Vault Web
+                          </el-button>
+                          <el-button @click="settingsTab = 'advanced'">部署 / 高级</el-button>
+                        </el-space>
+                      </div>
+                    </el-card>
+                  </el-col>
+                </el-row>
+              </el-tab-pane>
+
+              <el-tab-pane label="高级设置" name="advanced">
+                <el-card shadow="never" class="vault-deploy-card">
+                  <template #header>
+                    <div class="card-header">
+                      <span>Rhine-Vault</span>
+                      <el-space wrap>
+                        <el-button size="small" @click="refreshVaultRuntime">刷新状态</el-button>
+                        <el-button size="small" @click="openVaultWeb">打开 Vault Web</el-button>
+                      </el-space>
+                    </div>
+                  </template>
+                  <div class="vault-deploy-grid">
+                    <div class="vault-status-card">
+                      <strong>{{ backendStatusLabel }} · {{ vaultModeLabel }}</strong>
+                      <span>{{ vaultRuntimeLabel }}</span>
+                      <small>{{ vaultStatus?.manager.base_url || 'http://127.0.0.1:8765' }}</small>
+                      <small>默认路径：{{ vaultStatus?.config.vault_path || vaultPath }}</small>
+                      <small>默认数据库：{{ vaultStatus?.config.database_path || vaultDatabasePath }}</small>
+                      <small v-if="vaultStatus?.error">{{ vaultStatus.error }}</small>
+                      <small v-if="vaultStatus?.manager.auto_start.error">
+                        自动启动：{{ vaultStatus.manager.auto_start.error }}
+                      </small>
+                      <el-space wrap class="vault-status-actions">
+                        <el-button
+                          type="primary"
+                          :loading="busyAction === '启动默认资料库'"
+                          @click="startDefaultVault"
+                        >
+                          启动默认 Core
+                        </el-button>
+                        <el-button :disabled="!vaultStatus?.manager.running" @click="stopVault">停止 Core</el-button>
+                      </el-space>
+                    </div>
+                    <div class="vault-setup-stack">
+                      <div class="vault-web-card">
+                        <div>
+                          <strong>{{ vaultWebLabel }}</strong>
+                          <small>{{ vaultWebStatus?.web_root || '等待检测 Vault Web' }}</small>
+                        </div>
+                        <el-space wrap>
+                          <el-button
+                            :disabled="!vaultWebStatus?.installable"
+                            :loading="busyAction === '安装 Vault Web'"
+                            @click="installVaultWebUI"
+                          >
+                            安装 Vault Web
+                          </el-button>
+                          <el-button :disabled="!vaultStatus?.connected" @click="openVaultWeb">
+                            跳转
+                          </el-button>
+                        </el-space>
+                        <small v-if="vaultWebStatus?.error">{{ vaultWebStatus.error }}</small>
+                      </div>
+
+                      <el-form label-position="top" class="vault-deploy-form">
+                        <el-form-item label="外部 Vault Web / API 链接">
+                          <el-input v-model="externalVaultUrl" placeholder="http://127.0.0.1:8765" />
+                        </el-form-item>
+                        <el-row :gutter="10">
+                          <el-col :xs="24" :sm="12">
+                            <el-form-item label="主机">
+                              <el-input v-model="vaultHost" />
+                            </el-form-item>
+                          </el-col>
+                          <el-col :xs="24" :sm="12">
+                            <el-form-item label="端口">
+                              <el-input-number v-model="vaultPort" :min="1" :max="65535" />
+                            </el-form-item>
+                          </el-col>
+                        </el-row>
+                        <el-form-item label="Rhine-Vault 项目路径">
+                          <el-input v-model="vaultPath" placeholder="E:\\Project\\Python\\Rhine-Vault" />
+                        </el-form-item>
+                        <el-form-item label="数据库路径">
+                          <el-input v-model="vaultDatabasePath" placeholder="E:\\Project\\Python\\Rhine-Lore\\data\\rhine-vault-core.db" />
+                        </el-form-item>
+                        <el-form-item label="Python 解释器">
+                          <el-input v-model="vaultPythonPath" placeholder="留空则优先使用 Vault 的 .venv" />
+                        </el-form-item>
+                        <el-space wrap>
+                          <el-button type="primary" @click="connectVault">连接其他 Vault</el-button>
+                          <el-button :loading="busyAction === '启动自定义资料库'" @click="startVault">
+                            按当前设置启动
+                          </el-button>
+                        </el-space>
+                      </el-form>
+                    </div>
+                  </div>
+                </el-card>
+
+                <el-row :gutter="14">
+                  <el-col :xs="24" :lg="12">
+                    <el-card shadow="never">
+                      <template #header>
+                        <div class="card-header">
+                          <span>资料库工作区</span>
+                          <el-button size="small" @click="refreshWorkspaces">刷新</el-button>
+                        </div>
+                      </template>
+                      <el-form label-position="top">
+                        <el-form-item label="当前资料库">
+                          <el-select v-model="selectedWorkspaceId" @change="switchWorkspace">
+                            <el-option
+                              v-for="workspace in workspaces"
+                              :key="workspace.workspace_id"
+                              :label="workspace.display_name || workspace.workspace_id"
+                              :value="workspace.workspace_id"
+                            />
+                          </el-select>
+                        </el-form-item>
+                        <el-form-item label="新资料库 ID">
+                          <el-input v-model="newWorkspaceId" />
+                        </el-form-item>
+                        <el-form-item label="显示名称">
+                          <el-input v-model="newWorkspaceDisplayName" />
+                        </el-form-item>
+                        <el-form-item label="检索配置">
+                          <el-input v-model="profileId" />
+                        </el-form-item>
+                        <el-button type="primary" @click="createWorkspace">创建资料库</el-button>
+                      </el-form>
+                    </el-card>
+                  </el-col>
+                  <el-col :xs="24" :lg="12">
+                    <el-card shadow="never">
+                      <template #header>
+                        <div class="card-header">
+                          <span>资料入库</span>
+                          <el-button size="small" @click="refreshReview">刷新</el-button>
+                        </div>
+                      </template>
+                      <div class="knowledge-pipeline compact">
+                        <div v-for="stat in knowledgePipelineStats" :key="stat.label" class="stat-card" :class="stat.tone">
+                          <b>{{ stat.value }}</b>
+                          <span>{{ stat.label }}</span>
+                        </div>
+                      </div>
+                      <p class="knowledge-flow-note">资料草稿不会直接影响创作，送去确认并入库后才会出现在对话写作参考里。</p>
+                      <el-table :data="proposals" height="220" class="knowledge-table">
+                        <el-table-column prop="title" label="资料草稿" min-width="160" />
+                        <el-table-column label="内容预览" min-width="220">
+                          <template #default="{row}">
+                            <span class="knowledge-preview">{{ draftPreview(row, 110) }}</span>
+                          </template>
+                        </el-table-column>
+                        <el-table-column label="下一步" width="120">
+                          <template #default="{row}">
+                            <el-button size="small" @click="stageAll(row)">送去确认</el-button>
+                          </template>
+                        </el-table-column>
+                      </el-table>
+                      <el-table :data="stagingEntries" height="220" class="advanced-table knowledge-table">
+                        <el-table-column prop="title" label="待入库" min-width="160" />
+                        <el-table-column label="内容预览" min-width="220">
+                          <template #default="{row}">
+                            <span class="knowledge-preview">{{ draftPreview(row, 110) }}</span>
+                          </template>
+                        </el-table-column>
+                        <el-table-column label="下一步" width="110">
+                          <template #default="{row}">
+                            <el-button size="small" type="primary" @click="approveEntry(row)">入库</el-button>
+                          </template>
+                        </el-table-column>
+                      </el-table>
+                    </el-card>
+                  </el-col>
+                </el-row>
+              </el-tab-pane>
+            </el-tabs>
+          </section>
+        </main>
+      </el-scrollbar>
+
+    </section>
+
+    <el-dialog
+      v-model="createDialogVisible"
+      class="create-story-dialog"
+      title="开始一个新故事"
+      width="min(520px, calc(100vw - 24px))"
+    >
+      <div class="create-story-intro">
+        <strong>先写最确定的部分</strong>
+        <span>名称之外都可以稍后再改，创建后会自动准备好第一章。</span>
+      </div>
+      <el-form label-position="top">
+        <el-form-item label="故事名称">
+          <el-input v-model="newProjectName" autofocus placeholder="例如：雾港来信" />
+        </el-form-item>
+        <el-form-item label="故事类型">
+          <el-select
+            v-model="newProjectGenre"
+            allow-create
+            default-first-option
+            filterable
+            placeholder="选择或输入类型"
+          >
+            <el-option v-for="genre in genreOptions" :key="genre" :label="genre" :value="genre" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="一句话灵感">
+          <el-input
+            v-model="newProjectIdea"
+            type="textarea"
+            :rows="4"
+            placeholder="例如：一个只在雨夜送信的人，收到了一封写给自己的信。"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <div class="create-story-actions">
+          <el-button @click="createDialogVisible = false">取消</el-button>
+          <el-button @click="confirmCreateProject('chat')">创建并聊想法</el-button>
+          <el-button type="primary" @click="confirmCreateProject('novel')">创建并写第一章</el-button>
+        </div>
+      </template>
+    </el-dialog>
+  </div>
+</template>
+
+
+
+
+
+
+
+

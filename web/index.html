@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Rhine-Lore</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="activity-bar">
+        <div class="brand">
+          <img src="/assets/rhine-lore-mark.svg" alt="Rhine-Lore">
+        </div>
+        <button class="activity active" data-view="projects" title="项目">P</button>
+        <button class="activity" data-view="writing" title="写作">W</button>
+        <button class="activity" data-view="vault" title="莱茵">V</button>
+        <button class="activity" data-view="review" title="审核">R</button>
+        <button class="activity" data-view="settings" title="设置">S</button>
+      </aside>
+
+      <aside class="side-panel">
+        <div class="side-title">
+          <span>Rhine-Lore</span>
+          <button id="new-project" class="icon-button" title="新建项目">+</button>
+        </div>
+        <div id="project-list" class="project-list"></div>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Audited Knowledge Writing Studio</p>
+            <h1 id="workspace-title">Rhine-Lore</h1>
+          </div>
+          <div class="top-actions">
+            <span id="vault-status" class="status-pill">Vault 未连接</span>
+            <button id="save-all" class="primary-button"><span>+</span>保存</button>
+          </div>
+        </header>
+
+        <section id="view-projects" class="view active">
+          <div class="dashboard-grid">
+            <section class="panel summary-panel">
+              <div class="panel-head">
+                <h2>项目概览</h2>
+                <button id="duplicate-project" class="ghost-button">复制</button>
+              </div>
+              <div class="form-grid compact">
+                <label>名称<input id="project-name" type="text"></label>
+                <label>类型<input id="project-genre" type="text"></label>
+                <label class="wide">一句话<textarea id="project-summary" rows="3"></textarea></label>
+              </div>
+              <div class="metric-row">
+                <div><b id="metric-world">0</b><span>设定</span></div>
+                <div><b id="metric-character">0</b><span>角色</span></div>
+                <div><b id="metric-chapter">0</b><span>章节</span></div>
+                <div><b id="metric-cue">0</b><span>伏笔</span></div>
+              </div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head">
+                <h2>时间线</h2>
+                <button id="add-timeline" class="icon-button" title="添加">+</button>
+              </div>
+              <div id="timeline-list" class="stack-list"></div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head">
+                <h2>大纲</h2>
+                <button id="add-outline" class="icon-button" title="添加">+</button>
+              </div>
+              <div id="outline-list" class="stack-list"></div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head">
+                <h2>伏笔</h2>
+                <button id="add-cue" class="icon-button" title="添加">+</button>
+              </div>
+              <div id="cue-list" class="stack-list"></div>
+            </section>
+          </div>
+        </section>
+
+        <section id="view-writing" class="view">
+          <div class="writing-layout">
+            <section class="panel">
+              <div class="panel-head">
+                <h2>世界观</h2>
+                <button id="add-world" class="icon-button" title="添加">+</button>
+              </div>
+              <div id="world-list" class="editor-list"></div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head">
+                <h2>角色</h2>
+                <button id="add-character" class="icon-button" title="添加">+</button>
+              </div>
+              <div id="character-list" class="editor-list"></div>
+            </section>
+
+            <section class="panel chapter-panel">
+              <div class="panel-head">
+                <h2>章节</h2>
+                <button id="add-chapter" class="icon-button" title="添加">+</button>
+              </div>
+              <div class="chapter-grid">
+                <div id="chapter-list" class="chapter-list"></div>
+                <div class="chapter-editor">
+                  <input id="chapter-title" type="text" placeholder="章节标题">
+                  <textarea id="chapter-content" rows="18" placeholder="章节正文"></textarea>
+                  <div class="button-row">
+                    <button id="chapter-context" class="primary-button"><span>></span>拉取上下文</button>
+                    <button id="submit-selection" class="ghost-button">提交选中文本</button>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section id="view-vault" class="view">
+          <div class="vault-grid">
+            <section class="panel">
+              <div class="panel-head">
+                <h2>Approved Context</h2>
+                <button id="refresh-nodes" class="ghost-button">刷新</button>
+              </div>
+              <label>检索问题<textarea id="context-query" rows="4"></textarea></label>
+              <div class="button-row">
+                <button id="build-context" class="primary-button"><span>></span>构建</button>
+                <button id="generate-doc" class="ghost-button">生成文档</button>
+              </div>
+              <div id="context-output" class="result-box"></div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head">
+                <h2>正式节点</h2>
+                <button id="refresh-graph" class="ghost-button">图谱</button>
+              </div>
+              <div id="node-list" class="stack-list tall"></div>
+            </section>
+          </div>
+        </section>
+
+        <section id="view-review" class="view">
+          <div class="review-grid">
+            <section class="panel">
+              <div class="panel-head">
+                <h2>Proposals</h2>
+                <button id="refresh-proposals" class="ghost-button">刷新</button>
+              </div>
+              <div id="proposal-list" class="stack-list tall"></div>
+            </section>
+            <section class="panel">
+              <div class="panel-head">
+                <h2>Staging</h2>
+                <button id="refresh-staging" class="ghost-button">刷新</button>
+              </div>
+              <div id="staging-list" class="stack-list tall"></div>
+            </section>
+          </div>
+        </section>
+
+        <section id="view-settings" class="view">
+          <div class="settings-grid">
+            <section class="panel">
+              <div class="panel-head">
+                <h2>连接</h2>
+                <button id="test-vault" class="primary-button"><span>></span>测试</button>
+              </div>
+              <div class="form-grid">
+                <label>Vault URL<input id="setting-base-url" type="url"></label>
+                <label>Workspace ID<input id="setting-workspace" type="text"></label>
+                <label>显示名<input id="setting-display-name" type="text"></label>
+                <label>Retrieval Profile<input id="setting-profile" type="text"></label>
+                <label>Result Limit<input id="setting-limit" type="number" min="1" max="30"></label>
+              </div>
+              <div class="button-row">
+                <button id="save-settings" class="primary-button"><span>+</span>保存设置</button>
+                <button id="create-workspace" class="ghost-button">创建工作区</button>
+                <button id="list-workspaces" class="ghost-button">列出工作区</button>
+              </div>
+            </section>
+            <section class="panel">
+              <div class="panel-head">
+                <h2>运行输出</h2>
+                <button id="clear-output" class="ghost-button">清空</button>
+              </div>
+              <pre id="run-output" class="run-output"></pre>
+            </section>
+          </div>
+        </section>
+      </main>
+    </div>
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
+

@@ -1,0 +1,16 @@
+.venv/
+node_modules/
+ui/node_modules/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.env
+*.local.*
+*.sqlite
+*.sqlite3
+data/*
+!data/.gitkeep
+logs/
+docs/local/
+.idea/
