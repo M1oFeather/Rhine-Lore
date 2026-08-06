@@ -3086,3 +3086,175 @@ body {
   }
 }
 
+/* Revision and pending issues */
+.chat-mode-switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 -4px 8px;
+}
+
+.adjust-composer small {
+  color: #5b6b7c;
+}
+
+.pending-count-chip {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: #fdf0df;
+  color: #c0691d;
+  font-size: 12px;
+}
+
+.revision-panel {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 14px 16px;
+  border: 1px solid #b8cfe8;
+  border-radius: 12px;
+  background: #fbfdff;
+}
+
+.revision-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.revision-block {
+  display: grid;
+  gap: 6px;
+  padding-top: 10px;
+  border-top: 1px dashed #c9d7e8;
+}
+
+.revision-compare {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.revision-compare > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.revision-compare label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #5b6b7c;
+}
+
+.revision-compare p {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #f4f7fb;
+  border: 1px solid #e3eaf2;
+  color: #33475c;
+  font-size: 13px;
+  line-height: 1.7;
+  max-height: 200px;
+  overflow: auto;
+}
+
+.evaluation-block {
+  display: grid;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px dashed #c9d7e8;
+}
+
+.evaluation-ok {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #e5f7ec;
+  color: #2e8b57;
+  font-size: 13px;
+}
+
+.issue-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid #e3eaf2;
+  background: #fbfcfe;
+}
+
+.issue-row > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.issue-row strong {
+  color: #263c53;
+  font-size: 13px;
+}
+
+.issue-row small {
+  color: #5b6b7c;
+  line-height: 1.5;
+}
+
+.issue-kind {
+  justify-self: start;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  background: #edf0f3;
+  color: #5b6b7c;
+}
+
+.issue-row.kind-冲突 .issue-kind {
+  background: #fde8e8;
+  color: #c03030;
+}
+
+.issue-row.kind-误区 .issue-kind {
+  background: #fdf0df;
+  color: #c0691d;
+}
+
+.issue-row.kind-不一致 .issue-kind {
+  background: #f0e7fb;
+  color: #7a3fc0;
+}
+
+.issue-row.kind-提醒 .issue-kind {
+  background: #e3f0fd;
+  color: #1f6feb;
+}
+
+.issue-actions {
+  grid-column: 1 / -1;
+  justify-content: flex-end;
+}
+
+.pending-issues-panel {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid #e3eaf2;
+}
+
+@media (max-width: 720px) {
+  .revision-compare {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .issue-actions .el-button {
+    flex: 1 1 auto;
+  }
+}
+

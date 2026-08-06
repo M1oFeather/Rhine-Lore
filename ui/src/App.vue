@@ -10,7 +10,9 @@ import {
   type EvolutionCastMember,
   type EvolutionState,
   type EvolutionView,
+  type LlmChatMessage,
   type LoreItem,
+  type ManuscriptIssue,
   type StoryMap,
   type StoryMapNode,
   type StoryProject,
@@ -54,6 +56,14 @@ type Activity = "studio" | "story" | "world" | "characters" | "chat" | "novel" |
 type WorkMode = "write" | "advanced";
 type BackendStatus = "checking" | "online" | "offline";
 type CreateDestination = "novel" | "chat";
+type RevisionResult = {
+  revisions: {
+    chapter_id: string;
+    chapter_title?: string;
+    revised_text: string;
+  }[];
+  evaluation: ManuscriptIssue[];
+};
 
 const projectKey = "rhine-lore-projects";
 const activeProjectKey = "rhine-lore-active-project";
@@ -120,6 +130,10 @@ const selectedKnowledgeIds = ref<string[]>([]);
 const proposals = ref<ApiRecord[]>([]);
 const stagingEntries = ref<ApiRecord[]>([]);
 const chatInput = ref("");
+const chatMode = ref<"chat" | "adjust">("chat");
+const adjustInput = ref("");
+const revisionBusy = ref(false);
+const revisionPreview = ref<RevisionResult | null>(null);
 const readerMode = ref<"read" | "edit">("read");
 const readerFontSize = ref(18);
 const settingsTab = ref("basic");
@@ -369,6 +383,7 @@ function loadProjects(): StoryProject[] {
       map: {nodes: [], edges: []},
       chapters: [],
       chat: [],
+      issues: [],
     },
   ];
 }
@@ -400,6 +415,22 @@ function normalizeCharacter(item: Partial<CharacterCard> & Partial<LoreItem>): C
       : [],
     status: item.status || "正常",
     notes: item.notes || legacyContent || "",
+  };
+}
+
+function normalizeIssue(issue: Partial<ManuscriptIssue>): ManuscriptIssue {
+  const kinds: ManuscriptIssue["kind"][] = ["冲突", "误区", "不一致", "提醒"];
+  const statuses: ManuscriptIssue["status"][] = ["待处理", "已处理", "忽略"];
+  return {
+    id: issue.id || uid("issue"),
+    kind: kinds.includes(String(issue.kind) as ManuscriptIssue["kind"]) ? (String(issue.kind) as ManuscriptIssue["kind"]) : "提醒",
+    item: issue.item || "未命名问题",
+    reason: issue.reason || "",
+    suggestion: issue.suggestion || "",
+    status: statuses.includes(String(issue.status) as ManuscriptIssue["status"])
+      ? (String(issue.status) as ManuscriptIssue["status"])
+      : "待处理",
+    created_at: issue.created_at || new Date().toISOString(),
   };
 }
 
@@ -460,6 +491,7 @@ function normalizeProject(project: Partial<StoryProject>): StoryProject {
     map: normalizeMap(project.map),
     chapters: project.chapters ?? [],
     chat,
+    issues: (project.issues ?? []).map(normalizeIssue),
   };
 }
 
@@ -546,6 +578,7 @@ function confirmCreateProject(destination: CreateDestination): void {
     map: {nodes: [], edges: []},
     chapters: [{id: uid("chapter"), title: "第一章", content: ""}],
     chat: [],
+    issues: [],
   };
   projects.value.push(project);
   activeProjectId.value = project.id;
@@ -597,6 +630,7 @@ function duplicateProject(): void {
     from: nodeIdMap.get(edge.from) ?? edge.from,
     to: nodeIdMap.get(edge.to) ?? edge.to,
   }));
+  copy.issues = copy.issues.map((issue) => ({...issue, id: uid("issue")}));
   projects.value.push(copy);
   activeProjectId.value = copy.id;
   activeChapterId.value = copy.chapters[0]?.id ?? "";
@@ -1041,6 +1075,192 @@ async function sendCreativeMessage(): Promise<void> {
     });
   });
   appendChat("assistant", result ? extractAssistantText(result, fallback) : fallback);
+}
+
+const pendingIssueCount = computed(() => {
+  return activeProject.value.issues.filter((issue) => issue.status === "待处理").length;
+});
+
+function revisionOriginalText(revision: {chapter_id: string; chapter_title?: string}): string {
+  const project = activeProject.value;
+  return (
+    project.chapters.find((chapter) => chapter.id === revision.chapter_id)?.content ??
+    project.chapters.find((chapter) => chapter.title === revision.chapter_title)?.content ??
+    ""
+  );
+}
+
+function buildRevisionMessages(instruction: string, threadsText: string): LlmChatMessage[] {
+  const project = activeProject.value;
+  const chaptersText = project.chapters
+    .map((chapter) => `【章节：${chapter.title}】\n${chapter.content.slice(0, 2500)}`)
+    .join("\n\n");
+  const charactersText = project.characters
+    .map(
+      (card) =>
+        `${card.name}（${card.role}）：身份=${card.identity || "未设定"}；欲望=${card.drive || "未设定"}；恐惧=${card.fear || "未设定"}；关系=${card.relationships.map((relation) => `${relation.name}(${relation.relation})`).join("、") || "暂无"}；秘密=${card.secret || "无"}；状态=${card.status}`,
+    )
+    .join("\n");
+  const worldText = project.world
+    .map((item) => `${item.name}（${item.type}）：${item.summary || item.details.slice(0, 120)}`)
+    .join("\n");
+  const system =
+    "你是小说的修订编辑与设定管理员。根据用户指令修改已有正文，并对照角色卡、世界观、伏笔清单和所有章节评估整体影响。" +
+    "必须只输出一个 JSON 对象，不要输出任何其他文字。格式：" +
+    '{"revisions":[{"chapter_id":"...","chapter_title":"...","revised_text":"修订后的完整章节正文"}],"evaluation":[{"kind":"冲突|误区|不一致|提醒","item":"问题一句话","reason":"依据（哪条设定或哪一章）","suggestion":"处理建议"}]}。' +
+    "如果没有需要修改的章节，revisions 为空数组；局部修改时 revised_text 必须是包含修改后的完整章节正文。";
+  const user = [
+    `调整指令：${instruction}`,
+    `项目：《${project.name}》 类型：${project.genre} 概要：${project.summary || "未设定"}`,
+    `当前激活章节：${activeChapter.value?.title ?? "无"}`,
+    `全部章节：\n${chaptersText || "暂无"}`,
+    `角色卡：\n${charactersText || "暂无"}`,
+    `世界观：\n${worldText || "暂无"}`,
+    threadsText ? `活跃线索与伏笔：\n${threadsText}` : "活跃线索与伏笔：暂无",
+  ].join("\n\n");
+  return [
+    {role: "system", content: system},
+    {role: "user", content: user},
+  ];
+}
+
+function parseRevisionResult(text: string): RevisionResult | null {
+  let cleaned = String(text || "").trim();
+  const fence = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fence) {
+    cleaned = fence[1].trim();
+  }
+  const start = cleaned.indexOf("{");
+  const end = cleaned.lastIndexOf("}");
+  if (start < 0 || end <= start) {
+    return null;
+  }
+  try {
+    const data = JSON.parse(cleaned.slice(start, end + 1));
+    const kinds: ManuscriptIssue["kind"][] = ["冲突", "误区", "不一致", "提醒"];
+    const revisions = Array.isArray(data.revisions)
+      ? data.revisions
+          .filter((revision: any) => typeof revision?.revised_text === "string" && revision.revised_text.trim())
+          .map((revision: any) => ({
+            chapter_id: String(revision.chapter_id || ""),
+            chapter_title: String(revision.chapter_title || ""),
+            revised_text: String(revision.revised_text).trim(),
+          }))
+      : [];
+    const evaluation = Array.isArray(data.evaluation)
+      ? data.evaluation
+          .slice(0, 20)
+          .map((entry: any) => ({
+            id: uid("issue"),
+            kind: kinds.includes(String(entry?.kind) as ManuscriptIssue["kind"])
+              ? (String(entry?.kind) as ManuscriptIssue["kind"])
+              : "提醒",
+            item: String(entry?.item || entry?.title || "未命名问题"),
+            reason: String(entry?.reason || ""),
+            suggestion: String(entry?.suggestion || ""),
+            status: "待处理" as const,
+            created_at: new Date().toISOString(),
+          }))
+      : [];
+    return {revisions, evaluation};
+  } catch {
+    return null;
+  }
+}
+
+async function generateRevision(): Promise<void> {
+  const instruction = adjustInput.value.trim();
+  if (!instruction || revisionBusy.value) {
+    return;
+  }
+  if (!llmApiKey.value.trim()) {
+    runState.value = {error: "调整正文需要 AI 通道，请先在首页或右上角配置 API Key"};
+    return;
+  }
+  persistLlmConfig();
+  revisionBusy.value = true;
+  revisionPreview.value = null;
+  let threadsText = "";
+  try {
+    const view = await getEvolutionState(activeProject.value.id, evolutionViewpoint.value || "");
+    threadsText = view.state.threads
+      .filter((thread) => thread.status === "active")
+      .slice(0, 8)
+      .map((thread) => `【${thread.kind}】${thread.title}${thread.secret ? `：${thread.secret}` : ""}`)
+      .join("\n");
+  } catch {
+    // 没有演化存档不影响正文修订
+  }
+  const result = await perform("生成修订与评估", () =>
+    llmChat({
+      base_url: llmBaseUrl.value.trim() || undefined,
+      api_key: llmApiKey.value.trim() || undefined,
+      model: llmModel.value.trim() || undefined,
+      messages: buildRevisionMessages(instruction, threadsText),
+    }),
+  );
+  revisionBusy.value = false;
+  if (!result) {
+    return;
+  }
+  const parsed = parseRevisionResult(String(result.answer ?? ""));
+  if (!parsed) {
+    runState.value = {error: "AI 返回无法解析，请简化指令后重试"};
+    return;
+  }
+  revisionPreview.value = parsed;
+  markSaved(`修订生成完毕：${parsed.revisions.length} 处改动，${parsed.evaluation.length} 项评估`);
+}
+
+function applyRevision(): void {
+  const preview = revisionPreview.value;
+  if (!preview) {
+    return;
+  }
+  let applied = 0;
+  for (const revision of preview.revisions) {
+    const target =
+      activeProject.value.chapters.find((chapter) => chapter.id === revision.chapter_id) ??
+      (revision.chapter_title
+        ? activeProject.value.chapters.find((chapter) => chapter.title === revision.chapter_title)
+        : undefined);
+    if (!target) {
+      continue;
+    }
+    target.content = revision.revised_text;
+    if (revision.chapter_title) {
+      target.title = revision.chapter_title;
+    }
+    applied += 1;
+  }
+  if (applied === 0) {
+    runState.value = {error: "没有匹配到章节，未应用任何修订"};
+    return;
+  }
+  if (preview.evaluation.length > 0) {
+    activeProject.value.issues.push(...preview.evaluation);
+  }
+  saveProjects();
+  markSaved(`已应用 ${applied} 处修订，新增 ${preview.evaluation.length} 项待处理`);
+  revisionPreview.value = null;
+}
+
+function discardRevision(): void {
+  revisionPreview.value = null;
+  adjustInput.value = "";
+}
+
+function setIssueStatus(issue: ManuscriptIssue, status: ManuscriptIssue["status"]): void {
+  issue.status = status;
+  saveProjects();
+}
+
+function removeIssue(issue: ManuscriptIssue): void {
+  const index = activeProject.value.issues.findIndex((item) => item.id === issue.id);
+  if (index >= 0) {
+    activeProject.value.issues.splice(index, 1);
+    saveProjects();
+  }
 }
 
 function insertMessageIntoChapter(message: CreativeMessage): void {
@@ -2691,6 +2911,7 @@ onUnmounted(() => {
                   <strong>{{ activeProject.name }}</strong>
                   <span>{{ chatContextLabel }}</span>
                   <span class="llm-channel-chip">{{ llmChannelLabel }}</span>
+                  <span v-if="pendingIssueCount > 0" class="pending-count-chip">待处理 {{ pendingIssueCount }}</span>
                 </div>
                 <el-button class="mobile-reference-button" size="small" @click="activity = 'context'">
                   选择资料
@@ -2749,7 +2970,13 @@ onUnmounted(() => {
                   <p>{{ message.content }}</p>
                 </article>
               </div>
-              <div class="chat-composer">
+              <div class="chat-mode-switch">
+                <el-radio-group v-model="chatMode" size="small">
+                  <el-radio-button value="chat">普通对话</el-radio-button>
+                  <el-radio-button value="adjust">调整正文</el-radio-button>
+                </el-radio-group>
+              </div>
+              <div v-if="chatMode === 'chat'" class="chat-composer">
                 <el-input
                   v-model="chatInput"
                   type="textarea"
@@ -2760,6 +2987,63 @@ onUnmounted(() => {
                 <el-button type="primary" :loading="busyAction === '对话创作'" @click="sendCreativeMessage">
                   发送
                 </el-button>
+              </div>
+              <div v-else class="chat-composer adjust-composer">
+                <el-input
+                  v-model="adjustInput"
+                  type="textarea"
+                  :rows="4"
+                  placeholder="描述要调整的内容，例如：把林薇改成从小认识陈栩，并检查整体影响"
+                  @keydown.ctrl.enter.prevent="generateRevision"
+                />
+                <el-button
+                  type="primary"
+                  :loading="revisionBusy || busyAction === '生成修订与评估'"
+                  :disabled="!llmApiKey.trim()"
+                  @click="generateRevision"
+                >
+                  生成修订 + 评估
+                </el-button>
+                <small v-if="!llmApiKey.trim()">需要先配置 AI 通道</small>
+              </div>
+              <div v-if="revisionPreview" class="revision-panel">
+                <div class="revision-head">
+                  <strong>修订预览与整体评估</strong>
+                  <el-space wrap>
+                    <el-button size="small" type="primary" @click="applyRevision">应用修订</el-button>
+                    <el-button size="small" @click="discardRevision">放弃</el-button>
+                  </el-space>
+                </div>
+                <div v-for="(revision, index) in revisionPreview.revisions" :key="index" class="revision-block">
+                  <strong>{{ revision.chapter_title || "章节" }}</strong>
+                  <div class="revision-compare">
+                    <div>
+                      <label>原文</label>
+                      <p>{{ preview(revisionOriginalText(revision), 240) || "（空）" }}</p>
+                    </div>
+                    <div>
+                      <label>修订后</label>
+                      <p>{{ preview(revision.revised_text, 240) }}</p>
+                    </div>
+                  </div>
+                </div>
+                <div v-if="revisionPreview.evaluation.length > 0" class="evaluation-block">
+                  <strong>整体影响评估（{{ revisionPreview.evaluation.length }} 项）</strong>
+                  <div
+                    v-for="issue in revisionPreview.evaluation"
+                    :key="issue.id"
+                    class="issue-row"
+                    :class="`kind-${issue.kind}`"
+                  >
+                    <span class="issue-kind">{{ issue.kind }}</span>
+                    <div>
+                      <strong>{{ issue.item }}</strong>
+                      <small v-if="issue.reason">依据：{{ issue.reason }}</small>
+                      <small v-if="issue.suggestion">建议：{{ issue.suggestion }}</small>
+                    </div>
+                  </div>
+                </div>
+                <p v-else class="evaluation-ok">评估通过：未发现冲突、误区或不一致。</p>
               </div>
             </el-card>
 
@@ -2805,6 +3089,33 @@ onUnmounted(() => {
                   <span>{{ recordPreview(node, 92) }}</span>
                 </button>
                 <el-button size="small" @click="activity = 'context'">去资料库管理</el-button>
+              </div>
+              <div class="pending-issues-panel">
+                <div class="reference-picker-head">
+                  <strong>待处理项</strong>
+                  <span>{{ pendingIssueCount }}</span>
+                </div>
+                <div v-if="pendingIssueCount === 0" class="product-empty-state compact">
+                  没有待处理项
+                </div>
+                <div
+                  v-for="issue in activeProject.issues.filter((item) => item.status === '待处理')"
+                  :key="issue.id"
+                  class="issue-row"
+                  :class="`kind-${issue.kind}`"
+                >
+                  <span class="issue-kind">{{ issue.kind }}</span>
+                  <div>
+                    <strong>{{ issue.item }}</strong>
+                    <small v-if="issue.reason">依据：{{ issue.reason }}</small>
+                    <small v-if="issue.suggestion">建议：{{ issue.suggestion }}</small>
+                  </div>
+                  <el-space wrap class="issue-actions">
+                    <el-button size="small" @click="setIssueStatus(issue, '已处理')">已处理</el-button>
+                    <el-button size="small" @click="setIssueStatus(issue, '忽略')">忽略</el-button>
+                    <el-button size="small" type="danger" plain @click="removeIssue(issue)">删除</el-button>
+                  </el-space>
+                </div>
               </div>
             </el-card>
           </section>

@@ -16,6 +16,7 @@ export type StoryProject = {
   map: StoryMap;
   chapters: Chapter[];
   chat: CreativeMessage[];
+  issues: ManuscriptIssue[];
 };
 
 export type LoreItem = {
@@ -27,6 +28,16 @@ export type LoreItem = {
 export type CharacterRelationship = {
   name: string;
   relation: string;
+};
+
+export type ManuscriptIssue = {
+  id: string;
+  kind: "冲突" | "误区" | "不一致" | "提醒";
+  item: string;
+  reason: string;
+  suggestion: string;
+  status: "待处理" | "已处理" | "忽略";
+  created_at: string;
 };
 
 export type CharacterCard = {
