@@ -2485,3 +2485,71 @@ body {
   }
 }
 
+/* Evolution sandbox mobile fit */
+@media (max-width: 720px) {
+  .evolution-panel .el-card__body {
+    padding: 12px;
+  }
+
+  .evolution-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .evolution-stats .stat-card {
+    padding: 8px 4px;
+  }
+
+  .evolution-control-card .card-header .el-space {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .evolution-control-card .card-header .el-space .el-radio-group {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
+  .evolution-control-card .card-header .el-space .el-radio-button {
+    flex: 1 1 auto;
+  }
+
+  .evolution-control-card .card-header .el-space .el-select {
+    width: 100% !important;
+  }
+
+  .evolution-control-card .card-header .el-button {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .branch-options {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    width: 100%;
+  }
+
+  .branch-options .el-button {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .evolution-event-head {
+    align-items: flex-start;
+  }
+
+  .evolution-novel-reader {
+    padding: 18px 14px;
+    line-height: 1.9;
+  }
+
+  .limited-perspective-note {
+    font-size: 13px;
+  }
+
+  .evolution-cast-chips span {
+    font-size: 12px;
+  }
+}
+

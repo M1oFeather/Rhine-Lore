@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import subprocess
 import sys
 from http import HTTPStatus
@@ -345,6 +346,17 @@ def _evolution_payload(
     }
 
 
+def _lan_addresses() -> list[str]:
+    try:
+        probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        probe.connect(("10.255.255.255", 1))
+        address = probe.getsockname()[0]
+        probe.close()
+        return [address] if address else []
+    except OSError:
+        return []
+
+
 class RhineLoreHandler(SimpleHTTPRequestHandler):
     server_version = "RhineLore/0.1"
 
@@ -603,9 +615,14 @@ def serve(host: str, port: int, web_root: Path) -> None:
 
     address = (host, port)
     httpd = ThreadingHTTPServer(address, handler)
-    url = f"http://{host}:{port}/"
+    bind_any = host in {"0.0.0.0", "::", ""}
+    url = f"http://127.0.0.1:{port}/" if bind_any else f"http://{host}:{port}/"
     vault_status = VAULT_MANAGER.ensure_default_core()
     print(f"Rhine-Lore is running at {url}")
+    if bind_any:
+        for lan_address in _lan_addresses():
+            print(f"局域网访问: http://{lan_address}:{port}/")
+        print("提示: 手机与电脑需在同一网络; 若无法访问, 请在 Windows 防火墙中放行 Python(专用网络)。")
     print(f"Serving UI from {web_root}")
     if vault_status["auto_start"]["error"]:
         print(f"Rhine-Vault Core auto-start skipped: {vault_status['auto_start']['error']}")

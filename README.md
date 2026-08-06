@@ -81,11 +81,17 @@ Rhine-Lore/
 python main.py
 ```
 
-The app defaults to:
+The app defaults to binding every local interface (`0.0.0.0`), so it is
+reachable from other devices on the same local network:
 
 ```text
-http://127.0.0.1:8786/
+本机:    http://127.0.0.1:8786/
+局域网:  http://<电脑局域网IP>:8786/
 ```
+
+The console prints the exact LAN address on startup. If a phone cannot open
+it, allow Python through Windows Defender Firewall for private networks, or
+run locally only with `python main.py --host 127.0.0.1`.
 
 On startup Rhine-Lore tries to bring up the default Rhine-Vault Core for its own
 workspace:
