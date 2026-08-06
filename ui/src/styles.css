@@ -2883,3 +2883,73 @@ body {
   }
 }
 
+/* AI channel strip on the workbench */
+.ai-channel-strip {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.8fr) minmax(300px, 1.4fr) auto;
+  gap: 14px;
+  align-items: center;
+  padding: 16px 18px;
+  border: 1px solid #c9d7e8;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #f7faff, #eef4fc);
+}
+
+.ai-channel-copy {
+  display: grid;
+  gap: 3px;
+}
+
+.ai-channel-copy > span {
+  font-size: 12px;
+  font-weight: 600;
+  color: #1f6feb;
+}
+
+.ai-channel-copy > strong {
+  font-size: 15px;
+  color: #16324f;
+}
+
+.ai-channel-copy > small {
+  color: #5b6b7c;
+  line-height: 1.5;
+}
+
+.ai-channel-fields {
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr) minmax(0, 1.2fr);
+  gap: 8px;
+  min-width: 0;
+}
+
+.llm-channel-chip {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: #e5f7ec;
+  color: #2e8b57;
+  font-size: 12px;
+}
+
+@media (max-width: 1100px) {
+  .ai-channel-strip {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 720px) {
+  .ai-channel-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ai-channel-strip .el-space {
+    width: 100%;
+  }
+
+  .ai-channel-strip .el-button {
+    flex: 1 1 auto;
+  }
+}
+

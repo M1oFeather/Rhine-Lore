@@ -168,11 +168,15 @@ Open the `演化` activity for any story project to create an evolution run:
 
 ### AI 正文扩写
 
-设置 → 高级设置 → AI 正文扩写（OpenAI 兼容）中可以填写 API 地址、模型名称
-和 API Key（仅保存在浏览器 localStorage，经本机 Vault 转发）。配置后，演化
-页“小说”视图的“AI 扩写当前回合”会把最近事件和角色/世界观信息组成场景简报，
-生成 300-500 字的有限视角正文；结果可编辑并一键追加进章节。未配置时演化
-仍然完全可用，正文使用本地模板。
+工作台首页的「AI 生成通道」可以直接配置（DeepSeek / OpenAI / 自定义预设，
+默认 DeepSeek：`https://api.deepseek.com/v1` + `deepseek-chat`）。API Key
+仅保存在浏览器 localStorage，经本机 Vault 转发，不写入磁盘。配置后：
+
+- 演化页“小说”视图的“AI 扩写当前回合”会把最近事件和角色/世界观信息组成
+  场景简报，生成 300-500 字的有限视角正文，可编辑并一键追加进章节；
+- 对话创作的“发送”改用真实模型续写/讨论（未配置时仍为离线 FakeLLM 兜底）。
+
+未配置时演化与创作完全可用，正文使用本地模板。
 
 ## Frontend
 

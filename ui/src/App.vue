@@ -145,6 +145,7 @@ const mapDragging = ref<{id: string; dx: number; dy: number} | null>(null);
 const llmBaseUrl = ref(localStorage.getItem("rhine-lore-llm-base-url") || "https://api.deepseek.com/v1");
 const llmApiKey = ref(localStorage.getItem("rhine-lore-llm-api-key") || "");
 const llmModel = ref(localStorage.getItem("rhine-lore-llm-model") || "deepseek-chat");
+const llmPreset = ref(localStorage.getItem("rhine-lore-llm-preset") || "deepseek");
 const aiProse = ref("");
 const aiProseBusy = ref(false);
 let evolutionTimer: number | undefined;
@@ -1008,14 +1009,29 @@ async function sendCreativeMessage(): Promise<void> {
   chatInput.value = "";
   const prompt = buildCreativePrompt(text);
   const fallback = localCreativeDraft(text);
-  const result = await perform("对话创作", () =>
-    fakeCreativeAnswer({
+  const result = await perform("对话创作", () => {
+    if (llmApiKey.value.trim()) {
+      return llmChat({
+        base_url: llmBaseUrl.value.trim() || undefined,
+        api_key: llmApiKey.value.trim() || undefined,
+        model: llmModel.value.trim() || undefined,
+        messages: [
+          {
+            role: "system",
+            content:
+              "你是 Rhine-Lore 的创作助手：基于用户给出的世界观、角色与章节续写或讨论剧情，语言平实细腻，不要编造未提供的设定。",
+          },
+          {role: "user", content: prompt},
+        ],
+      });
+    }
+    return fakeCreativeAnswer({
       query: prompt,
       profile_id: profileId.value,
       result_limit: resultLimit.value,
       tags: ["lore"],
-    }),
-  );
+    });
+  });
   appendChat("assistant", result ? extractAssistantText(result, fallback) : fallback);
 }
 
@@ -1777,6 +1793,40 @@ function acceptEvolutionIntoChapter(): void {
   activity.value = "novel";
 }
 
+const llmMaskedKey = computed(() => {
+  const key = llmApiKey.value.trim();
+  if (!key) {
+    return "";
+  }
+  return key.length <= 6 ? "••••" : `${key.slice(0, 3)}••••${key.slice(-3)}`;
+});
+
+const llmStatusLabel = computed(() => {
+  const key = llmApiKey.value.trim();
+  if (!key) {
+    return "未配置（离线模板模式）";
+  }
+  return `${llmModel.value.trim() || "模型"} · ${llmMaskedKey.value}`;
+});
+
+const llmChannelLabel = computed(() => {
+  return llmApiKey.value.trim() ? `已接入 ${llmModel.value.trim() || "模型"}` : "离线模板";
+});
+
+function applyLlmProvider(provider: "deepseek" | "openai" | "custom"): void {
+  llmPreset.value = provider;
+  localStorage.setItem("rhine-lore-llm-preset", provider);
+  if (provider === "deepseek") {
+    llmBaseUrl.value = "https://api.deepseek.com/v1";
+    llmModel.value = "deepseek-chat";
+  } else if (provider === "openai") {
+    llmBaseUrl.value = "https://api.openai.com/v1";
+    llmModel.value = "gpt-4o-mini";
+  }
+  persistLlmConfig();
+  markSaved("模型预设已切换");
+}
+
 function persistLlmConfig(): void {
   localStorage.setItem("rhine-lore-llm-base-url", llmBaseUrl.value.trim());
   localStorage.setItem("rhine-lore-llm-api-key", llmApiKey.value.trim());
@@ -1785,6 +1835,7 @@ function persistLlmConfig(): void {
 
 function saveLlmConfig(): void {
   persistLlmConfig();
+  localStorage.setItem("rhine-lore-llm-preset", llmPreset.value);
   markSaved("模型设置已保存");
 }
 
@@ -2121,6 +2172,39 @@ onUnmounted(() => {
               <el-button @click="openKnowledgeIntake">处理资料</el-button>
             </div>
 
+            <div class="ai-channel-strip">
+              <div class="ai-channel-copy">
+                <span>AI 生成通道</span>
+                <strong>{{ llmStatusLabel }}</strong>
+                <small>用于演化扩写与对话创作；密钥只保存在本机浏览器，经本机 Vault 转发。</small>
+              </div>
+              <div class="ai-channel-fields">
+                <el-select v-model="llmPreset" size="small" @change="applyLlmProvider">
+                  <el-option label="DeepSeek" value="deepseek" />
+                  <el-option label="OpenAI" value="openai" />
+                  <el-option label="自定义" value="custom" />
+                </el-select>
+                <el-input v-model="llmModel" size="small" placeholder="模型名称" />
+                <el-input
+                  v-model="llmApiKey"
+                  type="password"
+                  show-password
+                  size="small"
+                  placeholder="API Key（仅本机）"
+                />
+              </div>
+              <el-space wrap>
+                <el-button
+                  size="small"
+                  :loading="busyAction === '测试模型连接'"
+                  @click="testLlmConnection"
+                >
+                  测试连接
+                </el-button>
+                <el-button size="small" type="primary" @click="saveLlmConfig">保存</el-button>
+              </el-space>
+            </div>
+
           </section>
 
           <section v-else-if="activity === 'story'" class="activity-panel">
@@ -2449,6 +2533,7 @@ onUnmounted(() => {
                 <div>
                   <strong>{{ activeProject.name }}</strong>
                   <span>{{ chatContextLabel }}</span>
+                  <span class="llm-channel-chip">{{ llmChannelLabel }}</span>
                 </div>
                 <el-button class="mobile-reference-button" size="small" @click="activity = 'context'">
                   选择资料
@@ -3226,6 +3311,15 @@ onUnmounted(() => {
                   </template>
                   <el-form label-position="top" class="vault-deploy-form">
                     <el-row :gutter="10">
+                      <el-col :xs="24" :sm="8">
+                        <el-form-item label="通道预设">
+                          <el-select v-model="llmPreset" @change="applyLlmProvider">
+                            <el-option label="DeepSeek" value="deepseek" />
+                            <el-option label="OpenAI" value="openai" />
+                            <el-option label="自定义" value="custom" />
+                          </el-select>
+                        </el-form-item>
+                      </el-col>
                       <el-col :xs="24" :sm="8">
                         <el-form-item label="API 地址">
                           <el-input v-model="llmBaseUrl" placeholder="https://api.deepseek.com/v1" />
