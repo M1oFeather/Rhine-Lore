@@ -168,6 +168,63 @@ class StoreTests(unittest.TestCase):
             self.assertIsNotNone(loaded)
 
 
+class CharacterCardMappingTests(unittest.TestCase):
+    def test_rich_character_cards_map_to_cast(self) -> None:
+        characters = [
+            {
+                "id": "hero",
+                "name": "林澈",
+                "identity": "雾港送信人",
+                "role": "主角",
+                "drive": "查明父亲失踪的真相",
+                "fear": "忘记父亲的模样",
+                "traits": "谨慎、固执",
+                "background": "在雾港长大",
+                "status": "正常",
+                "relationships": [
+                    {"name": "沈砚", "relation": "死敌"},
+                    {"name": "小满", "relation": "挚友"},
+                ],
+            },
+            {"id": "rival", "name": "沈砚", "role": "反派", "status": "死亡"},
+            {"id": "friend", "name": "小满", "role": "配角"},
+        ]
+        state = start_run("p1", "雾港来信", "悬疑", characters, [], seed=1)
+        hero, rival, friend = state.cast
+        self.assertEqual(hero.identity, "雾港送信人")
+        self.assertEqual(hero.drive, "查明父亲失踪的真相")
+        self.assertEqual(hero.fear, "忘记父亲的模样")
+        self.assertIn("谨慎", hero.traits)
+        self.assertIn("固执", hero.traits)
+        self.assertEqual(hero.background, "在雾港长大")
+        self.assertEqual(hero.relations.get(rival.id), -2)
+        self.assertEqual(hero.relations.get(friend.id), 2)
+        self.assertFalse(rival.alive)
+        self.assertEqual(rival.role, "反派")
+        self.assertEqual(friend.role, "配角")
+
+    def test_rich_fields_survive_store_roundtrip(self) -> None:
+        characters = [
+            {"id": "hero", "name": "林澈", "identity": "雾港送信人", "traits": ["谨慎"], "background": "雾港长大"},
+        ]
+        state = start_run("p1", "雾港来信", "悬疑", characters, [], seed=1)
+        with tempfile.TemporaryDirectory() as raw_dir:
+            store = EvolutionStore(Path(raw_dir))
+            store.save(state)
+            loaded = store.load("p1")
+        self.assertIsNotNone(loaded)
+        self.assertEqual(loaded.cast[0].identity, "雾港送信人")
+        self.assertEqual(loaded.cast[0].traits, ["谨慎"])
+        self.assertEqual(loaded.cast[0].background, "雾港长大")
+
+    def test_legacy_title_content_characters_still_work(self) -> None:
+        characters = [{"id": "a", "title": "林澈", "content": "想要查明真相"}]
+        state = start_run("p1", "雾港来信", "悬疑", characters, [], seed=1)
+        self.assertEqual(state.cast[0].name, "林澈")
+        self.assertEqual(state.cast[0].drive, "想要查明真相")
+        self.assertEqual(state.cast[0].identity, "")
+
+
 class EndingTests(unittest.TestCase):
     def test_ending_fires_without_active_major_threads(self) -> None:
         settings = EvolutionSettings(branch_frequency=0)

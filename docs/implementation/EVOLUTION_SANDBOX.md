@@ -19,6 +19,9 @@ can intervene at branch moments, or let the world run on its own.
 Core types:
 
 - `CastMember` — name, role, drive, fear, alive, relation scores (-2..2).
+  Structured character cards feed this directly: identity, personality tags,
+  background, relationship names (mapped to initial relation scores), and
+  `status` (死亡/已死/阵亡 marks the member dead).
 - `WorldState` — locations, factions, facts, tension (0..100).
 - `PlotThread` — main / character / romance / conflict / foreshadowing, with
   `active` / `dormant` / `resolved` status and a `secret` for foreshadowing.

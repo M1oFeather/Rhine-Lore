@@ -12,7 +12,7 @@ export type StoryProject = {
   genre: string;
   summary: string;
   world: LoreItem[];
-  characters: LoreItem[];
+  characters: CharacterCard[];
   chapters: Chapter[];
   chat: CreativeMessage[];
 };
@@ -21,6 +21,26 @@ export type LoreItem = {
   id: string;
   title: string;
   content: string;
+};
+
+export type CharacterRelationship = {
+  name: string;
+  relation: string;
+};
+
+export type CharacterCard = {
+  id: string;
+  name: string;
+  identity: string;
+  role: string;
+  drive: string;
+  fear: string;
+  traits: string;
+  appearance: string;
+  background: string;
+  relationships: CharacterRelationship[];
+  status: string;
+  notes: string;
 };
 
 export type Chapter = {
@@ -96,6 +116,9 @@ export type EvolutionCastMember = {
   stance: string;
   alive: boolean;
   relations: Record<string, number>;
+  identity: string;
+  traits: string[];
+  background: string;
 };
 
 export type EvolutionFaction = {

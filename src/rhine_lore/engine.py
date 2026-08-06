@@ -76,6 +76,9 @@ class CastMember:
     stance: str = "中立"
     alive: bool = True
     relations: dict[str, int] = field(default_factory=dict)
+    identity: str = ""
+    traits: list[str] = field(default_factory=list)
+    background: str = ""
 
 
 @dataclass
@@ -189,22 +192,63 @@ def _extract_snippet(content: str, markers: tuple[str, ...], fallback: str) -> s
     return fallback
 
 
+def _parse_traits(raw: Any) -> list[str]:
+    if isinstance(raw, list):
+        items = [str(item).strip() for item in raw]
+    else:
+        items = re.split(r"[，,、;；\n]+", str(raw or ""))
+    return [item for item in items if item][:8]
+
+
+def _relation_score(relation_text: Any) -> int:
+    text = str(relation_text or "")
+    if any(word in text for word in ("恋人", "挚友", "家人", "伴侣", "死党", "知己")):
+        return 2
+    if any(word in text for word in ("朋友", "同伴", "盟友", "同事", "搭档")):
+        return 1
+    if any(word in text for word in ("敌人", "仇人", "死敌", "宿敌")):
+        return -2
+    if any(word in text for word in ("对手", "竞争者", "讨厌", "不和", "疏远")):
+        return -1
+    return 0
+
+
 def _cast_from_characters(characters: list[dict[str, Any]]) -> list[CastMember]:
     members: list[CastMember] = []
     for index, raw in enumerate(characters):
         item_id = str(raw.get("id") or f"character-{index + 1}")
-        name = str(raw.get("title") or raw.get("name") or f"角色{index + 1}").strip() or f"角色{index + 1}"
+        name = str(raw.get("name") or raw.get("title") or f"角色{index + 1}").strip() or f"角色{index + 1}"
         content = str(raw.get("content") or "")
-        role = "主角" if index == 0 or any(keyword in name for keyword in ROLE_KEYWORDS) else "配角"
+        role_raw = str(raw.get("role") or "").strip()
+        role = role_raw or ("主角" if index == 0 or any(keyword in name for keyword in ROLE_KEYWORDS) else "配角")
+        status = str(raw.get("status") or "").strip()
+        alive = not any(word in status for word in ("死亡", "已死", "阵亡", "身亡"))
         members.append(
             CastMember(
                 id=item_id,
                 name=name,
                 role=role,
-                drive=_extract_snippet(content, ("想要", "渴望", "目标是", "目标", "希望"), "完成自己的目标"),
-                fear=_extract_snippet(content, ("害怕", "恐惧", "担心", "怕"), "失去重要之物"),
+                drive=str(raw.get("drive") or "").strip()
+                or _extract_snippet(content, ("想要", "渴望", "目标是", "目标", "希望"), "完成自己的目标"),
+                fear=str(raw.get("fear") or "").strip()
+                or _extract_snippet(content, ("害怕", "恐惧", "担心", "怕"), "失去重要之物"),
+                stance=str(raw.get("stance") or "中立").strip() or "中立",
+                alive=alive,
+                identity=str(raw.get("identity") or "").strip(),
+                traits=_parse_traits(raw.get("traits")),
+                background=str(raw.get("background") or "").strip(),
             )
         )
+    by_name = {member.name: member.id for member in members}
+    for member, raw in zip(members, characters):
+        for relation in raw.get("relationships") or []:
+            if not isinstance(relation, dict):
+                continue
+            relation_name = str(relation.get("name") or "").strip()
+            target_id = by_name.get(relation_name)
+            if not target_id or target_id == member.id:
+                continue
+            member.relations[target_id] = max(-2, min(2, _relation_score(relation.get("relation"))))
     if not members:
         members.append(CastMember(id="auto-protagonist", name="主人公", role="主角"))
     return members
@@ -948,6 +992,9 @@ def evolution_state_from_dict(data: dict[str, Any]) -> EvolutionState:
             stance=str(member.get("stance") or "中立"),
             alive=bool(member.get("alive", True)),
             relations={str(key): int(value) for key, value in (member.get("relations") or {}).items()},
+            identity=str(member.get("identity") or ""),
+            traits=[str(trait) for trait in (member.get("traits") or []) if str(trait)],
+            background=str(member.get("background") or ""),
         )
         for index, member in enumerate(data.get("cast") or [])
     ]

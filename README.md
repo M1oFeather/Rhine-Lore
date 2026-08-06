@@ -18,6 +18,10 @@ state, snapshots, and long-term retrieval.
 - The active story and chapter are restored after a page refresh.
 - Worldbuilding, character, outline, timeline, foreshadowing, and chapter
   work areas.
+- Structured character cards: identity, role, drive, fear, personality tags,
+  appearance, background, relationship web, and current status. The cards
+  seed the evolution sandbox and can be synced to the knowledge library as
+  formatted proposals.
 - Conversation-based drafting tied to the active story project and chapter.
 - Conversation messages and chapter excerpts can be saved as story reference
   material without exposing backend workflow terms.

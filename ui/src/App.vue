@@ -4,6 +4,8 @@ import { computed, onMounted, onUnmounted, ref } from "vue";
 import {
   type ApiRecord,
   type Chapter,
+  type CharacterCard,
+  type CharacterRelationship,
   type CreativeMessage,
   type EvolutionCastMember,
   type EvolutionState,
@@ -52,6 +54,8 @@ const activeChapterKey = "rhine-lore-active-chapter";
 const primaryActivityIds: Activity[] = ["studio", "chat", "novel", "context", "evolution"];
 const storySetupActivities: Activity[] = ["story", "world", "characters"];
 const genreOptions = ["奇幻", "科幻", "悬疑", "都市", "历史", "爱情", "轻小说", "未分类"];
+const characterRoles = ["主角", "重要配角", "配角", "反派", "盟友", "导师", "恋人"];
+const characterStatusOptions = ["正常", "受伤", "失踪", "被囚禁", "死亡", "未知"];
 
 const activities: {id: Activity; label: string; icon: GameIconName; description: string}[] = [
   {id: "studio", label: "工作台", icon: "book", description: "选择故事和开始写作"},
@@ -338,6 +342,30 @@ function loadProjects(): StoryProject[] {
   ];
 }
 
+function normalizeCharacter(item: Partial<CharacterCard> & Partial<LoreItem>): CharacterCard {
+  const legacyTitle = item.title || "";
+  const legacyContent = item.content || "";
+  return {
+    id: item.id || uid("character"),
+    name: item.name || legacyTitle || "未命名角色",
+    identity: item.identity || "",
+    role: item.role || "配角",
+    drive: item.drive || "",
+    fear: item.fear || "",
+    traits: item.traits || "",
+    appearance: item.appearance || "",
+    background: item.background || "",
+    relationships: Array.isArray(item.relationships)
+      ? item.relationships.map((relation: CharacterRelationship) => ({
+          name: String(relation?.name ?? ""),
+          relation: String(relation?.relation ?? ""),
+        }))
+      : [],
+    status: item.status || "正常",
+    notes: item.notes || legacyContent || "",
+  };
+}
+
 function normalizeProject(project: Partial<StoryProject>): StoryProject {
   const chat = (project.chat ?? []).map((message) => {
     if (
@@ -358,7 +386,7 @@ function normalizeProject(project: Partial<StoryProject>): StoryProject {
     genre: project.genre || "未分类",
     summary: project.summary || "",
     world: project.world ?? [],
-    characters: project.characters ?? [],
+    characters: (project.characters ?? []).map(normalizeCharacter),
     chapters: project.chapters ?? [],
     chat,
   };
@@ -569,14 +597,53 @@ function continueSetup(): void {
   activity.value = "chat";
 }
 
-function addLoreItem(kind: "world" | "characters"): void {
+function addLoreItem(): void {
   const project = activeProject.value;
   const item: LoreItem = {
-    id: uid(kind),
-    title: kind === "world" ? "新设定" : "新角色",
+    id: uid("world"),
+    title: "新设定",
     content: "",
   };
-  project[kind].push(item);
+  project.world.push(item);
+  saveProjects();
+}
+
+function addCharacter(): void {
+  const project = activeProject.value;
+  const card: CharacterCard = {
+    id: uid("character"),
+    name: "新角色",
+    identity: "",
+    role: "配角",
+    drive: "",
+    fear: "",
+    traits: "",
+    appearance: "",
+    background: "",
+    relationships: [],
+    status: "正常",
+    notes: "",
+  };
+  project.characters.push(card);
+  saveProjects();
+}
+
+function removeCharacter(card: CharacterCard): void {
+  const project = activeProject.value;
+  const index = project.characters.findIndex((item) => item.id === card.id);
+  if (index >= 0) {
+    project.characters.splice(index, 1);
+    saveProjects();
+  }
+}
+
+function addRelationship(card: CharacterCard): void {
+  card.relationships.push({name: "", relation: ""});
+  saveProjects();
+}
+
+function removeRelationship(card: CharacterCard, index: number): void {
+  card.relationships.splice(index, 1);
   saveProjects();
 }
 
@@ -612,7 +679,19 @@ function buildCreativePrompt(userText: string): string {
     .join("\n");
   const characters = activeProject.value.characters
     .slice(0, 5)
-    .map((item) => `${item.title}: ${item.content}`)
+    .map((card) =>
+      [
+        `${card.name}（${card.role}${card.identity ? ` · ${card.identity}` : ""}）`,
+        card.drive ? `欲望：${card.drive}` : "",
+        card.fear ? `恐惧：${card.fear}` : "",
+        card.traits ? `性格：${card.traits}` : "",
+        card.relationships.length > 0
+          ? `关系：${card.relationships.map((relation) => `${relation.name || "?"}（${relation.relation || "?"}）`).join("；")}`
+          : "",
+      ]
+        .filter(Boolean)
+        .join("；"),
+    )
     .join("\n");
   const selectedReferences = selectedKnowledgeNodes.value
     .slice(0, 6)
@@ -818,13 +897,43 @@ async function saveChatAsKnowledge(): Promise<void> {
   }
 }
 
-async function submitLoreItem(kind: "world" | "characters", item: LoreItem): Promise<void> {
+async function submitLoreItem(kind: "world" | "characters", item: LoreItem | CharacterCard): Promise<void> {
   const project = activeProject.value;
   const titlePrefix = kind === "world" ? "World" : "Character";
-  const content = [`# ${item.title}`, "", `Project: ${project.name}`, "", item.content].join("\n");
+  let title = "";
+  let content = "";
+  if (kind === "world") {
+    const lore = item as LoreItem;
+    title = lore.title;
+    content = [`# ${lore.title}`, "", `Project: ${project.name}`, "", lore.content].join("\n");
+  } else {
+    const card = item as CharacterCard;
+    title = card.name;
+    const relationships = card.relationships
+      .map((relation) => `${relation.name || "?"}（${relation.relation || "?"}）`)
+      .join("；");
+    content = [
+      `# ${card.name}`,
+      "",
+      `Project: ${project.name}`,
+      "",
+      `身份：${card.identity || "未设定"}`,
+      `角色定位：${card.role}`,
+      `欲望：${card.drive || "未设定"}`,
+      `恐惧：${card.fear || "未设定"}`,
+      `性格：${card.traits || "未设定"}`,
+      `外貌：${card.appearance || "未设定"}`,
+      `背景：${card.background || "未设定"}`,
+      `状态：${card.status}`,
+      relationships ? `关系：${relationships}` : "",
+      card.notes ? `备注：\n${card.notes}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
   const result = await perform("保存资料", () =>
     createManualProposal({
-      title: `${titlePrefix}: ${item.title}`,
+      title: `${titlePrefix}: ${title}`,
       node_type: "Note",
       content,
       authority: "experimental",
@@ -1690,13 +1799,13 @@ onUnmounted(() => {
               <template #header>
                 <div class="card-header">
                   <span>世界观</span>
-                  <el-button size="small" @click="addLoreItem('world')">添加设定</el-button>
+                  <el-button size="small" @click="addLoreItem()">添加设定</el-button>
                 </div>
               </template>
               <div v-if="activeProject.world.length === 0" class="product-empty-state">
                 <strong>还没有世界观设定</strong>
                 <p>可以先写一个地点、一条规则，或者故事发生前的重要事件。</p>
-                <el-button type="primary" @click="addLoreItem('world')">添加第一条设定</el-button>
+                <el-button type="primary" @click="addLoreItem()">添加第一条设定</el-button>
               </div>
               <div class="lore-editor-grid">
                 <div v-for="item in activeProject.world" :key="item.id" class="editor-block">
@@ -1708,24 +1817,87 @@ onUnmounted(() => {
             </el-card>
           </section>
 
-          <section v-else-if="activity === 'characters'" class="activity-panel">
+          <section v-else-if="activity === 'characters'" class="activity-panel characters-panel">
             <el-card shadow="never">
               <template #header>
                 <div class="card-header">
-                  <span>角色</span>
-                  <el-button size="small" @click="addLoreItem('characters')">添加角色</el-button>
+                  <span>角色卡</span>
+                  <el-space wrap>
+                    <el-button size="small" type="primary" @click="addCharacter">添加角色</el-button>
+                    <el-button size="small" @click="activity = 'evolution'">去演化沙盘</el-button>
+                  </el-space>
                 </div>
               </template>
               <div v-if="activeProject.characters.length === 0" class="product-empty-state">
-                <strong>还没有角色</strong>
-                <p>从主角开始，写下名字、目标，以及此刻最担心的事。</p>
-                <el-button type="primary" @click="addLoreItem('characters')">添加第一个角色</el-button>
+                <strong>还没有角色卡</strong>
+                <p>从主角开始：写下名字、身份，以及他此刻最想要和最怕失去的东西。</p>
+                <el-button type="primary" @click="addCharacter">添加第一张角色卡</el-button>
               </div>
-              <div class="lore-editor-grid">
-                <div v-for="item in activeProject.characters" :key="item.id" class="editor-block">
-                  <el-input v-model="item.title" @input="saveProjects" />
-                  <el-input v-model="item.content" type="textarea" :rows="7" @input="saveProjects" />
-                  <el-button size="small" @click="submitLoreItem('characters', item)">同步到资料库</el-button>
+              <div class="character-card-grid">
+                <div v-for="card in activeProject.characters" :key="card.id" class="character-card">
+                  <div class="character-card-head">
+                    <div class="character-card-avatar">{{ (card.name || "?").slice(0, 1) }}</div>
+                    <div class="character-card-title">
+                      <el-input v-model="card.name" class="character-name-input" placeholder="姓名" @input="saveProjects" />
+                      <div class="character-identity-row">
+                        <el-input v-model="card.identity" placeholder="身份 / 称号，如：雾港送信人" @input="saveProjects" />
+                        <el-select v-model="card.role" size="small" style="width: 130px" @change="saveProjects">
+                          <el-option v-for="role in characterRoles" :key="role" :label="role" :value="role" />
+                        </el-select>
+                      </div>
+                    </div>
+                    <el-button size="small" type="danger" plain @click="removeCharacter(card)">删除</el-button>
+                  </div>
+
+                  <div class="character-card-section">
+                    <label>欲望 / 目标</label>
+                    <el-input v-model="card.drive" placeholder="他最想要什么？" @input="saveProjects" />
+                    <label>恐惧</label>
+                    <el-input v-model="card.fear" placeholder="他最怕失去什么？" @input="saveProjects" />
+                  </div>
+
+                  <div class="character-card-section">
+                    <label>性格标签</label>
+                    <el-input v-model="card.traits" placeholder="例如：谨慎、毒舌、重情义（用逗号分隔）" @input="saveProjects" />
+                  </div>
+
+                  <div class="character-card-section">
+                    <label>关系</label>
+                    <div v-for="(relation, index) in card.relationships" :key="index" class="relationship-row">
+                      <el-input v-model="relation.name" placeholder="对方姓名" size="small" @input="saveProjects" />
+                      <el-input v-model="relation.relation" placeholder="关系，如：恋人 / 死敌" size="small" @input="saveProjects" />
+                      <el-button size="small" @click="removeRelationship(card, index)">×</el-button>
+                    </div>
+                    <el-button size="small" @click="addRelationship(card)">添加关系</el-button>
+                  </div>
+
+                  <div class="character-card-section character-detail-grid">
+                    <div>
+                      <label>外貌特征</label>
+                      <el-input v-model="card.appearance" type="textarea" :rows="3" placeholder="衣着、气质、标志性细节" @input="saveProjects" />
+                    </div>
+                    <div>
+                      <label>背景故事</label>
+                      <el-input v-model="card.background" type="textarea" :rows="3" placeholder="他来自哪里，经历过什么" @input="saveProjects" />
+                    </div>
+                  </div>
+
+                  <div class="character-card-section character-status-row">
+                    <div>
+                      <label>当前状态</label>
+                      <el-select v-model="card.status" size="small" @change="saveProjects">
+                        <el-option v-for="status in characterStatusOptions" :key="status" :label="status" :value="status" />
+                      </el-select>
+                    </div>
+                    <div class="character-notes-field">
+                      <label>备注</label>
+                      <el-input v-model="card.notes" type="textarea" :rows="2" placeholder="其他想记住的事" @input="saveProjects" />
+                    </div>
+                  </div>
+
+                  <div class="character-card-actions">
+                    <el-button size="small" @click="submitLoreItem('characters', card)">同步到资料库</el-button>
+                  </div>
                 </div>
               </div>
             </el-card>
@@ -2129,7 +2301,7 @@ onUnmounted(() => {
                   <strong>参演角色（{{ activeProject.characters.length }}）</strong>
                   <div class="evolution-cast-chips">
                     <span v-for="character in activeProject.characters" :key="character.id">
-                      {{ character.title }}
+                      {{ character.name }}
                     </span>
                     <span v-if="activeProject.characters.length === 0">还没有角色，会自动生成一位“主人公”</span>
                   </div>
@@ -2284,8 +2456,12 @@ onUnmounted(() => {
                     </div>
                     <div v-for="member in evolutionCast" :key="member.id" class="cast-row" :class="{dead: !member.alive}">
                       <strong>{{ member.name }} <small>{{ member.role }}</small></strong>
+                      <span v-if="member.identity">{{ member.identity }}</span>
                       <span>{{ member.drive }}</span>
                       <small>恐惧：{{ member.fear }}</small>
+                      <div v-if="member.traits?.length" class="cast-trait-chips">
+                        <span v-for="trait in member.traits" :key="trait">{{ trait }}</span>
+                      </div>
                       <small>
                         关系：{{
                           Object.keys(member.relations)

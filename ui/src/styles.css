@@ -2553,3 +2553,132 @@ body {
   }
 }
 
+/* Character cards */
+.character-card-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.character-card {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid #d5dce5;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #fbfcfe, #f4f7fb);
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.05);
+}
+
+.character-card label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: #5b6b7c;
+}
+
+.character-card-head {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+}
+
+.character-card-avatar {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #3b6fb5, #25497a);
+  color: #fff;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.character-card-title {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.character-name-input .el-input__wrapper {
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.character-identity-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 130px;
+  gap: 6px;
+}
+
+.character-card-section {
+  display: grid;
+  gap: 6px;
+}
+
+.character-detail-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.character-detail-grid > div {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.character-status-row {
+  grid-template-columns: 140px minmax(0, 1fr);
+  align-items: start;
+}
+
+.character-status-row > div {
+  display: grid;
+  gap: 6px;
+}
+
+.relationship-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 6px;
+}
+
+.character-card-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.cast-trait-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.cast-trait-chips span {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #e8f0fa;
+  color: #2b4a6f;
+  font-size: 12px;
+}
+
+@media (max-width: 980px) {
+  .character-card-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 720px) {
+  .character-card-head {
+    grid-template-columns: 40px minmax(0, 1fr) auto;
+  }
+
+  .character-identity-row,
+  .character-detail-grid,
+  .character-status-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
