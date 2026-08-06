@@ -2241,6 +2241,23 @@ body {
   margin-bottom: 12px;
 }
 
+.evolution-guidance-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px dashed #b8cfe8;
+  border-radius: 10px;
+  background: #fbfdff;
+}
+
+.evolution-guidance-row small {
+  grid-column: 1 / -1;
+  color: #5b6b7c;
+}
+
 .evolution-ending {
   display: flex;
   align-items: baseline;
@@ -2445,7 +2462,7 @@ body {
 }
 
 .novel-turn-chapter + .novel-turn-chapter {
-  margin-top: 26px;
+  margin-top: 0;
 }
 
 .novel-turn-chapter h2 {
@@ -2550,6 +2567,15 @@ body {
 
   .evolution-cast-chips span {
     font-size: 12px;
+  }
+
+  .evolution-guidance-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .evolution-guidance-row .el-button {
+    width: 100%;
+    margin-left: 0;
   }
 }
 

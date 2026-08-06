@@ -228,6 +228,7 @@ export type EvolutionState = {
   settings: EvolutionSettings;
   updated_at: string;
   ai_prose: Record<string, string>;
+  guidance: string;
 };
 
 export type EvolutionNovelChapter = {
@@ -441,6 +442,14 @@ export function generateEvolutionProseApi(body: {
   };
 }): Promise<EvolutionView> {
   return postJson("/lore-api/evolution/ai-prose", body);
+}
+
+export function guideEvolution(body: {
+  project_id: string;
+  guidance: string;
+  viewpoint_id?: string;
+}): Promise<EvolutionView> {
+  return postJson("/lore-api/evolution/guide", body);
 }
 
 export type LlmChatMessage = {

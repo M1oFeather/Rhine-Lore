@@ -125,6 +125,19 @@ class EvolutionApiTests(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertIn("API Key", payload["error"])
 
+    def test_guide_sets_guidance(self) -> None:
+        self._start("story-guide")
+        status, payload = self._request(
+            "POST",
+            "/lore-api/evolution/guide",
+            {"project_id": "story-guide", "guidance": "让沈砚背叛林澈"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["state"]["guidance"], "让沈砚背叛林澈")
+        status, payload = self._request("GET", "/lore-api/evolution/state?project_id=story-guide")
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["state"]["guidance"], "让沈砚背叛林澈")
+
     def test_reset_deletes_run(self) -> None:
         self._start()
         status, _ = self._request("POST", "/lore-api/evolution/reset", {"project_id": "story-1"})

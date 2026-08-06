@@ -317,6 +317,28 @@ class WorldMapTests(unittest.TestCase):
         self.assertIn("林澈", messages[1]["content"])
         self.assertIn("第1回合", messages[1]["content"])
 
+    def test_guidance_biases_events_and_participants(self) -> None:
+        settings = EvolutionSettings(branch_frequency=0, chaos=100)
+        state = start_run("p1", "雾港来信", "悬疑", CHARACTERS, WORLD, settings=settings, seed=5)
+        state.guidance = "让沈砚背叛林澈"
+        state, _ = advance(state)
+        event = state.history[0]
+        self.assertEqual(event.kind, "背叛")
+        self.assertIn("rival", event.participants)
+        self.assertIn("hero", event.participants)
+
+    def test_ai_prompt_includes_guidance_and_previous_prose(self) -> None:
+        settings = EvolutionSettings(branch_frequency=0)
+        state = start_run("p1", "雾港来信", "悬疑", CHARACTERS, WORLD, settings=settings, seed=5)
+        state, _ = advance(state)
+        state.guidance = "让林澈发现旧码头有火光"
+        state.ai_prose["1:hero"] = "林澈沿着河岸慢慢往前走。"
+        messages = build_ai_prose_prompt(state, "hero")
+        content = messages[1]["content"]
+        self.assertIn("导演指令", content)
+        self.assertIn("旧码头有火光", content)
+        self.assertIn("林澈沿着河岸慢慢往前走", content)
+
 
 class EndingTests(unittest.TestCase):
     def test_ending_fires_without_active_major_threads(self) -> None:

@@ -39,6 +39,25 @@ GENRE_WEIGHTS: dict[str, dict[str, int]] = {
 }
 DEFAULT_WEIGHTS = {kind: 2 for kind in EVENT_KINDS}
 
+GUIDANCE_KIND_KEYWORDS: dict[str, str] = {
+    "背叛": "背叛",
+    "结盟": "结盟",
+    "联盟": "结盟",
+    "同盟": "结盟",
+    "冲突": "冲突",
+    "吵架": "冲突",
+    "战斗": "冲突",
+    "威胁": "威胁",
+    "危险": "威胁",
+    "秘密": "秘密",
+    "发现": "发现",
+    "相遇": "相遇",
+    "见面": "相遇",
+    "失去": "失去",
+    "回归": "回归",
+    "平静": "平静",
+}
+
 SECRETS = [
     "钟楼每晚零点都会多敲一下",
     "那封没有署名的信其实来自过去",
@@ -169,6 +188,7 @@ class EvolutionState:
     settings: EvolutionSettings = field(default_factory=EvolutionSettings)
     updated_at: str = ""
     ai_prose: dict[str, str] = field(default_factory=dict)
+    guidance: str = ""
 
 
 @dataclass
@@ -495,12 +515,35 @@ def _event_count(state: EvolutionState, rng: random.Random) -> int:
     return min(3, base)
 
 
+def _guidance_bias(state: EvolutionState) -> tuple[str | None, list[str]]:
+    guidance = (state.guidance or "").strip()
+    if not guidance:
+        return None, []
+    kind = next(
+        (candidate for keyword, candidate in GUIDANCE_KIND_KEYWORDS.items() if keyword in guidance),
+        None,
+    )
+    participants = [member.id for member in state.cast if member.name and member.name in guidance]
+    return kind, participants
+
+
 def _plan_event(state: EvolutionState, rng: random.Random) -> EvolutionEvent:
-    kind = _pick_weighted_kind(state, rng)
-    primary = _pick_primary(state, rng)
-    secondary = _pick_secondary(state, rng, primary)
+    forced_kind, forced_participants = _guidance_bias(state)
+    kind = forced_kind or _pick_weighted_kind(state, rng)
+    if forced_participants:
+        primary = _member(state, forced_participants[0])
+        if primary is None:
+            primary = _pick_primary(state, rng)
+        secondary = (
+            _member(state, forced_participants[1])
+            if len(forced_participants) > 1
+            else _pick_secondary(state, rng, primary)
+        )
+    else:
+        primary = _pick_primary(state, rng)
+        secondary = _pick_secondary(state, rng, primary)
     participants = [primary.id]
-    if kind in {"相遇", "冲突", "背叛", "结盟"} and secondary is not None:
+    if kind in {"相遇", "冲突", "背叛", "结盟"} and secondary is not None and secondary.id != primary.id:
         participants.append(secondary.id)
     location = _pick_location(state, rng, primary)
     event = EvolutionEvent(
@@ -1008,6 +1051,18 @@ def build_ai_prose_prompt(state: EvolutionState, viewpoint_id: str = "") -> list
     if viewpoint is None:
         viewpoint = state.cast[0] if state.cast else None
     viewpoint_name = viewpoint.name if viewpoint else "主角"
+    resolved_viewpoint_id = viewpoint.id if viewpoint else (state.cast[0].id if state.cast else "")
+    previous_prose = [
+        text
+        for _, text in sorted(
+            (
+                (int(key.split(":")[0]), text)
+                for key, text in state.ai_prose.items()
+                if ":" in key and key.endswith(f":{resolved_viewpoint_id}")
+            ),
+            key=lambda item: item[0],
+        )[-2:]
+    ]
     cast_lines = [
         (
             f"{member.name}（{member.role}"
@@ -1035,10 +1090,19 @@ def build_ai_prose_prompt(state: EvolutionState, viewpoint_id: str = "") -> list
         f"已知事实：{'；'.join(state.world.facts[:5]) or '暂无'}",
         f"角色：\n" + "\n".join(cast_lines) if cast_lines else "角色：暂无",
         f"最近发生的事件：\n" + "\n".join(event_lines) if event_lines else "最近发生的事件：暂无",
-        "",
-        f"请以「{viewpoint_name}」的有限视角，把最近发生的事写成一段 300-500 字的正文。"
-        "只能写该角色亲身经历或亲眼看到的事，其它角色的秘密与私事一律不写。",
     ]
+    if state.guidance:
+        user.append(f"导演指令（必须遵守）：{state.guidance}")
+    if previous_prose:
+        user.append(
+            "上文（最近两回 AI 正文，续写时保持人物、语气与时间连续性，不要重复）：\n"
+            + "\n\n".join(previous_prose)
+        )
+    user.append("")
+    user.append(
+        f"请以「{viewpoint_name}」的有限视角，紧接上文续写 300-500 字正文。"
+        "只能写该角色亲身经历或亲眼看到的事，其它角色的秘密与私事一律不写。"
+    )
     return [
         {"role": "system", "content": system},
         {"role": "user", "content": "\n\n".join(user)},
@@ -1152,6 +1216,7 @@ def evolution_state_from_dict(data: dict[str, Any]) -> EvolutionState:
         settings=settings,
         updated_at=str(data.get("updated_at") or ""),
         ai_prose={str(key): str(value) for key, value in (data.get("ai_prose") or {}).items()},
+        guidance=str(data.get("guidance") or ""),
     )
 
 

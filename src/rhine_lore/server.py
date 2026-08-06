@@ -630,6 +630,20 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
                 EVOLUTION_STORE.save(state)
                 self._send_json(200, _evolution_payload(state, viewpoint_id=viewpoint_id))
                 return
+            if self.command == "POST" and parsed_request.path == "/lore-api/evolution/guide":
+                payload = self._read_json_body()
+                project_id = str(payload.get("project_id") or "").strip()
+                state = EVOLUTION_STORE.load(project_id)
+                if state is None:
+                    self._send_json(404, {"error": "演化尚未开始"})
+                    return
+                state.guidance = str(payload.get("guidance") or "").strip()
+                EVOLUTION_STORE.save(state)
+                self._send_json(
+                    200,
+                    _evolution_payload(state, viewpoint_id=str(payload.get("viewpoint_id") or "")),
+                )
+                return
             if self.command == "POST" and parsed_request.path == "/lore-api/evolution/reset":
                 payload = self._read_json_body()
                 project_id = str(payload.get("project_id") or "").strip()

@@ -29,6 +29,7 @@ import {
   getEvolutionState,
   getVaultRuntimeStatus,
   getVaultWebStatus,
+  guideEvolution,
   health,
   installVaultWeb,
   llmChat,
@@ -134,6 +135,7 @@ const evolutionAutoResolve = ref(false);
 const evolutionAutoPlay = ref(false);
 const evolutionSpeed = ref(4);
 const evolutionSeedInput = ref("");
+const evolutionGuidance = ref("");
 const characterEditorMode = ref<"simple" | "full">(
   localStorage.getItem("rhine-lore-character-mode") === "full" ? "full" : "simple",
 );
@@ -1631,6 +1633,7 @@ async function loadEvolutionView(): Promise<boolean> {
   try {
     const view = await getEvolutionState(project.id, evolutionViewpoint.value || "");
     evolutionView.value = view;
+    evolutionGuidance.value = view.state.guidance ?? "";
     if (!evolutionViewpoint.value && view.viewpoints.length > 0) {
       evolutionViewpoint.value = view.viewpoints[0].id;
     }
@@ -1639,6 +1642,30 @@ async function loadEvolutionView(): Promise<boolean> {
     evolutionView.value = null;
     return false;
   }
+}
+
+async function saveEvolutionGuidance(): Promise<void> {
+  const project = activeProject.value;
+  if (!project || !evolutionState.value) {
+    return;
+  }
+  const view = await perform("保存引导", () =>
+    guideEvolution({
+      project_id: project.id,
+      guidance: evolutionGuidance.value.trim(),
+      viewpoint_id: evolutionViewpoint.value || "",
+    }),
+  );
+  if (view) {
+    evolutionView.value = view;
+    evolutionGuidance.value = view.state.guidance ?? "";
+    markSaved(evolutionGuidance.value ? "引导已保存，下一回合生效" : "引导已清空");
+  }
+}
+
+function clearEvolutionGuidance(): void {
+  evolutionGuidance.value = "";
+  void saveEvolutionGuidance();
 }
 
 async function beginEvolution(): Promise<void> {
@@ -1674,6 +1701,7 @@ async function beginEvolution(): Promise<void> {
   );
   if (view) {
     evolutionView.value = view;
+    evolutionGuidance.value = view.state.guidance ?? "";
     if (view.viewpoints.length > 0) {
       evolutionViewpoint.value = view.viewpoints[0].id;
     }
@@ -1695,6 +1723,7 @@ async function runEvolutionTurn(choiceId?: string): Promise<void> {
       viewpoint_id: evolutionViewpoint.value || "",
     });
     evolutionView.value = view;
+    evolutionGuidance.value = view.state.guidance ?? "";
     if (llmApiKey.value.trim() && aiAutoProse.value && view.result?.advanced) {
       void generateStoredProse();
     }
@@ -1764,6 +1793,7 @@ async function switchEvolutionViewpoint(): Promise<void> {
   try {
     const view = await getEvolutionState(project.id, evolutionViewpoint.value || "");
     evolutionView.value = view;
+    evolutionGuidance.value = view.state.guidance ?? "";
   } catch (error) {
     runState.value = {error: error instanceof Error ? error.message : String(error)};
   }
@@ -1777,10 +1807,10 @@ function acceptEvolutionIntoChapter(): void {
   }
   const novel = view.novel;
   const sourceTitle = novel?.viewpoint_name ? `${novel.viewpoint_name}的视角` : "演化记录";
-  const chapters = novel?.chapters ?? [];
+  const chapters = evolutionNovelChapters.value;
   const body =
     chapters.length > 0
-      ? chapters.map((chapter) => [chapter.title, ...chapter.paragraphs].join("\n\n")).join("\n\n")
+      ? chapters.flatMap((chapter) => chapter.paragraphs).join("\n\n")
       : view.sandbox;
   const entry = [
     `## 演化记录 · ${sourceTitle}（第 ${view.state.turn} 回合）`,
@@ -1963,6 +1993,7 @@ async function generateStoredProse(): Promise<void> {
     });
     if (view) {
       evolutionView.value = view;
+      evolutionGuidance.value = view.state.guidance ?? "";
     }
   } catch {
     // 生成失败时保留模板正文，不打断演化。
@@ -1994,6 +2025,7 @@ async function generateEvolutionProse(): Promise<void> {
     return;
   }
   evolutionView.value = result;
+  evolutionGuidance.value = result.state.guidance ?? "";
   const viewpointId = evolutionViewpoint.value || (result.state.cast[0]?.id ?? "");
   aiProse.value = result.state.ai_prose?.[evolutionProseKey(result.state, viewpointId)] ?? "";
   if (aiProse.value) {
@@ -3112,6 +3144,26 @@ onUnmounted(() => {
                     <span>{{ stat.label }}</span>
                   </div>
                 </div>
+                <div class="evolution-guidance-row">
+                  <el-input
+                    v-model="evolutionGuidance"
+                    placeholder="引导方向：例如“让沈砚背叛林澈”“下一场戏发生在旧码头”"
+                    clearable
+                    @keydown.enter.prevent="saveEvolutionGuidance"
+                  />
+                  <el-button
+                    size="small"
+                    type="primary"
+                    :loading="busyAction === '保存引导'"
+                    @click="saveEvolutionGuidance"
+                  >
+                    保存引导
+                  </el-button>
+                  <el-button size="small" :disabled="!evolutionGuidance.trim()" @click="clearEvolutionGuidance">
+                    清空
+                  </el-button>
+                  <small>会偏置下一回合的事件与角色，并进入 AI 正文；不清空则持续生效。</small>
+                </div>
                 <div v-if="evolutionState.ending" class="evolution-ending">
                   <strong>尾声</strong>
                   <span>{{ evolutionState.ending }}</span>
@@ -3283,7 +3335,6 @@ onUnmounted(() => {
                 <div class="evolution-novel-reader" :style="{fontSize: `${readerFontSize}px`}">
                   <template v-if="evolutionNovelChapters.length > 0">
                     <div v-for="chapter in evolutionNovelChapters" :key="chapter.turn" class="novel-turn-chapter">
-                      <h2>{{ chapter.title }} <span v-if="chapter.ai" class="ai-badge">AI</span></h2>
                       <p v-for="(paragraph, index) in chapter.paragraphs" :key="index">{{ paragraph }}</p>
                     </div>
                     <div v-if="evolutionState.ending" class="novel-turn-chapter">
