@@ -17,11 +17,13 @@ from rhine_lore.engine import (  # noqa: E402
     EvolutionState,
     EvolutionStore,
     PlotThread,
+    add_character_to_run,
     advance,
     build_ai_prose_prompt,
     _decorate_event,
     _mature_conflict_threads,
     _pick_weighted_kind,
+    needs_new_character,
     render_novel,
     render_sandbox,
     start_run,
@@ -343,6 +345,25 @@ class WorldMapTests(unittest.TestCase):
         self.assertIn("导演指令", content)
         self.assertIn("旧码头有火光", content)
         self.assertIn("林澈沿着河岸慢慢往前走", content)
+
+    def test_needs_new_character_when_cast_small(self) -> None:
+        settings = EvolutionSettings(branch_frequency=0)
+        state = start_run("p1", "雾港来信", "悬疑", CHARACTERS[:1], WORLD, settings=settings, seed=3)
+        self.assertFalse(needs_new_character(state))
+        state.turn = 4
+        self.assertTrue(needs_new_character(state))
+        state.cast[0].alive = False
+        self.assertTrue(needs_new_character(state))
+
+    def test_add_character_to_run(self) -> None:
+        state = start_run("p1", "雾港来信", "悬疑", CHARACTERS, WORLD, seed=3)
+        member = add_character_to_run(
+            state,
+            {"id": "new", "name": "阿岚", "role": "盟友", "secret": "她见过陈栩的角"},
+        )
+        self.assertEqual(state.cast[-1].name, "阿岚")
+        self.assertTrue(member.location)
+        self.assertTrue(any(thread.title == "阿岚的秘密" for thread in state.threads))
 
 
 class EndingTests(unittest.TestCase):

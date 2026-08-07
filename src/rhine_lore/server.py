@@ -21,13 +21,16 @@ from rhine_lore.engine import (
     EvolutionState,
     EvolutionStore,
     TurnResult,
+    add_character_to_run,
     advance,
     build_ai_prose_prompt,
     evolution_settings_from_dict,
     evolution_state_to_dict,
+    needs_new_character,
     render_novel,
     render_sandbox,
     start_run,
+    suggested_character,
     turn_result_to_dict,
     viewpoint_options,
 )
@@ -398,6 +401,7 @@ def _evolution_payload(
     viewpoint_id: str = "",
 ) -> dict[str, Any]:
     viewpoint = viewpoint_id or (state.cast[0].id if state.cast else "")
+    wants_character = needs_new_character(state)
     return {
         "state": evolution_state_to_dict(state),
         "sandbox": render_sandbox(state),
@@ -405,6 +409,8 @@ def _evolution_payload(
         "viewpoints": viewpoint_options(state),
         "result": turn_result_to_dict(result) if result else None,
         "message": result.message if result else "",
+        "needs_character": wants_character,
+        "suggested_character": suggested_character(state) if wants_character else None,
     }
 
 
@@ -638,6 +644,24 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
                     self._send_json(404, {"error": "演化尚未开始"})
                     return
                 state.guidance = str(payload.get("guidance") or "").strip()
+                EVOLUTION_STORE.save(state)
+                self._send_json(
+                    200,
+                    _evolution_payload(state, viewpoint_id=str(payload.get("viewpoint_id") or "")),
+                )
+                return
+            if self.command == "POST" and parsed_request.path == "/lore-api/evolution/add-character":
+                payload = self._read_json_body()
+                project_id = str(payload.get("project_id") or "").strip()
+                state = EVOLUTION_STORE.load(project_id)
+                if state is None:
+                    self._send_json(404, {"error": "演化尚未开始"})
+                    return
+                character = payload.get("character") or {}
+                if not str(character.get("name") or character.get("title") or "").strip():
+                    self._send_json(400, {"error": "角色姓名不能为空"})
+                    return
+                add_character_to_run(state, character)
                 EVOLUTION_STORE.save(state)
                 self._send_json(
                     200,

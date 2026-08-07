@@ -154,6 +154,23 @@ class EvolutionApiTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(payload["state"]["guidance"], "让沈砚背叛林澈")
 
+    def test_add_character_to_run_api(self) -> None:
+        payload = self._start("story-addchar")
+        self.assertEqual(len(payload["state"]["cast"]), 2)
+        status, payload = self._request(
+            "POST",
+            "/lore-api/evolution/add-character",
+            {"project_id": "story-addchar", "character": {"name": "阿岚", "role": "盟友"}, "viewpoint_id": "hero"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(len(payload["state"]["cast"]), 3)
+        status, payload = self._request(
+            "POST",
+            "/lore-api/evolution/add-character",
+            {"project_id": "story-addchar", "character": {}},
+        )
+        self.assertEqual(status, 400)
+
     def test_reset_deletes_run(self) -> None:
         self._start()
         status, _ = self._request("POST", "/lore-api/evolution/reset", {"project_id": "story-1"})

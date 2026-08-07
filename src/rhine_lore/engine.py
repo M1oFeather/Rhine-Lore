@@ -405,6 +405,37 @@ def _initial_threads(state: EvolutionState) -> list[PlotThread]:
     return threads
 
 
+def needs_new_character(state: EvolutionState) -> bool:
+    alive = [member for member in state.cast if member.alive]
+    return len(alive) < 3 and state.turn >= 3
+
+
+def suggested_character(state: EvolutionState) -> dict[str, str]:
+    roles = ["配角", "盟友", "恋人", "反派"]
+    used_roles = {member.role for member in state.cast}
+    role = next((item for item in roles if item not in used_roles), "配角")
+    return {"role": role, "drive": "寻找自己在故事中的位置"}
+
+
+def add_character_to_run(state: EvolutionState, character: dict[str, Any]) -> CastMember:
+    member = _cast_from_characters([character])[0]
+    member.last_turn = 0
+    locations = state.world.locations or ["故事开始的地方"]
+    member.location = locations[len(state.cast) % len(locations)]
+    state.cast.append(member)
+    if member.secret:
+        state.threads.append(
+            PlotThread(
+                id=f"thread-secret-{member.id}",
+                title=f"{member.name}的秘密",
+                kind="伏笔",
+                participants=[member.id],
+                secret=member.secret,
+            )
+        )
+    return member
+
+
 def start_run(
     project_id: str,
     project_name: str = "",

@@ -291,6 +291,8 @@ export type EvolutionView = {
   viewpoints: {id: string; name: string}[];
   result: EvolutionResult | null;
   message: string;
+  needs_character: boolean;
+  suggested_character: {role: string; drive: string} | null;
 };
 
 export const workspaceIdKey = "rhine-lore-workspace-id";
@@ -479,6 +481,14 @@ export function guideEvolution(body: {
   viewpoint_id?: string;
 }): Promise<EvolutionView> {
   return postJson("/lore-api/evolution/guide", body);
+}
+
+export function addEvolutionCharacter(body: {
+  project_id: string;
+  viewpoint_id?: string;
+  character: ApiRecord;
+}): Promise<EvolutionView> {
+  return postJson("/lore-api/evolution/add-character", body);
 }
 
 export type LlmChatMessage = {

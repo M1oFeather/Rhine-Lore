@@ -21,6 +21,7 @@ import {
   type WorkspaceRecord,
   type WorldCard,
   advanceEvolution,
+  addEvolutionCharacter,
   approveStaging,
   buildContextBundle,
   connectVaultRuntime,
@@ -56,6 +57,11 @@ type Activity = "studio" | "story" | "world" | "characters" | "chat" | "novel" |
 type WorkMode = "write" | "advanced";
 type BackendStatus = "checking" | "online" | "offline";
 type CreateDestination = "novel" | "chat";
+type EvolutionChatMessage = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+};
 type RevisionResult = {
   revisions: {
     chapter_id: string;
@@ -141,7 +147,7 @@ const saveNotice = ref("");
 const lastSavedAt = ref("");
 let saveNoticeTimer: number | undefined;
 const evolutionView = ref<EvolutionView | null>(null);
-const evolutionTab = ref<"sandbox" | "novel">("sandbox");
+const evolutionTab = ref<"sandbox" | "novel" | "chat">("sandbox");
 const evolutionViewpoint = ref("");
 const evolutionChaos = ref(45);
 const evolutionBranchFrequency = ref(35);
@@ -150,6 +156,13 @@ const evolutionAutoPlay = ref(false);
 const evolutionSpeed = ref(4);
 const evolutionSeedInput = ref("");
 const evolutionGuidance = ref("");
+const evolutionStateTab = ref("arc");
+const evolutionChat = ref<EvolutionChatMessage[]>([]);
+const evolutionChatInput = ref("");
+const evolutionChatBusy = ref(false);
+const evolutionCharacterDialogVisible = ref(false);
+const evolutionNewCharacter = ref({name: "", role: "配角", drive: "", secret: ""});
+const ignoredCharacterPromptProjects = ref<string[]>([]);
 const characterEditorMode = ref<"simple" | "full">(
   localStorage.getItem("rhine-lore-character-mode") === "full" ? "full" : "simple",
 );
@@ -1826,6 +1839,152 @@ const evolutionActName = computed(() => {
   return evolutionActNames[index] ?? "尾声";
 });
 
+const evolutionNeedsCharacter = computed(() => {
+  const view = evolutionView.value;
+  return Boolean(
+    view?.needs_character && !ignoredCharacterPromptProjects.value.includes(activeProject.value.id),
+  );
+});
+
+function dismissCharacterPrompt(): void {
+  if (!ignoredCharacterPromptProjects.value.includes(activeProject.value.id)) {
+    ignoredCharacterPromptProjects.value.push(activeProject.value.id);
+  }
+}
+
+function openEvolutionCharacterDialog(): void {
+  const suggestion = evolutionView.value?.suggested_character;
+  evolutionNewCharacter.value = {
+    name: "",
+    role: suggestion?.role ?? "配角",
+    drive: suggestion?.drive ?? "寻找自己在故事中的位置",
+    secret: "",
+  };
+  evolutionCharacterDialogVisible.value = true;
+}
+
+async function confirmAddEvolutionCharacter(): Promise<void> {
+  const project = activeProject.value;
+  const name = evolutionNewCharacter.value.name.trim();
+  if (!name || !evolutionState.value) {
+    return;
+  }
+  const card: CharacterCard = {
+    id: uid("character"),
+    name,
+    identity: "",
+    role: evolutionNewCharacter.value.role,
+    age: "",
+    stance: "",
+    drive: evolutionNewCharacter.value.drive.trim(),
+    fear: "",
+    traits: "",
+    abilities: "",
+    weakness: "",
+    secret: evolutionNewCharacter.value.secret.trim(),
+    speech: "",
+    appearance: "",
+    background: "",
+    relationships: [],
+    status: "正常",
+    notes: "",
+  };
+  project.characters.push(card);
+  saveProjects();
+  const view = await perform("添加角色", () =>
+    addEvolutionCharacter({
+      project_id: project.id,
+      viewpoint_id: evolutionViewpoint.value || "",
+      character: card,
+    }),
+  );
+  if (view) {
+    evolutionView.value = view;
+    evolutionGuidance.value = view.state.guidance ?? "";
+    evolutionCharacterDialogVisible.value = false;
+    markSaved("新角色已加入演化");
+  }
+}
+
+function buildEvolutionChatMessages(question: string): LlmChatMessage[] {
+  const state = evolutionState.value;
+  if (!state) {
+    return [];
+  }
+  const actNames = ["序幕", "发展", "转折", "高潮", "尾声"];
+  const actName = actNames[state.arc.act_index] ?? "尾声";
+  const threads = state.threads
+    .filter((thread) => thread.status === "active")
+    .slice(0, 8)
+    .map((thread) => `【${thread.kind}】${thread.title}${thread.secret ? `：${thread.secret}` : ""}`)
+    .join("\n");
+  const recent = state.history
+    .slice(-6)
+    .map((event) => `[第${event.turn}回合·${event.kind}] ${event.title}：${event.summary}`)
+    .join("\n");
+  const cast = state.cast
+    .slice(0, 8)
+    .map((member) => `${member.name}（${member.role}${member.alive ? "" : "·已故"}）所在地=${member.location || "未知"}`)
+    .join("；");
+  const system =
+    "你是演化剧情的导演助理。基于当前沙盘状态回答创作问题、分析局势、给出下一步建议；回答简洁，必要时给出具体的事件方向。";
+  const user = [
+    `项目：《${state.project_name}》 类型：${state.genre}`,
+    `当前第 ${state.turn} 回合 · ${actName} · 张力 ${state.world.tension}（目标 ${state.arc.tension_range[0]}–${state.arc.tension_range[1]}）`,
+    `结局方向：${state.arc.ending_kind || "未定"}`,
+    `引导指令：${state.guidance || "无"}`,
+    `角色：${cast}`,
+    threads ? `活跃线索：\n${threads}` : "活跃线索：无",
+    `最近事件：\n${recent || "暂无"}`,
+    "",
+    question,
+  ].join("\n\n");
+  return [
+    {role: "system", content: system},
+    {role: "user", content: user},
+  ];
+}
+
+async function sendEvolutionChatMessage(): Promise<void> {
+  const text = evolutionChatInput.value.trim();
+  const state = evolutionState.value;
+  if (!text || !state || evolutionChatBusy.value) {
+    return;
+  }
+  if (!llmApiKey.value.trim()) {
+    runState.value = {error: "与故事对话需要 AI 通道，请先在首页或右上角配置 API Key"};
+    return;
+  }
+  evolutionChat.value.push({id: uid("chat-message"), role: "user", content: text});
+  evolutionChatInput.value = "";
+  evolutionChatBusy.value = true;
+  persistLlmConfig();
+  const result = await perform("与故事对话", () =>
+    llmChat({
+      base_url: llmBaseUrl.value.trim() || undefined,
+      api_key: llmApiKey.value.trim() || undefined,
+      model: llmModel.value.trim() || undefined,
+      messages: buildEvolutionChatMessages(text),
+    }),
+  );
+  evolutionChatBusy.value = false;
+  const reply = result ? String(result.answer ?? "").trim() : "";
+  evolutionChat.value.push({
+    id: uid("chat-message"),
+    role: "assistant",
+    content: reply || "（没有收到回复，请重试或简化问题）",
+  });
+}
+
+function setEvolutionMessageAsGuidance(message: EvolutionChatMessage): void {
+  evolutionGuidance.value = message.content;
+  void saveEvolutionGuidance();
+}
+
+function clearEvolutionChat(): void {
+  evolutionChat.value = [];
+}
+
 function evolutionCastName(state: EvolutionState | null, memberId: string): string {
   return state?.cast.find((member) => member.id === memberId)?.name ?? memberId;
 }
@@ -3417,6 +3576,7 @@ onUnmounted(() => {
                       <el-radio-group v-model="evolutionTab" size="small">
                         <el-radio-button value="sandbox">沙盘</el-radio-button>
                         <el-radio-button value="novel">小说</el-radio-button>
+                        <el-radio-button value="chat">对话</el-radio-button>
                       </el-radio-group>
                       <el-button
                         type="primary"
@@ -3459,6 +3619,21 @@ onUnmounted(() => {
                     <b>{{ stat.value }}</b>
                     <span>{{ stat.label }}</span>
                   </div>
+                </div>
+                <div v-if="evolutionNeedsCharacter" class="needs-character-banner">
+                  <div>
+                    <strong>角色偏少，故事需要新面孔</strong>
+                    <small>
+                      建议加入一位「{{ evolutionView?.suggested_character?.role || "配角" }}」：
+                      {{ evolutionView?.suggested_character?.drive || "寻找自己在故事中的位置" }}
+                    </small>
+                  </div>
+                  <el-space wrap>
+                    <el-button size="small" type="primary" @click="openEvolutionCharacterDialog">
+                      添加角色
+                    </el-button>
+                    <el-button size="small" @click="dismissCharacterPrompt">稍后</el-button>
+                  </el-space>
                 </div>
                 <div class="evolution-guidance-row">
                   <el-input
@@ -3538,92 +3713,90 @@ onUnmounted(() => {
                 </el-card>
 
                 <div class="evolution-side-stack">
-                  <el-card shadow="never">
-                    <template #header><span>故事弧线</span></template>
-                    <div class="arc-block">
-                      <div class="arc-act">
-                        <strong>{{ evolutionActName }}</strong>
-                        <small>目标张力 {{ evolutionState.arc.tension_range[0] }} – {{ evolutionState.arc.tension_range[1] }}</small>
-                      </div>
-                      <div class="arc-ending">
-                        <small>结局方向</small>
-                        <span>{{ evolutionState.arc.ending_kind || "未定" }}</span>
-                      </div>
-                      <div class="arc-beats">
-                        <div
-                          v-for="beat in evolutionState.arc.beats"
-                          :key="beat.id"
-                          class="arc-beat"
-                          :class="{done: beat.status === 'done'}"
-                        >
-                          <span>{{ beat.status === 'done' ? '✓' : '○' }}</span>
-                          <div>
-                            <strong>{{ beat.title }}</strong>
-                            <small>第 {{ beat.due_turn }} 回合起</small>
+                  <el-card shadow="never" class="evolution-state-card">
+                    <template #header><span>状态面板</span></template>
+                    <el-tabs v-model="evolutionStateTab" class="evolution-state-tabs">
+                      <el-tab-pane label="故事弧线" name="arc">
+                        <div class="arc-block">
+                          <div class="arc-act">
+                            <strong>{{ evolutionActName }}</strong>
+                            <small>目标张力 {{ evolutionState.arc.tension_range[0] }} – {{ evolutionState.arc.tension_range[1] }}</small>
+                          </div>
+                          <div class="arc-ending">
+                            <small>结局方向</small>
+                            <span>{{ evolutionState.arc.ending_kind || "未定" }}</span>
+                          </div>
+                          <div class="arc-beats">
+                            <div
+                              v-for="beat in evolutionState.arc.beats"
+                              :key="beat.id"
+                              class="arc-beat"
+                              :class="{done: beat.status === 'done'}"
+                            >
+                              <span>{{ beat.status === 'done' ? '✓' : '○' }}</span>
+                              <div>
+                                <strong>{{ beat.title }}</strong>
+                                <small>第 {{ beat.due_turn }} 回合起</small>
+                              </div>
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    </div>
-                  </el-card>
-
-                  <el-card shadow="never">
-                    <template #header><span>世界状态</span></template>
-                    <div class="world-state-block">
-                      <div><strong>张力</strong><span>{{ evolutionState.world.tension }} / 100</span></div>
-                      <div>
-                        <strong>地点</strong>
-                        <span>{{ evolutionState.world.locations.join('、') || '暂无' }}</span>
-                      </div>
-                      <div>
-                        <strong>势力</strong>
-                        <span>{{ evolutionState.world.factions.map((faction) => faction.name).join('、') || '暂无' }}</span>
-                      </div>
-                      <div>
-                        <strong>已知事实</strong>
-                        <span>{{ evolutionState.world.facts.join('；') || '暂无' }}</span>
-                      </div>
-                    </div>
-                  </el-card>
-
-                  <el-card shadow="never">
-                    <template #header><span>线索与伏笔</span></template>
-                    <div v-if="evolutionThreads.length === 0" class="product-empty-state compact">
-                      还没有线索。
-                    </div>
-                    <div v-for="thread in evolutionThreads" :key="thread.id" class="thread-row" :class="thread.status">
-                      <span>{{ thread.status === 'resolved' ? '已回收' : thread.status === 'dormant' ? '潜伏' : '进行中' }}</span>
-                      <strong>{{ thread.title }}</strong>
-                      <small>{{ thread.kind }}<template v-if="thread.secret"> · {{ thread.secret }}</template></small>
-                    </div>
-                  </el-card>
-
-                  <el-card shadow="never">
-                    <template #header><span>角色状态</span></template>
-                    <div v-if="evolutionCast.length === 0" class="product-empty-state compact">
-                      还没有角色。
-                    </div>
-                    <div v-for="member in evolutionCast" :key="member.id" class="cast-row" :class="{dead: !member.alive}">
-                      <strong>{{ member.name }} <small>{{ member.role }}</small></strong>
-                      <span v-if="member.identity">{{ member.identity }}</span>
-                      <small v-if="member.location">所在地：{{ member.location }}</small>
-                      <span>{{ member.drive }}</span>
-                      <small>恐惧：{{ member.fear }}</small>
-                      <div v-if="member.traits?.length" class="cast-trait-chips">
-                        <span v-for="trait in member.traits" :key="trait">{{ trait }}</span>
-                      </div>
-                      <small>
-                        关系：{{
-                          Object.keys(member.relations)
-                            .map((id) => `${evolutionCastName(evolutionState, String(id))} ${evolutionRelationLabel(member, String(id))}`)
-                            .join('；') || '暂无'
-                        }}
-                      </small>
-                    </div>
+                      </el-tab-pane>
+                      <el-tab-pane label="世界状态" name="world">
+                        <div class="world-state-block">
+                          <div><strong>张力</strong><span>{{ evolutionState.world.tension }} / 100</span></div>
+                          <div>
+                            <strong>地点</strong>
+                            <span>{{ evolutionState.world.locations.join('、') || '暂无' }}</span>
+                          </div>
+                          <div>
+                            <strong>势力</strong>
+                            <span>{{ evolutionState.world.factions.map((faction) => faction.name).join('、') || '暂无' }}</span>
+                          </div>
+                          <div>
+                            <strong>已知事实</strong>
+                            <span>{{ evolutionState.world.facts.join('；') || '暂无' }}</span>
+                          </div>
+                        </div>
+                      </el-tab-pane>
+                      <el-tab-pane label="线索伏笔" name="threads">
+                        <div v-if="evolutionThreads.length === 0" class="product-empty-state compact">
+                          还没有线索。
+                        </div>
+                        <div v-for="thread in evolutionThreads" :key="thread.id" class="thread-row" :class="thread.status">
+                          <span>{{ thread.status === 'resolved' ? '已回收' : thread.status === 'dormant' ? '潜伏' : '进行中' }}</span>
+                          <strong>{{ thread.title }}</strong>
+                          <small>{{ thread.kind }}<template v-if="thread.secret"> · {{ thread.secret }}</template></small>
+                        </div>
+                      </el-tab-pane>
+                      <el-tab-pane label="角色状态" name="cast">
+                        <div v-if="evolutionCast.length === 0" class="product-empty-state compact">
+                          还没有角色。
+                        </div>
+                        <div v-for="member in evolutionCast" :key="member.id" class="cast-row" :class="{dead: !member.alive}">
+                          <strong>{{ member.name }} <small>{{ member.role }}</small></strong>
+                          <span v-if="member.identity">{{ member.identity }}</span>
+                          <small v-if="member.location">所在地：{{ member.location }}</small>
+                          <span>{{ member.drive }}</span>
+                          <small>恐惧：{{ member.fear }}</small>
+                          <div v-if="member.traits?.length" class="cast-trait-chips">
+                            <span v-for="trait in member.traits" :key="trait">{{ trait }}</span>
+                          </div>
+                          <small>
+                            关系：{{
+                              Object.keys(member.relations)
+                                .map((id) => `${evolutionCastName(evolutionState, String(id))} ${evolutionRelationLabel(member, String(id))}`)
+                                .join('；') || '暂无'
+                            }}
+                          </small>
+                        </div>
+                      </el-tab-pane>
+                    </el-tabs>
                   </el-card>
                 </div>
               </div>
 
-              <el-card v-else shadow="never" class="evolution-novel-card">
+              <el-card v-else-if="evolutionTab === 'novel'" shadow="never" class="evolution-novel-card">
                 <template #header>
                   <div class="card-header">
                     <span>有限视角小说</span>
@@ -3688,6 +3861,54 @@ onUnmounted(() => {
                   </template>
                   <p v-else class="empty-paragraph">还没有可读的章节，先推进一回合。</p>
                 </div>
+              </el-card>
+
+              <el-card v-else shadow="never" class="evolution-chat-card">
+                <template #header>
+                  <div class="card-header">
+                    <span>与故事对话</span>
+                    <el-button size="small" :disabled="evolutionChat.length === 0" @click="clearEvolutionChat">
+                      清空
+                    </el-button>
+                  </div>
+                </template>
+                <div class="evolution-chat-thread">
+                  <div v-if="evolutionChat.length === 0" class="product-empty-state compact">
+                    <strong>像和导演助理聊天一样</strong>
+                    <p>可以问局势、要建议、下指令（例如“总结现在的处境”“下一步制造一场冲突”）。</p>
+                  </div>
+                  <article v-for="message in evolutionChat" :key="message.id" class="chat-message" :class="message.role">
+                    <div class="chat-message-head">
+                      <strong>{{ message.role === "user" ? "我" : "导演助理" }}</strong>
+                      <el-button
+                        v-if="message.role === 'user'"
+                        size="small"
+                        @click="setEvolutionMessageAsGuidance(message)"
+                      >
+                        设为引导
+                      </el-button>
+                    </div>
+                    <p>{{ message.content }}</p>
+                  </article>
+                </div>
+                <div class="chat-composer evolution-chat-composer">
+                  <el-input
+                    v-model="evolutionChatInput"
+                    type="textarea"
+                    :rows="3"
+                    placeholder="问剧情、要建议、下指令……"
+                    @keydown.ctrl.enter.prevent="sendEvolutionChatMessage"
+                  />
+                  <el-button
+                    type="primary"
+                    :loading="evolutionChatBusy"
+                    :disabled="!llmApiKey.trim()"
+                    @click="sendEvolutionChatMessage"
+                  >
+                    发送
+                  </el-button>
+                </div>
+                <small v-if="!llmApiKey.trim()" class="chat-key-hint">需要先配置 AI 通道（首页或右上角）</small>
               </el-card>
             </template>
           </section>
@@ -4000,6 +4221,38 @@ onUnmounted(() => {
           <el-button @click="createDialogVisible = false">取消</el-button>
           <el-button @click="confirmCreateProject('chat')">创建并聊想法</el-button>
           <el-button type="primary" @click="confirmCreateProject('novel')">创建并写第一章</el-button>
+        </div>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="evolutionCharacterDialogVisible"
+      class="evolution-character-dialog"
+      title="为演化添加新角色"
+      width="min(520px, calc(100vw - 24px))"
+    >
+      <el-form label-position="top">
+        <el-form-item label="姓名">
+          <el-input v-model="evolutionNewCharacter.name" placeholder="例如：阿岚" autofocus />
+        </el-form-item>
+        <el-form-item label="角色定位">
+          <el-select v-model="evolutionNewCharacter.role" style="width: 100%">
+            <el-option v-for="role in characterRoles" :key="role" :label="role" :value="role" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="欲望 / 目标">
+          <el-input v-model="evolutionNewCharacter.drive" placeholder="例如：寻找自己在故事中的位置" />
+        </el-form-item>
+        <el-form-item label="秘密（可选，会成为演化伏笔）">
+          <el-input v-model="evolutionNewCharacter.secret" placeholder="例如：她见过陈栩的角" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <div class="create-story-actions">
+          <el-button @click="evolutionCharacterDialogVisible = false">取消</el-button>
+          <el-button type="primary" :loading="busyAction === '添加角色'" @click="confirmAddEvolutionCharacter">
+            添加并进入演化
+          </el-button>
         </div>
       </template>
     </el-dialog>
