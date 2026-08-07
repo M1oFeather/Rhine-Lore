@@ -3417,3 +3417,105 @@ body {
   }
 }
 
+/* Evolution novel as chapter reader */
+.evolution-chapter-strip {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  margin-bottom: 14px;
+}
+
+.evolution-chapter-chip {
+  flex: 0 0 auto;
+  display: grid;
+  gap: 1px;
+  min-width: 96px;
+  padding: 8px 12px;
+  border: 1px solid #d5dce5;
+  border-radius: 10px;
+  background: #f8fafc;
+  color: #263c53;
+  cursor: pointer;
+  text-align: left;
+}
+
+.evolution-chapter-chip.active {
+  border-color: #2563eb;
+  background: #eaf2ff;
+  color: #1f6feb;
+}
+
+.evolution-chapter-chip small {
+  color: #5b6b7c;
+  font-size: 11px;
+}
+
+.evolution-chapter-chip.active small {
+  color: #1f6feb;
+}
+
+.evolution-chapter-reader {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 26px 22px;
+  border: 1px solid #e3eaf2;
+  border-radius: 12px;
+  background: #ffffff;
+  color: #263c53;
+  line-height: 2;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.05);
+}
+
+.evolution-chapter-reader h2 {
+  margin: 0 0 6px;
+  color: #16324f;
+  font-size: 1.3em;
+  text-align: center;
+}
+
+.evolution-chapter-meta {
+  margin: 0 0 18px !important;
+  color: #8a97a6 !important;
+  font-size: 0.78em;
+  text-align: center;
+  text-indent: 0 !important;
+}
+
+.evolution-chapter-reader p {
+  margin: 0 0 1em;
+  text-indent: 2em;
+}
+
+.evolution-chapter-nav {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 26px;
+  padding-top: 18px;
+  border-top: 1px dashed #e3eaf2;
+}
+
+.novel-ending-block {
+  margin-top: 24px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: #f4f1e8;
+  border: 1px solid #e4dcc4;
+}
+
+.novel-ending-block strong {
+  color: #7a5b1e;
+}
+
+.novel-ending-block p {
+  margin: 4px 0 0;
+  color: #6b5c33;
+}
+
+@media (max-width: 720px) {
+  .evolution-chapter-reader {
+    padding: 20px 16px;
+  }
+}
+

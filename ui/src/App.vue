@@ -157,6 +157,7 @@ const evolutionSpeed = ref(4);
 const evolutionSeedInput = ref("");
 const evolutionGuidance = ref("");
 const evolutionStateTab = ref("arc");
+const evolutionChapterIndex = ref(0);
 const evolutionChat = ref<EvolutionChatMessage[]>([]);
 const evolutionChatInput = ref("");
 const evolutionChatBusy = ref(false);
@@ -2349,14 +2350,62 @@ const evolutionNovelChapters = computed(() => {
     return [];
   }
   const viewpointId = evolutionViewpoint.value || novel.viewpoint_id;
-  return novel.chapters.map((chapter) => {
+  const parts = novel.chapters.map((chapter) => {
     const aiText = state.ai_prose?.[`${chapter.turn}:${viewpointId}`];
     if (aiText) {
-      return {...chapter, paragraphs: [aiText], ai: true};
+      return {turn: chapter.turn, paragraphs: [aiText]};
     }
-    return {...chapter, ai: false};
+    return {turn: chapter.turn, paragraphs: chapter.paragraphs};
   });
+  const groups: {
+    index: number;
+    title: string;
+    startTurn: number;
+    endTurn: number;
+    actName: string;
+    paragraphs: string[];
+  }[] = [];
+  for (const part of parts) {
+    const groupIndex = Math.floor((part.turn - 1) / 4);
+    let group = groups.find((item) => Math.floor((item.startTurn - 1) / 4) === groupIndex);
+    if (!group) {
+      group = {
+        index: groups.length,
+        title: `第${groups.length + 1}章`,
+        startTurn: part.turn,
+        endTurn: part.turn,
+        actName: evolutionActNameForTurn(part.turn),
+        paragraphs: [],
+      };
+      groups.push(group);
+    }
+    group.endTurn = part.turn;
+    group.paragraphs.push(...part.paragraphs);
+  }
+  return groups;
 });
+
+const evolutionActiveChapter = computed(() => {
+  const chapters = evolutionNovelChapters.value;
+  const index = Math.min(evolutionChapterIndex.value, Math.max(0, chapters.length - 1));
+  return chapters[index] ?? null;
+});
+
+function evolutionActNameForTurn(turn: number): string {
+  if (turn <= 5) return "序幕";
+  if (turn <= 12) return "发展";
+  if (turn <= 18) return "转折";
+  if (turn <= 24) return "高潮";
+  return "尾声";
+}
+
+function openEvolutionAdjacentChapter(direction: -1 | 1): void {
+  const next = evolutionChapterIndex.value + direction;
+  if (next < 0 || next >= evolutionNovelChapters.value.length) {
+    return;
+  }
+  evolutionChapterIndex.value = next;
+}
 
 async function generateStoredProse(): Promise<void> {
   const project = activeProject.value;
@@ -3799,7 +3848,7 @@ onUnmounted(() => {
               <el-card v-else-if="evolutionTab === 'novel'" shadow="never" class="evolution-novel-card">
                 <template #header>
                   <div class="card-header">
-                    <span>有限视角小说</span>
+                    <span>演化小说 · {{ evolutionActiveChapter?.title || "暂无章节" }}</span>
                     <el-space wrap>
                       <el-select
                         v-model="evolutionViewpoint"
@@ -3814,6 +3863,7 @@ onUnmounted(() => {
                           :value="viewpoint.id"
                         />
                       </el-select>
+                      <el-input-number v-model="readerFontSize" :min="15" :max="26" size="small" />
                       <el-button size="small" type="primary" @click="acceptEvolutionIntoChapter">
                         接收进正文
                       </el-button>
@@ -3849,18 +3899,65 @@ onUnmounted(() => {
                     placeholder="AI 生成的正文草稿，可在这里修改"
                   />
                 </div>
-                <div class="evolution-novel-reader" :style="{fontSize: `${readerFontSize}px`}">
-                  <template v-if="evolutionNovelChapters.length > 0">
-                    <div v-for="chapter in evolutionNovelChapters" :key="chapter.turn" class="novel-turn-chapter">
-                      <p v-for="(paragraph, index) in chapter.paragraphs" :key="index">{{ paragraph }}</p>
-                    </div>
-                    <div v-if="evolutionState.ending" class="novel-turn-chapter">
-                      <h2>尾声</h2>
+                <template v-if="evolutionNovelChapters.length > 0">
+                  <div class="evolution-chapter-strip">
+                    <button
+                      v-for="chapter in evolutionNovelChapters"
+                      :key="chapter.index"
+                      type="button"
+                      class="evolution-chapter-chip"
+                      :class="{active: evolutionActiveChapter?.index === chapter.index}"
+                      @click="evolutionChapterIndex = chapter.index"
+                    >
+                      {{ chapter.title }}
+                      <small>
+                        {{
+                          chapter.startTurn === chapter.endTurn
+                            ? `第${chapter.startTurn}回合`
+                            : `第${chapter.startTurn}–${chapter.endTurn}回合`
+                        }}
+                      </small>
+                    </button>
+                  </div>
+                  <div class="evolution-chapter-reader" :style="{fontSize: `${readerFontSize}px`}">
+                    <h2>{{ evolutionActiveChapter.title }}</h2>
+                    <p class="evolution-chapter-meta">
+                      {{
+                        evolutionActiveChapter.startTurn === evolutionActiveChapter.endTurn
+                          ? `第 ${evolutionActiveChapter.startTurn} 回合`
+                          : `第 ${evolutionActiveChapter.startTurn}–${evolutionActiveChapter.endTurn} 回合`
+                      }}
+                      · {{ evolutionActiveChapter.actName }}
+                    </p>
+                    <p v-for="(paragraph, index) in evolutionActiveChapter.paragraphs" :key="index">
+                      {{ paragraph }}
+                    </p>
+                    <div
+                      v-if="evolutionActiveChapter.index === evolutionNovelChapters.length - 1 && evolutionState.ending"
+                      class="novel-ending-block"
+                    >
+                      <strong>尾声</strong>
                       <p>{{ evolutionState.ending }}</p>
                     </div>
-                  </template>
-                  <p v-else class="empty-paragraph">还没有可读的章节，先推进一回合。</p>
-                </div>
+                    <div class="evolution-chapter-nav">
+                      <el-button
+                        size="small"
+                        :disabled="evolutionChapterIndex <= 0"
+                        @click="openEvolutionAdjacentChapter(-1)"
+                      >
+                        上一章
+                      </el-button>
+                      <el-button
+                        size="small"
+                        :disabled="evolutionChapterIndex >= evolutionNovelChapters.length - 1"
+                        @click="openEvolutionAdjacentChapter(1)"
+                      >
+                        下一章
+                      </el-button>
+                    </div>
+                  </div>
+                </template>
+                <p v-else class="empty-paragraph">还没有可读的章节，先推进一回合。</p>
               </el-card>
 
               <el-card v-else shadow="never" class="evolution-chat-card">
