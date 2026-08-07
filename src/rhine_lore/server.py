@@ -29,6 +29,7 @@ from rhine_lore.engine import (
     needs_new_character,
     render_novel,
     render_sandbox,
+    sanitize_project_id,
     start_run,
     suggested_character,
     turn_result_to_dict,
@@ -40,6 +41,7 @@ ALLOWED_PROXY_HOSTS = {"127.0.0.1", "localhost", "::1"}
 ALLOWED_METHODS = {"GET", "POST", "PATCH"}
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PROJECTS_DIR = PROJECT_ROOT / "data" / "projects"
+PROJECT_BACKUP_FORMAT = "rhine-lore-project-v1"
 DEFAULT_VAULT_HOST = "127.0.0.1"
 DEFAULT_VAULT_PORT = 8795
 DEFAULT_VAULT_PORT_CANDIDATES = (8795, 8796, 8797)
@@ -673,6 +675,61 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
                 project_id = str(payload.get("project_id") or "").strip()
                 EVOLUTION_STORE.delete(project_id)
                 self._send_json(200, {"ok": True})
+                return
+            if self.command == "POST" and parsed_request.path == "/lore-api/projects/backup":
+                payload = self._read_json_body()
+                project = payload.get("project") or {}
+                project_id = str(project.get("id") or "").strip()
+                if not project_id:
+                    raise ValueError("project id 不能为空")
+                store_dir = EVOLUTION_STORE.directory
+                store_dir.mkdir(parents=True, exist_ok=True)
+                path = store_dir / f"{sanitize_project_id(project_id)}.project.json"
+                temporary = path.with_suffix(".json.tmp")
+                temporary.write_text(
+                    json.dumps(
+                        {"format": PROJECT_BACKUP_FORMAT, "project": project},
+                        ensure_ascii=False,
+                        indent=2,
+                    ),
+                    encoding="utf-8",
+                )
+                os.replace(temporary, path)
+                self._send_json(200, {"ok": True, "project_id": project_id})
+                return
+            if self.command == "GET" and parsed_request.path == "/lore-api/projects/backups":
+                rows: list[dict[str, Any]] = []
+                store_dir = EVOLUTION_STORE.directory
+                if store_dir.is_dir():
+                    for path in sorted(store_dir.glob("*.project.json")):
+                        try:
+                            backup = json.loads(path.read_text(encoding="utf-8"))
+                            project = backup.get("project") or {}
+                            rows.append(
+                                {
+                                    "project_id": str(project.get("id") or ""),
+                                    "name": str(project.get("name") or "未命名项目"),
+                                    "updated_at": str(project.get("updated_at") or ""),
+                                }
+                            )
+                        except (OSError, json.JSONDecodeError):
+                            continue
+                self._send_json(200, {"backups": rows})
+                return
+            if self.command == "POST" and parsed_request.path == "/lore-api/projects/restore":
+                payload = self._read_json_body()
+                project_id = str(payload.get("project_id") or "").strip()
+                store_dir = EVOLUTION_STORE.directory
+                path = store_dir / f"{sanitize_project_id(project_id)}.project.json"
+                if not path.is_file():
+                    self._send_json(404, {"error": "没有找到该项目的磁盘备份"})
+                    return
+                backup = json.loads(path.read_text(encoding="utf-8"))
+                project = backup.get("project") or {}
+                if not str(project.get("id") or "").strip():
+                    self._send_json(500, {"error": "备份文件损坏"})
+                    return
+                self._send_json(200, {"project": project})
                 return
         except subprocess.CalledProcessError as exc:
             self._send_json(

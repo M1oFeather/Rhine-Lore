@@ -295,6 +295,12 @@ export type EvolutionView = {
   suggested_character: {role: string; drive: string} | null;
 };
 
+export type ProjectBackupRow = {
+  project_id: string;
+  name: string;
+  updated_at: string;
+};
+
 export const workspaceIdKey = "rhine-lore-workspace-id";
 
 export let workspaceId = localStorage.getItem(workspaceIdKey) || "story-workspace";
@@ -489,6 +495,20 @@ export function addEvolutionCharacter(body: {
   character: ApiRecord;
 }): Promise<EvolutionView> {
   return postJson("/lore-api/evolution/add-character", body);
+}
+
+export function backupProject(project: StoryProject): Promise<{ok: boolean}> {
+  return postJson("/lore-api/projects/backup", {
+    project: {...project, updated_at: new Date().toISOString()},
+  });
+}
+
+export function listProjectBackups(): Promise<{backups: ProjectBackupRow[]}> {
+  return getJson("/lore-api/projects/backups");
+}
+
+export function restoreProjectBackup(projectId: string): Promise<{project: StoryProject}> {
+  return postJson("/lore-api/projects/restore", {project_id: projectId});
 }
 
 export type LlmChatMessage = {

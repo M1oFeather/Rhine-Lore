@@ -178,6 +178,29 @@ class EvolutionApiTests(unittest.TestCase):
         status, _ = self._request("GET", "/lore-api/evolution/state?project_id=story-1")
         self.assertEqual(status, 404)
 
+    def test_project_backup_roundtrip(self) -> None:
+        project = {
+            "id": "bk-1",
+            "name": "雾港来信",
+            "genre": "悬疑",
+            "summary": "",
+            "world": [],
+            "characters": [],
+            "map": {"nodes": [], "edges": []},
+            "chapters": [],
+            "chat": [],
+            "issues": [],
+            "updated_at": "2026-08-07T00:00:00",
+        }
+        status, payload = self._request("POST", "/lore-api/projects/backup", {"project": project})
+        self.assertEqual(status, 200)
+        status, payload = self._request("GET", "/lore-api/projects/backups")
+        self.assertEqual(status, 200)
+        self.assertTrue(any(row["project_id"] == "bk-1" for row in payload["backups"]))
+        status, payload = self._request("POST", "/lore-api/projects/restore", {"project_id": "bk-1"})
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["project"]["name"], "雾港来信")
+
     def test_chinese_project_id_roundtrip(self) -> None:
         self._start("我的故事")
         quoted = urllib.parse.quote("我的故事")

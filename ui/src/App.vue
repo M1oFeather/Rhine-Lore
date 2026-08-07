@@ -13,6 +13,7 @@ import {
   type LlmChatMessage,
   type LoreItem,
   type ManuscriptIssue,
+  type ProjectBackupRow,
   type StoryMap,
   type StoryMapNode,
   type StoryProject,
@@ -23,6 +24,7 @@ import {
   advanceEvolution,
   addEvolutionCharacter,
   approveStaging,
+  backupProject,
   buildContextBundle,
   connectVaultRuntime,
   createManualProposal,
@@ -41,8 +43,10 @@ import {
   listProposals,
   listStaging,
   listWorkspaces,
+  listProjectBackups,
   registerWorkspace,
   resetEvolutionRun,
+  restoreProjectBackup,
   setWorkspaceId,
   stageProposal,
   startEvolutionRun,
@@ -185,6 +189,10 @@ const aiStatusDetail = ref("");
 const aiPanelOpen = ref(false);
 let evolutionTimer: number | undefined;
 let evolutionTurnRunning = false;
+let projectBackupTimer: number | undefined;
+const diskBackups = ref<ProjectBackupRow[]>([]);
+const restoreDialogVisible = ref(false);
+const restoreBusy = ref("");
 
 const promptStarters = [
   "帮我续写当前章节，保持悬念和节奏。",
@@ -374,6 +382,7 @@ onMounted(async () => {
     return {ready: true};
   }, {collapseOutput: true});
   void runAiCheck();
+  void loadDiskBackups();
 });
 
 function loadProjects(): StoryProject[] {
@@ -514,6 +523,59 @@ function saveProjects(): void {
   localStorage.setItem(activeProjectKey, activeProjectId.value);
   localStorage.setItem(activeChapterKey, activeChapterId.value);
   lastSavedAt.value = new Date().toLocaleTimeString("zh-CN", {hour: "2-digit", minute: "2-digit"});
+  if (projectBackupTimer) {
+    window.clearTimeout(projectBackupTimer);
+  }
+  projectBackupTimer = window.setTimeout(() => {
+    void backupActiveProject();
+  }, 900);
+}
+
+async function backupActiveProject(): Promise<void> {
+  const project = activeProject.value;
+  if (!project?.id) {
+    return;
+  }
+  try {
+    await backupProject(project);
+  } catch {
+    // 磁盘备份失败不打断写作
+  }
+}
+
+async function loadDiskBackups(): Promise<void> {
+  try {
+    const result = await listProjectBackups();
+    diskBackups.value = result.backups ?? [];
+  } catch {
+    diskBackups.value = [];
+  }
+}
+
+function openRestoreDialog(): void {
+  restoreDialogVisible.value = true;
+  void loadDiskBackups();
+}
+
+async function confirmRestore(row: ProjectBackupRow): Promise<void> {
+  restoreBusy.value = row.project_id;
+  const result = await perform("恢复项目", () => restoreProjectBackup(row.project_id));
+  restoreBusy.value = "";
+  if (!result?.project) {
+    return;
+  }
+  const restored = normalizeProject(result.project);
+  const index = projects.value.findIndex((item) => item.id === restored.id);
+  if (index >= 0) {
+    projects.value[index] = restored;
+  } else {
+    projects.value.push(restored);
+  }
+  activeProjectId.value = restored.id;
+  activeChapterId.value = restored.chapters[0]?.id ?? "";
+  restoreDialogVisible.value = false;
+  saveProjects();
+  markSaved("已从磁盘恢复项目");
 }
 
 function markSaved(message: string): void {
@@ -2659,6 +2721,14 @@ onUnmounted(() => {
               <el-button type="primary" @click="continueSetup">{{ nextStepLabel }}</el-button>
             </section>
 
+            <div v-if="projects.length === 0 && diskBackups.length > 0" class="disk-restore-strip">
+              <div>
+                <strong>检测到磁盘备份</strong>
+                <small>项目列表被浏览器清空，但磁盘上还有 {{ diskBackups.length }} 份项目备份，可以一键恢复。</small>
+              </div>
+              <el-button size="small" type="primary" @click="openRestoreDialog">从磁盘恢复</el-button>
+            </div>
+
             <el-card shadow="never" class="story-picker-card">
               <template #header>
                 <div class="card-header">
@@ -2666,6 +2736,7 @@ onUnmounted(() => {
                   <el-space wrap>
                     <el-button size="small" type="primary" @click="createProject">新建故事</el-button>
                     <el-button size="small" @click="requestProjectImport">导入</el-button>
+                    <el-button size="small" @click="openRestoreDialog">从磁盘恢复</el-button>
                   </el-space>
                 </div>
               </template>
@@ -4352,6 +4423,30 @@ onUnmounted(() => {
           </el-button>
         </div>
       </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="restoreDialogVisible"
+      title="从磁盘恢复项目"
+      width="min(560px, calc(100vw - 24px))"
+    >
+      <div v-if="diskBackups.length === 0" class="product-empty-state compact">
+        磁盘上没有项目备份
+      </div>
+      <div v-for="row in diskBackups" :key="row.project_id" class="backup-row">
+        <div>
+          <strong>{{ row.name }}</strong>
+          <small>{{ row.project_id }} · {{ row.updated_at }}</small>
+        </div>
+        <el-button
+          size="small"
+          type="primary"
+          :loading="restoreBusy === row.project_id"
+          @click="confirmRestore(row)"
+        >
+          恢复
+        </el-button>
+      </div>
     </el-dialog>
   </div>
 </template>

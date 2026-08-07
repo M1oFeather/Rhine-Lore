@@ -12,6 +12,11 @@ state, snapshots, and long-term retrieval.
 ## Features
 
 - Story project dashboard stored locally in the browser.
+- Automatic disk backup: every project save is mirrored to
+  `data/projects/<project-id>.project.json` after a short debounce. If the
+  browser storage is cleared, the workbench shows a “从磁盘恢复” entry with a
+  backup list; restoring keeps the same project id, so the on-disk evolution
+  run reconnects automatically.
 - Guided story creation with a lightweight name, genre, and one-line idea form;
   the first chapter is prepared automatically.
 - Project import, export, and duplication for browser-local story backups.
