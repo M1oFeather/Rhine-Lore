@@ -1820,6 +1820,11 @@ const evolutionHistory = computed(() => {
 const evolutionThreads = computed(() => evolutionState.value?.threads ?? []);
 const evolutionCast = computed(() => evolutionState.value?.cast ?? []);
 const evolutionPendingBranch = computed(() => evolutionState.value?.pending_branch ?? null);
+const evolutionActNames = ["序幕", "发展", "转折", "高潮", "尾声"];
+const evolutionActName = computed(() => {
+  const index = evolutionState.value?.arc.act_index ?? 0;
+  return evolutionActNames[index] ?? "尾声";
+});
 
 function evolutionCastName(state: EvolutionState | null, memberId: string): string {
   return state?.cast.find((member) => member.id === memberId)?.name ?? memberId;
@@ -3533,6 +3538,34 @@ onUnmounted(() => {
                 </el-card>
 
                 <div class="evolution-side-stack">
+                  <el-card shadow="never">
+                    <template #header><span>故事弧线</span></template>
+                    <div class="arc-block">
+                      <div class="arc-act">
+                        <strong>{{ evolutionActName }}</strong>
+                        <small>目标张力 {{ evolutionState.arc.tension_range[0] }} – {{ evolutionState.arc.tension_range[1] }}</small>
+                      </div>
+                      <div class="arc-ending">
+                        <small>结局方向</small>
+                        <span>{{ evolutionState.arc.ending_kind || "未定" }}</span>
+                      </div>
+                      <div class="arc-beats">
+                        <div
+                          v-for="beat in evolutionState.arc.beats"
+                          :key="beat.id"
+                          class="arc-beat"
+                          :class="{done: beat.status === 'done'}"
+                        >
+                          <span>{{ beat.status === 'done' ? '✓' : '○' }}</span>
+                          <div>
+                            <strong>{{ beat.title }}</strong>
+                            <small>第 {{ beat.due_turn }} 回合起</small>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </el-card>
+
                   <el-card shadow="never">
                     <template #header><span>世界状态</span></template>
                     <div class="world-state-block">

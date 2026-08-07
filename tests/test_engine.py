@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 import tempfile
 import unittest
+import random
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -15,8 +16,12 @@ from rhine_lore.engine import (  # noqa: E402
     EvolutionEvent,
     EvolutionState,
     EvolutionStore,
+    PlotThread,
     advance,
     build_ai_prose_prompt,
+    _decorate_event,
+    _mature_conflict_threads,
+    _pick_weighted_kind,
     render_novel,
     render_sandbox,
     start_run,
@@ -344,12 +349,99 @@ class EndingTests(unittest.TestCase):
     def test_ending_fires_without_active_major_threads(self) -> None:
         settings = EvolutionSettings(branch_frequency=0)
         state = start_run("p1", "雾港来信", "悬疑", CHARACTERS, WORLD, seed=9, settings=settings)
-        state.turn = 19
+        state.turn = 25
         state.threads = []
         state, result = advance(state)
         self.assertTrue(result.advanced)
         self.assertTrue(state.ending)
         self.assertEqual(result.ending, state.ending)
+
+
+class ArcTests(unittest.TestCase):
+    def test_arc_advances_through_acts_and_ends(self) -> None:
+        settings = EvolutionSettings(branch_frequency=0, chaos=0)
+        state = start_run("p1", "雾港来信", "悬疑", CHARACTERS, WORLD, settings=settings, seed=7)
+        for _ in range(30):
+            state, _ = advance(state)
+        self.assertEqual(state.arc.act_index, 4)
+        self.assertEqual(state.arc.act_name, "尾声")
+        self.assertTrue(state.ending)
+        self.assertTrue(any(beat.kind == "结局" and beat.status == "done" for beat in state.arc.beats))
+        self.assertGreaterEqual(state.turn, 26)
+
+    def test_ending_kind_comes_from_genre(self) -> None:
+        state = start_run("p1", "雾港来信", "悬疑", CHARACTERS, WORLD, seed=1)
+        self.assertEqual(state.arc.ending_kind, "真相大白")
+        state = start_run("p2", "雾港来信", "奇幻", CHARACTERS, WORLD, seed=1)
+        self.assertEqual(state.arc.ending_kind, "守护与封印")
+
+    def test_relationship_beat_completes_via_guidance(self) -> None:
+        settings = EvolutionSettings(branch_frequency=0, chaos=0)
+        state = start_run("p1", "雾港来信", "悬疑", CHARACTERS, WORLD, settings=settings, seed=3)
+        state.guidance = "让林澈和小满相遇"
+        state, _ = advance(state)
+        self.assertEqual(state.history[0].kind, "相遇")
+        self.assertTrue(any(beat.kind == "关系" and beat.status == "done" for beat in state.arc.beats))
+
+    def test_mature_conflict_can_settle(self) -> None:
+        found = False
+        for seed in range(1, 60):
+            settings = EvolutionSettings(branch_frequency=0, chaos=100)
+            state = start_run("p1", "雾港来信", "悬疑", CHARACTERS, WORLD, settings=settings, seed=seed)
+            for _ in range(10):
+                state, _ = advance(state)
+            if any(event.kind == "了结" for event in state.history):
+                found = True
+                break
+        self.assertTrue(found)
+
+    def test_settle_event_resolves_mature_thread(self) -> None:
+        settings = EvolutionSettings(branch_frequency=0)
+        state = start_run("p1", "雾港来信", "悬疑", CHARACTERS, WORLD, settings=settings, seed=3)
+        state.turn = 8
+        state.threads = [
+            PlotThread(
+                id="thread-conflict-1",
+                title="林澈与沈砚的裂痕",
+                kind="冲突",
+                status="active",
+                seed_turn=1,
+                participants=["hero", "rival"],
+            )
+        ]
+        self.assertTrue(_mature_conflict_threads(state))
+        event = EvolutionEvent(id="e1", turn=8, kind="了结", title="", summary="", participants=["hero"])
+        _decorate_event(state, event, random.Random(3))
+        self.assertEqual(event.effects.get("resolve_thread"), "thread-conflict-1")
+
+    def test_weighted_kind_includes_settle_when_mature(self) -> None:
+        settings = EvolutionSettings(branch_frequency=0)
+        state = start_run("p1", "雾港来信", "悬疑", CHARACTERS, WORLD, settings=settings, seed=3)
+        state.turn = 8
+        state.threads = [
+            PlotThread(
+                id="thread-conflict-1",
+                title="林澈与沈砚的裂痕",
+                kind="冲突",
+                status="active",
+                seed_turn=1,
+                participants=["hero", "rival"],
+            )
+        ]
+        kinds = {_pick_weighted_kind(state, random.Random(seed)) for seed in range(1, 80)}
+        self.assertIn("了结", kinds)
+
+    def test_arc_survives_store_roundtrip(self) -> None:
+        state = start_run("p1", "雾港来信", "悬疑", CHARACTERS, WORLD, seed=1)
+        state.arc.ending_kind = "真相大白"
+        with tempfile.TemporaryDirectory() as raw_dir:
+            store = EvolutionStore(Path(raw_dir))
+            store.save(state)
+            loaded = store.load("p1")
+        self.assertIsNotNone(loaded)
+        self.assertEqual(loaded.arc.ending_kind, "真相大白")
+        self.assertEqual(loaded.arc.beats[0].title, "关系萌芽")
+        self.assertEqual(loaded.arc.beats[0].kind, "关系")
 
 
 if __name__ == "__main__":

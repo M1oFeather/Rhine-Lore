@@ -97,17 +97,33 @@ class EvolutionApiTests(unittest.TestCase):
         self.assertEqual(payload["novel"]["viewpoint_id"], "hero")
 
     def test_branch_can_be_resolved_with_fate(self) -> None:
-        payload = self._start()
-        for _ in range(3):
-            status, payload = self._request(
-                "POST",
-                "/lore-api/evolution/advance",
-                {"project_id": "story-1", "choice_id": "fate", "viewpoint_id": "hero"},
-            )
-            self.assertEqual(status, 200)
-            if payload["state"]["turn"] > 0:
-                break
-        self.assertGreater(payload["state"]["turn"], 0)
+        status, payload = self._request(
+            "POST",
+            "/lore-api/evolution/start",
+            {
+                "project_id": "story-branch",
+                "project_name": "雾港来信",
+                "genre": "悬疑",
+                "characters": CHARACTERS,
+                "world": WORLD,
+                "seed": 42,
+                "settings": {"chaos": 50, "branch_frequency": 100, "events_per_turn": 1, "auto_resolve": False},
+            },
+        )
+        self.assertEqual(status, 200)
+        status, payload = self._request(
+            "POST",
+            "/lore-api/evolution/advance",
+            {"project_id": "story-branch", "choice_id": "fate", "viewpoint_id": "hero"},
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["result"]["awaiting_branch"])
+        status, payload = self._request(
+            "POST",
+            "/lore-api/evolution/advance",
+            {"project_id": "story-branch", "choice_id": "fate", "viewpoint_id": "hero"},
+        )
+        self.assertEqual(status, 200)
         self.assertGreater(len(payload["state"]["history"]), 0)
 
     def test_missing_run_returns_404(self) -> None:

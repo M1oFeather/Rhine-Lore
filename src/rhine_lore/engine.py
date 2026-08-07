@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any
 
 
-EVENT_KINDS = ["相遇", "冲突", "秘密", "失去", "背叛", "结盟", "发现", "威胁", "回归", "平静"]
+EVENT_KINDS = ["相遇", "冲突", "秘密", "失去", "背叛", "结盟", "发现", "威胁", "回归", "平静", "了结"]
 
 GENRE_WEIGHTS: dict[str, dict[str, int]] = {
     "奇幻": {"发现": 4, "威胁": 4, "相遇": 3, "秘密": 2, "平静": 1},
@@ -38,6 +38,41 @@ GENRE_WEIGHTS: dict[str, dict[str, int]] = {
     "轻小说": {"相遇": 3, "结盟": 3, "平静": 3, "发现": 2, "秘密": 1},
 }
 DEFAULT_WEIGHTS = {kind: 2 for kind in EVENT_KINDS}
+DEFAULT_WEIGHTS["了结"] = 0
+
+ACT_PLAN = [
+    {"act": "序幕", "turns": (1, 5), "tension": (25, 40)},
+    {"act": "发展", "turns": (6, 12), "tension": (40, 60)},
+    {"act": "转折", "turns": (13, 18), "tension": (60, 78)},
+    {"act": "高潮", "turns": (19, 24), "tension": (75, 92)},
+    {"act": "尾声", "turns": (25, 999), "tension": (25, 50)},
+]
+
+ACT_BIASES = {
+    0: {"相遇": 2, "平静": 2, "秘密": 1},
+    1: {"冲突": 2, "秘密": 2, "发现": 2},
+    2: {"背叛": 2, "威胁": 3, "失去": 2},
+    3: {"冲突": 3, "威胁": 3, "背叛": 1},
+    4: {"平静": 3, "结盟": 2, "发现": 1},
+}
+
+ACT_BEATS = {
+    0: [("关系", "关系萌芽"), ("秘密", "秘密浮现")],
+    1: [("冲突", "冲突升级"), ("伏笔", "伏笔回收")],
+    2: [("转折", "重大转折"), ("真相", "真相揭露")],
+    3: [("对决", "最终对决")],
+    4: [("结局", "结局落定")],
+}
+
+GENRE_ENDING_KINDS = {
+    "悬疑": "真相大白",
+    "奇幻": "守护与封印",
+    "科幻": "远航",
+    "爱情": "携手同行",
+    "历史": "尘埃落定",
+    "都市": "重获日常",
+    "轻小说": "新的开始",
+}
 
 GUIDANCE_KIND_KEYWORDS: dict[str, str] = {
     "背叛": "背叛",
@@ -79,6 +114,7 @@ INNER_THOUGHTS = {
     "威胁": "危险正在靠近。",
     "回归": "旧事重提。",
     "平静": "平静得让人不安。",
+    "了结": "总该有个了结。",
 }
 
 ROLE_KEYWORDS = ["主角", "主人公", "主人"]
@@ -102,6 +138,7 @@ class CastMember:
     secret: str = ""
     abilities: list[str] = field(default_factory=list)
     weakness: str = ""
+    last_turn: int = 0
 
 
 @dataclass
@@ -171,6 +208,25 @@ class EvolutionSettings:
 
 
 @dataclass
+class PlanBeat:
+    id: str
+    title: str
+    kind: str
+    status: str = "pending"
+    due_turn: int = 0
+    event_id: str = ""
+
+
+@dataclass
+class StoryArc:
+    act_index: int = 0
+    act_name: str = "序幕"
+    tension_range: list[int] = field(default_factory=lambda: [25, 40])
+    ending_kind: str = ""
+    beats: list[PlanBeat] = field(default_factory=list)
+
+
+@dataclass
 class EvolutionState:
     project_id: str
     project_name: str = ""
@@ -189,6 +245,7 @@ class EvolutionState:
     updated_at: str = ""
     ai_prose: dict[str, str] = field(default_factory=dict)
     guidance: str = ""
+    arc: StoryArc = field(default_factory=StoryArc)
 
 
 @dataclass
@@ -392,6 +449,16 @@ def start_run(
         state.world.connections = connections
     _assign_cast_locations(state)
     state.threads = _initial_threads(state)
+    state.arc = StoryArc(
+        act_index=0,
+        act_name=ACT_PLAN[0]["act"],
+        tension_range=list(ACT_PLAN[0]["tension"]),
+        ending_kind=GENRE_ENDING_KINDS.get(genre or "", "尘埃落定"),
+        beats=[
+            PlanBeat(id=f"beat-0-{kind}", title=title, kind=kind, due_turn=1)
+            for kind, title in ACT_BEATS[0]
+        ],
+    )
     return state
 
 
@@ -419,13 +486,15 @@ def _member_name(state: EvolutionState, member_id: str) -> str:
 
 
 def _pick_primary(state: EvolutionState, rng: random.Random) -> CastMember:
+    alive = [member for member in state.cast if member.alive]
+    pool = alive or state.cast
+    min_turn = min((member.last_turn for member in pool), default=0)
+    rotated = [member for member in pool if member.last_turn <= min_turn + 2]
     weighted: list[CastMember] = []
-    for member in state.cast:
-        if not member.alive:
-            continue
-        weight = 3 if member.role == "主角" else 1
+    for member in rotated or pool:
+        weight = 3 if member.role == "主角" else 2
         weighted.extend([member] * weight)
-    return rng.choice(weighted or state.cast)
+    return rng.choice(weighted)
 
 
 def _pick_secondary(state: EvolutionState, rng: random.Random, primary: CastMember) -> CastMember | None:
@@ -485,9 +554,83 @@ def _pick_dormant(state: EvolutionState, rng: random.Random) -> PlotThread | Non
 # Event planning
 # ---------------------------------------------------------------------------
 
+def _current_act(state: EvolutionState) -> dict[str, Any]:
+    for index, act in enumerate(ACT_PLAN):
+        if state.turn <= act["turns"][1]:
+            return {**act, "index": index}
+    return {**ACT_PLAN[-1], "index": len(ACT_PLAN) - 1}
+
+
+def _mature_conflict_threads(state: EvolutionState) -> list[PlotThread]:
+    return [
+        thread
+        for thread in state.threads
+        if thread.kind == "冲突" and thread.status == "active" and state.turn - thread.seed_turn >= 4
+    ]
+
+
+def _advance_arc(state: EvolutionState) -> dict[str, Any]:
+    act = _current_act(state)
+    if act["index"] != state.arc.act_index:
+        state.arc.act_index = act["index"]
+        state.arc.act_name = act["act"]
+        state.arc.tension_range = list(act["tension"])
+        for kind, title in ACT_BEATS.get(act["index"], []):
+            if not any(beat.kind == kind and beat.status == "pending" for beat in state.arc.beats):
+                state.arc.beats.append(
+                    PlanBeat(id=f"beat-{act['index']}-{kind}", title=title, kind=kind, due_turn=state.turn)
+                )
+    low, high = act["tension"]
+    if state.world.tension < low:
+        state.world.tension = min(low + 5, state.world.tension + 3)
+    elif state.world.tension > high and act["index"] < 4:
+        state.world.tension = max(high, state.world.tension - 2)
+    if act["index"] >= 3 and state.world.tension < 60:
+        state.world.tension = min(65, state.world.tension + 4)
+    return act
+
+
+def _update_beats_for_event(state: EvolutionState, event: EvolutionEvent) -> None:
+    for beat in state.arc.beats:
+        if beat.status == "done":
+            continue
+        done = False
+        if beat.kind == "关系":
+            done = len(event.participants) >= 2
+        elif beat.kind == "秘密":
+            done = event.kind == "秘密"
+        elif beat.kind == "冲突":
+            done = event.kind in {"冲突", "威胁"} and bool(event.effects.get("new_thread"))
+        elif beat.kind == "伏笔":
+            done = bool(event.effects.get("resolve_thread"))
+        elif beat.kind == "转折":
+            done = event.kind in {"背叛", "失去"}
+        elif beat.kind == "真相":
+            done = event.kind in {"发现", "秘密"} and bool(
+                event.effects.get("resolve_thread") or event.effects.get("new_fact")
+            )
+        elif beat.kind == "对决":
+            done = event.kind in {"冲突", "威胁", "了结"} and state.world.tension >= 70
+        elif beat.kind == "结局":
+            done = bool(state.ending)
+        if done:
+            beat.status = "done"
+            beat.event_id = event.id
+
+
+def _finish_ending_beat(state: EvolutionState) -> None:
+    for beat in state.arc.beats:
+        if beat.kind == "结局":
+            beat.status = "done"
+            beat.event_id = beat.event_id or "ending"
+
+
 def _pick_weighted_kind(state: EvolutionState, rng: random.Random) -> str:
     weights = dict(DEFAULT_WEIGHTS)
     weights.update(GENRE_WEIGHTS.get(state.genre, {}))
+    act = _current_act(state)
+    for kind, bias in ACT_BIASES.get(act["index"], {}).items():
+        weights[kind] = weights.get(kind, 0) + bias
     if state.world.tension >= 60:
         weights["冲突"] += 2
         weights["威胁"] += 1
@@ -497,6 +640,7 @@ def _pick_weighted_kind(state: EvolutionState, rng: random.Random) -> str:
     if state.settings.chaos >= 70:
         weights["背叛"] += 1
         weights["失去"] += 1
+    weights["了结"] = 3 if _mature_conflict_threads(state) else 0
     total = sum(max(0, weight) for weight in weights.values()) or 1
     roll = rng.randrange(total)
     for kind, weight in weights.items():
@@ -676,6 +820,20 @@ def _decorate_event(state: EvolutionState, event: EvolutionEvent, rng: random.Ra
             event.title = "旧日的影子"
             event.summary = f"{a}在{location}看到了一个似曾相识的背影。"
             effects["tension"] = 2
+    elif event.kind == "了结":
+        mature = _mature_conflict_threads(state)
+        target = rng.choice(mature) if mature else None
+        if target is not None:
+            event.title = f"{target.title}有了结果"
+            event.summary = f"在{location}，{target.title}终于走向了结局。"
+            event.participants = list(target.participants or event.participants)
+            effects["resolve_thread"] = target.id
+            effects["new_fact"] = f"{target.title}的纠葛告一段落。"
+            effects["tension"] = -12
+        else:
+            event.title = "暗流暂时平息"
+            event.summary = f"{location}的紧张气氛暂时缓和。"
+            effects["tension"] = -8
     else:  # 平静
         event.title = f"{location}的平静日子"
         event.summary = f"{location}度过了平静的一天，{a}暂时得以喘息。"
@@ -815,8 +973,10 @@ def _apply_effects(state: EvolutionState, event: EvolutionEvent) -> None:
 
     for participant_id in event.participants:
         member = _member(state, participant_id)
-        if member is not None and event.location and event.location in state.world.locations:
-            member.location = event.location
+        if member is not None:
+            member.last_turn = state.turn
+            if event.location and event.location in state.world.locations:
+                member.location = event.location
 
     cast_change = effects.get("cast_change")
     if isinstance(cast_change, dict):
@@ -842,11 +1002,26 @@ def _maybe_death(state: EvolutionState, rng: random.Random) -> None:
 def _maybe_ending(state: EvolutionState, result: TurnResult) -> None:
     if state.ending:
         result.ending = state.ending
+        _finish_ending_beat(state)
         return
-    active_major = [thread for thread in state.threads if thread.kind in {"主线", "冲突"} and thread.status == "active"]
-    if state.turn >= 20 and not active_major:
-        state.ending = f"在第{state.turn}回合，{state.project_name or '这个故事'}的主要纠葛尘埃落定。"
+    act = _current_act(state)
+    active_major = [
+        thread for thread in state.threads if thread.kind in {"主线", "冲突"} and thread.status == "active"
+    ]
+    climax_done = any(beat.kind == "对决" and beat.status == "done" for beat in state.arc.beats)
+    if act["index"] >= 4 and (climax_done or state.turn >= 26):
+        ending_kind = state.arc.ending_kind or "尘埃落定"
+        if active_major:
+            state.ending = (
+                f"在第{state.turn}回合，《{state.project_name or '这个故事'}》迎来了「{ending_kind}」"
+                "的阶段性结局；仍有未解的暗流，为续章留白。"
+            )
+        else:
+            state.ending = (
+                f"在第{state.turn}回合，《{state.project_name or '这个故事'}》迎来了「{ending_kind}」的结局。"
+            )
         result.ending = state.ending
+        _finish_ending_beat(state)
 
 
 # ---------------------------------------------------------------------------
@@ -892,13 +1067,15 @@ def advance(
         working.pending_branch = None
         working.pending_event = None
         _apply_effects(working, event)
-        _maybe_death(working, rng)
         result.events = [event]
         result.advanced = True
         result.message = f"抉择「{option.label}」改变了故事的走向。"
-        _maybe_ending(working, result)
         working.turn += 1
         working.clock += 1
+        _advance_arc(working)
+        _update_beats_for_event(working, event)
+        _maybe_death(working, rng)
+        _maybe_ending(working, result)
         result.turn = working.turn
         result.prose = render_sandbox(working)
         return working, result
@@ -945,6 +1122,9 @@ def advance(
         result.message = f"第{working.turn}回合演化完成。"
 
     if result.advanced:
+        _advance_arc(working)
+        for event in result.events:
+            _update_beats_for_event(working, event)
         _maybe_death(working, rng)
         _maybe_ending(working, result)
     result.turn = working.turn
@@ -973,7 +1153,10 @@ def _effect_chips(event: EvolutionEvent) -> list[str]:
 
 def render_sandbox(state: EvolutionState) -> str:
     """Omniscient full-world render used by the sandbox view."""
-    lines = [f"《{state.project_name or '未命名故事'}》演化沙盘 · 第{state.turn}回合 · 种子 {state.seed}"]
+    lines = [
+        f"《{state.project_name or '未命名故事'}》演化沙盘 · 第{state.turn}回合 · "
+        f"{state.arc.act_name or '序幕'} · 种子 {state.seed}"
+    ]
     if state.ending:
         lines.append(f"【尾声】{state.ending}")
     if not state.history:
@@ -1183,6 +1366,7 @@ def evolution_state_from_dict(data: dict[str, Any]) -> EvolutionState:
             secret=str(member.get("secret") or ""),
             abilities=[str(ability) for ability in (member.get("abilities") or []) if str(ability)],
             weakness=str(member.get("weakness") or ""),
+            last_turn=int(member.get("last_turn") or 0),
         )
         for index, member in enumerate(data.get("cast") or [])
     ]
@@ -1199,6 +1383,24 @@ def evolution_state_from_dict(data: dict[str, Any]) -> EvolutionState:
         )
         for index, thread in enumerate(data.get("threads") or [])
     ]
+    arc_raw = data.get("arc") or {}
+    arc = StoryArc(
+        act_index=int(arc_raw.get("act_index") or 0),
+        act_name=str(arc_raw.get("act_name") or ACT_PLAN[0]["act"]),
+        tension_range=[int(value) for value in (arc_raw.get("tension_range") or ACT_PLAN[0]["tension"])],
+        ending_kind=str(arc_raw.get("ending_kind") or ""),
+        beats=[
+            PlanBeat(
+                id=str(beat.get("id") or f"beat-{index}"),
+                title=str(beat.get("title") or "节拍"),
+                kind=str(beat.get("kind") or "其他"),
+                status=str(beat.get("status") or "pending"),
+                due_turn=int(beat.get("due_turn") or 0),
+                event_id=str(beat.get("event_id") or ""),
+            )
+            for index, beat in enumerate(arc_raw.get("beats") or [])
+        ],
+    )
     return EvolutionState(
         project_id=str(data.get("project_id") or ""),
         project_name=str(data.get("project_name") or ""),
@@ -1217,6 +1419,7 @@ def evolution_state_from_dict(data: dict[str, Any]) -> EvolutionState:
         updated_at=str(data.get("updated_at") or ""),
         ai_prose={str(key): str(value) for key, value in (data.get("ai_prose") or {}).items()},
         guidance=str(data.get("guidance") or ""),
+        arc=arc,
     )
 
 

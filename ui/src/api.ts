@@ -240,6 +240,7 @@ export type EvolutionState = {
   updated_at: string;
   ai_prose: Record<string, string>;
   guidance: string;
+  arc: EvolutionArc;
 };
 
 export type EvolutionNovelChapter = {
@@ -253,6 +254,23 @@ export type EvolutionNovel = {
   viewpoint_name: string;
   chapters: EvolutionNovelChapter[];
   hidden_events: number;
+};
+
+export type EvolutionPlanBeat = {
+  id: string;
+  title: string;
+  kind: string;
+  status: string;
+  due_turn: number;
+  event_id: string;
+};
+
+export type EvolutionArc = {
+  act_index: number;
+  act_name: string;
+  tension_range: number[];
+  ending_kind: string;
+  beats: EvolutionPlanBeat[];
 };
 
 export type EvolutionResult = {

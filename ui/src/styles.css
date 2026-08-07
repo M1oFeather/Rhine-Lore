@@ -2868,6 +2868,11 @@ body {
   color: #64748b;
 }
 
+.evolution-kind.kind-了结 {
+  background: #e7ecf1;
+  color: #33475c;
+}
+
 .ai-prose-panel {
   display: grid;
   gap: 8px;
@@ -3256,5 +3261,86 @@ body {
   .issue-actions .el-button {
     flex: 1 1 auto;
   }
+}
+
+/* Story arc */
+.arc-block {
+  display: grid;
+  gap: 10px;
+}
+
+.arc-act {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px;
+}
+
+.arc-act strong {
+  color: #16324f;
+  font-size: 16px;
+}
+
+.arc-act small {
+  color: #5b6b7c;
+  font-size: 12px;
+}
+
+.arc-ending {
+  display: grid;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #f4f1e8;
+}
+
+.arc-ending small {
+  color: #6b5c33;
+  font-size: 12px;
+}
+
+.arc-ending span {
+  color: #7a5b1e;
+  font-weight: 600;
+}
+
+.arc-beats {
+  display: grid;
+  gap: 6px;
+}
+
+.arc-beat {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: baseline;
+}
+
+.arc-beat > span {
+  color: #8ba6c8;
+}
+
+.arc-beat.done > span {
+  color: #2e8b57;
+}
+
+.arc-beat > div {
+  display: grid;
+  gap: 1px;
+}
+
+.arc-beat strong {
+  color: #263c53;
+  font-size: 13px;
+}
+
+.arc-beat.done strong {
+  color: #2e8b57;
+}
+
+.arc-beat small {
+  color: #5b6b7c;
+  font-size: 12px;
 }
 
