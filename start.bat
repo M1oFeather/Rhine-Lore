@@ -1,5 +1,5 @@
 @echo off
-rem Rhine-Lore 一键启动（保持窗口以查看日志，Ctrl+C 停止）
+rem Rhine-Lore launcher. Keep this window open to view logs; press Ctrl+C to stop.
 cd /d "%~dp0"
 python main.py --port 8786
 pause
