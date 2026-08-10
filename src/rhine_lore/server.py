@@ -18,6 +18,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, quote, urlencode, urlparse, urlunparse
 from urllib.request import Request, urlopen
 
+from rhine_lore.embedded_vault import EmbeddedVaultStore
 from rhine_lore.engine import (
     EvolutionState,
     EvolutionStore,
@@ -55,6 +56,20 @@ DEFAULT_VAULT_CHECKOUT = Path(__file__).resolve().parents[3] / "Rhine-Vault"
 DEFAULT_VAULT_DATABASE = PROJECT_ROOT / "data" / "rhine-vault-core.db"
 VAULT_WEB_INSTALL_TIMEOUT = 300
 EVOLUTION_STORE = EvolutionStore(PROJECTS_DIR)
+
+
+def _is_embedded() -> bool:
+    return os.environ.get("RHINE_LORE_EMBEDDED") == "1"
+
+
+_EMBEDDED_VAULT: EmbeddedVaultStore | None = None
+
+
+def _embedded_vault() -> EmbeddedVaultStore:
+    global _EMBEDDED_VAULT
+    if _EMBEDDED_VAULT is None:
+        _EMBEDDED_VAULT = EmbeddedVaultStore(DATA_ROOT)
+    return _EMBEDDED_VAULT
 
 
 class VaultProcessManager:
@@ -657,6 +672,9 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
             self._handle_lore_api()
             return
         if self.path.startswith("/vault-proxy") or self.path.startswith("/api/"):
+            if _is_embedded() and self.path.startswith("/api/"):
+                self._handle_embedded_api()
+                return
             self._proxy_to_vault()
             return
         super().do_GET()
@@ -666,12 +684,18 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
             self._handle_lore_api()
             return
         if self.path.startswith("/vault-proxy") or self.path.startswith("/api/"):
+            if _is_embedded() and self.path.startswith("/api/"):
+                self._handle_embedded_api()
+                return
             self._proxy_to_vault()
             return
         self.send_error(HTTPStatus.NOT_FOUND, "Not found")
 
     def do_PATCH(self) -> None:
         if self.path.startswith("/vault-proxy") or self.path.startswith("/api/"):
+            if _is_embedded() and self.path.startswith("/api/"):
+                self._handle_embedded_api()
+                return
             self._proxy_to_vault()
             return
         self.send_error(HTTPStatus.NOT_FOUND, "Not found")
@@ -702,6 +726,24 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def _vault_status_payload(self) -> dict[str, Any]:
+        if _is_embedded():
+            port = self.server.server_address[1] if self.server else 8786
+            return {
+                "config": _default_vault_config(),
+                "manager": {
+                    "managed": False,
+                    "running": True,
+                    "pid": os.getpid(),
+                    "returncode": None,
+                    "base_url": f"http://127.0.0.1:{port}/",
+                    "vault_path": str(DEFAULT_VAULT_CHECKOUT),
+                    "command": [],
+                    "mode": "embedded",
+                    "auto_start": {"enabled": False, "attempted": False, "error": ""},
+                },
+                "connected": True,
+                "health": {"connected": True, "status": "ok", "mode": "embedded"},
+            }
         manager_status = VAULT_MANAGER.status()
         base_url = manager_status["base_url"] or DEFAULT_VAULT_URL
         return {
@@ -710,6 +752,147 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
             **_vault_health(base_url),
         }
 
+    def _handle_embedded_api(self) -> None:
+        parsed_request = urlparse(self.path)
+        path = parsed_request.path
+        query = parse_qs(parsed_request.query)
+        vault = _embedded_vault()
+        try:
+            if self.command == "GET" and path == "/api/health":
+                self._send_json(200, vault.health())
+                return
+            if self.command == "GET" and path == "/api/workspaces":
+                self._send_json(200, vault.workspaces())
+                return
+            if self.command == "POST" and path == "/api/workspaces":
+                body = self._read_json_body()
+                workspace = vault.create_workspace(
+                    str(body.get("workspace_id") or ""),
+                    str(body.get("workspace_type") or "project"),
+                    str(body.get("display_name") or ""),
+                )
+                self._send_json(200, workspace)
+                return
+            if self.command == "GET" and path == "/api/nodes":
+                workspace_id = (query.get("workspace_id") or [""])[0].strip()
+                self._send_json(200, vault.nodes(workspace_id))
+                return
+            if self.command == "POST" and path == "/api/manual":
+                body = self._read_json_body()
+                proposal = vault.create_proposal(
+                    str(body.get("workspace_id") or ""),
+                    str(body.get("title") or ""),
+                    str(body.get("node_type") or "Note"),
+                    str(body.get("content") or ""),
+                    str(body.get("authority") or "experimental"),
+                    list(body.get("tags") or []),
+                )
+                self._send_json(200, proposal)
+                return
+            if self.command == "GET" and path == "/api/proposals":
+                workspace_id = (query.get("workspace_id") or [""])[0].strip()
+                self._send_json(200, vault.proposals(workspace_id))
+                return
+            if (
+                self.command == "POST"
+                and path.startswith("/api/proposals/")
+                and path.endswith("/stage")
+            ):
+                proposal_id = path[len("/api/proposals/") : -len("/stage")]
+                body = self._read_json_body()
+                workspace_id = str(body.get("workspace_id") or "")
+                temporary_ids = [str(item) for item in (body.get("temporary_ids") or [])]
+                result = vault.stage_proposal(workspace_id, proposal_id, temporary_ids)
+                self._send_json(200, result)
+                return
+            if self.command == "GET" and path == "/api/staging":
+                workspace_id = (query.get("workspace_id") or [""])[0].strip()
+                status = (query.get("status") or [""])[0].strip() or None
+                self._send_json(200, vault.staging(workspace_id, status))
+                return
+            if self.command == "POST" and path == "/api/staging/approve":
+                body = self._read_json_body()
+                workspace_id = str(body.get("workspace_id") or "")
+                entry_ids = [str(item) for item in (body.get("entry_ids") or [])]
+                result = vault.approve_staging(workspace_id, entry_ids)
+                self._send_json(200, result)
+                return
+            if self.command == "POST" and path == "/api/context":
+                body = self._read_json_body()
+                workspace_id = str(body.get("workspace_id") or "")
+                query_text = str(body.get("query") or "")
+                limit = int(body.get("result_limit") or 10)
+                tags = list(body.get("tags") or [])
+                results = vault.search(workspace_id, query_text, tags, limit)
+                context = "\n\n".join(
+                    f"### {item['title']}\n{item['content']}" for item in results
+                )
+                self._send_json(
+                    200,
+                    {
+                        "query": query_text,
+                        "results": results,
+                        "context": context,
+                        "note": "内嵌资料库检索结果",
+                    },
+                )
+                return
+            if self.command == "POST" and path == "/api/documents/generate":
+                body = self._read_json_body()
+                workspace_id = str(body.get("workspace_id") or "")
+                query_text = str(body.get("query") or "")
+                limit = int(body.get("result_limit") or 10)
+                tags = list(body.get("tags") or [])
+                title = str(body.get("title") or "Story Bible")
+                results = vault.search(workspace_id, query_text, tags, limit)
+                lines = [f"# {title}", ""]
+                if results:
+                    for item in results:
+                        lines.append(f"## {item['title']}")
+                        lines.append(f"类型：{item['node_type']}")
+                        lines.append("")
+                        lines.append(item["content"])
+                        lines.append("")
+                else:
+                    lines.append("（暂无已入库资料，先在「资料草稿」中保存并确认入库。）")
+                self._send_json(
+                    200,
+                    {"title": title, "markdown": "\n".join(lines), "count": len(results)},
+                )
+                return
+            if self.command == "POST" and path == "/api/llm/fake":
+                body = self._read_json_body()
+                query_text = str(body.get("query") or "")
+                self._send_json(
+                    200,
+                    {
+                        "answer": f"（离线模板）关于「{query_text}」的检索结果已就绪，可查看上下文面板。",
+                        "query": query_text,
+                    },
+                )
+                return
+            if self.command == "POST" and path == "/api/llm/openai-compatible/chat":
+                body = self._read_json_body()
+                messages = body.get("messages") or []
+                llm = _resolve_llm(body.get("llm"))
+                text = _chat_with_vault(messages, llm)
+                self._send_json(200, {"answer": text})
+                return
+            if self.command == "POST" and path == "/api/llm/openai-compatible/ping":
+                body = self._read_json_body()
+                messages = [{"role": "user", "content": str(body.get("message") or "你好")}]
+                llm = _resolve_llm(body.get("llm"))
+                text = _chat_with_vault(messages, llm)
+                self._send_json(200, {"ok": True, "answer": text})
+                return
+            self._send_json(404, {"error": f"未知的内嵌资料库接口: {self.command} {path}"})
+        except KeyError as exc:
+            self._send_json(404, {"error": str(exc)})
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
+        except Exception as exc:  # noqa: BLE001 - surface failures to the UI
+            self._send_json(500, {"error": str(exc)})
+
     def _handle_lore_api(self) -> None:
         parsed_request = urlparse(self.path)
         try:
@@ -717,15 +900,37 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
                 self._send_json(200, self._vault_status_payload())
                 return
             if self.command == "GET" and parsed_request.path == "/lore-api/vault/web/status":
+                if _is_embedded():
+                    port = self.server.server_address[1] if self.server else 8786
+                    self._send_json(
+                        200,
+                        {
+                            "vault_path": str(DEFAULT_VAULT_CHECKOUT),
+                            "installed": True,
+                            "installable": False,
+                            "url": f"http://127.0.0.1:{port}/",
+                            "web_root": "",
+                            "package_dir": "",
+                            "install_command": [],
+                            "error": "",
+                        },
+                    )
+                    return
                 self._send_json(200, _vault_web_status(base_url=VAULT_MANAGER.status()["base_url"]))
                 return
             if self.command == "POST" and parsed_request.path == "/lore-api/vault/web/install":
+                if _is_embedded():
+                    self._send_json(200, self._vault_status_payload())
+                    return
                 payload = self._read_json_body()
                 raw_path = str(payload.get("vault_path") or "").strip()
                 vault_path = Path(raw_path) if raw_path else None
                 self._send_json(200, _install_vault_web(vault_path))
                 return
             if self.command == "POST" and parsed_request.path == "/lore-api/vault/connect":
+                if _is_embedded():
+                    self._send_json(200, self._vault_status_payload())
+                    return
                 payload = self._read_json_body()
                 if "base_url" in payload and str(payload["base_url"]).strip():
                     base_url = str(payload["base_url"]).strip().rstrip("/")
@@ -737,6 +942,9 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
                 self._send_json(200, self._vault_status_payload())
                 return
             if self.command == "POST" and parsed_request.path == "/lore-api/vault/start":
+                if _is_embedded():
+                    self._send_json(200, self._vault_status_payload())
+                    return
                 payload = self._read_json_body()
                 host = _coerce_local_host(payload.get("host"))
                 port = _coerce_port(payload.get("port", DEFAULT_VAULT_PORT))
@@ -753,6 +961,9 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
                 self._send_json(200, self._vault_status_payload())
                 return
             if self.command == "POST" and parsed_request.path == "/lore-api/vault/stop":
+                if _is_embedded():
+                    self._send_json(200, self._vault_status_payload())
+                    return
                 VAULT_MANAGER.stop()
                 self._send_json(200, self._vault_status_payload())
                 return

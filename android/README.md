@@ -76,8 +76,9 @@ $env:ANDROID_AVD_HOME = "D:\Android\avd"
 
 ## 已知边界（内嵌版）
 
-- 资料库（Rhine-Vault）功能在手机上不可用：知识检索、提案/入库等页面会显示
-  离线状态，写作与演化不受影响。
+- 资料库在手机端使用内嵌模式（`embedded-vault.json` 存于 App 私有目录）：
+  草稿、送审、入库、检索、设定文档生成全部可用，无需外部 Rhine-Vault；
+  顶部资料库状态显示“资料库可用”。
 - 首次进入需在首页配置 AI 通道（DeepSeek/OpenAI 兼容），密钥保存在 App 内。
 - 本版绑定 `127.0.0.1:8796`，仅 App 自身可访问；如需手机对外提供服务，
   把 `rhine_lore_launcher.py` 的 host 改为 `0.0.0.0` 并加防火墙放行。
