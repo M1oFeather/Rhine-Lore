@@ -79,6 +79,9 @@ $env:ANDROID_AVD_HOME = "D:\Android\avd"
 - 资料库在手机端使用内嵌模式（`embedded-vault.json` 存于 App 私有目录）：
   草稿、送审、入库、检索、设定文档生成全部可用，无需外部 Rhine-Vault；
   顶部资料库状态显示“资料库可用”。
+- “书架”支持导入 TXT 长篇小说：后端按章节分文件存储
+  （`files/data/books/<book_id>/chapters/*.txt`），百万字级小说按章加载，
+  并提供 AI 续写 / 改写 / 扩写（需配置 AI 通道）。
 - 首次进入需在首页配置 AI 通道（DeepSeek/OpenAI 兼容），密钥保存在 App 内。
 - 本版绑定 `127.0.0.1:8796`，仅 App 自身可访问；如需手机对外提供服务，
   把 `rhine_lore_launcher.py` 的 host 改为 `0.0.0.0` 并加防火墙放行。

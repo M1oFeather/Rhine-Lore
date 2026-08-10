@@ -3,6 +3,10 @@ import { computed, onMounted, onUnmounted, ref } from "vue";
 
 import {
   type ApiRecord,
+  type BookChapter,
+  type BookChapterMeta,
+  type BookDetail,
+  type BookMeta,
   type Chapter,
   type CharacterCard,
   type CharacterRelationship,
@@ -27,6 +31,7 @@ import {
   advanceEvolutionChapter,
   addEvolutionCharacter,
   approveStaging,
+  aiWriteBook,
   backupProject,
   buildContextBundle,
   connectVaultRuntime,
@@ -37,11 +42,16 @@ import {
   getEvolutionState,
   getLanInfo,
   getLlmServerConfig,
+  getBook,
+  getBookChapter,
   getVaultRuntimeStatus,
   getVaultWebStatus,
   guideEvolution,
   health,
   installVaultWeb,
+  importBook,
+  deleteBook,
+  listBooks,
   llmServerChat,
   llmServerPing,
   listNodes,
@@ -53,6 +63,7 @@ import {
   regenerateEvolutionChapter,
   resetEvolutionRun,
   restoreProjectBackup,
+  saveBookChapter,
   saveLlmServerConfig,
   setWorkspaceId,
   stageProposal,
@@ -64,7 +75,7 @@ import {
 import GameIcon from "./components/GameIcon.vue";
 import type { GameIconName } from "./icons/gameIconPack";
 
-type Activity = "studio" | "story" | "world" | "characters" | "chat" | "novel" | "context" | "evolution" | "read" | "map" | "settings";
+type Activity = "studio" | "story" | "world" | "characters" | "chat" | "novel" | "context" | "evolution" | "read" | "shelf" | "map" | "settings";
 type WorkMode = "write" | "advanced";
 type BackendStatus = "checking" | "online" | "offline";
 type CreateDestination = "novel" | "chat";
@@ -129,6 +140,7 @@ const activities: {id: Activity; label: string; icon: GameIconName; description:
   {id: "context", label: "资料库", icon: "search", description: "查找设定和参考资料"},
   {id: "evolution", label: "演化", icon: "nodes", description: "沙盘观演与有限视角小说"},
   {id: "read", label: "小说阅读", icon: "book", description: "像追更一样读演化正文"},
+  {id: "shelf", label: "书架", icon: "book", description: "导入并阅读 TXT 长篇小说"},
   {id: "map", label: "地图", icon: "nodes", description: "故事空间与地点连接"},
   {id: "settings", label: "设置", icon: "settings", description: "连接、高级和维护"},
 ];
@@ -181,6 +193,23 @@ const revisionBusy = ref(false);
 const revisionPreview = ref<RevisionResult | null>(null);
 const readerMode = ref<"read" | "edit">("read");
 const readerFontSize = ref(18);
+const readerLineHeight = ref(Number(localStorage.getItem("rhine-lore-reader-line-height") || "1.9"));
+const readerTheme = ref<"day" | "sepia" | "night">(
+  (localStorage.getItem("rhine-lore-reader-theme") as "day" | "sepia" | "night") || "day",
+);
+const shelfBooks = ref<BookMeta[]>([]);
+const shelfBookId = ref("");
+const shelfBook = ref<BookDetail | null>(null);
+const shelfChapter = ref<BookChapter | null>(null);
+const shelfChapterIndex = ref(-1);
+const shelfTocVisible = ref(false);
+const shelfSettingsVisible = ref(false);
+const shelfGuidance = ref("");
+const shelfAiMode = ref<"continue" | "rewrite" | "expand">("continue");
+const shelfAiResult = ref("");
+const shelfAiBusy = ref(false);
+const shelfSaving = ref(false);
+const shelfImportInput = ref<HTMLInputElement | null>(null);
 const settingsTab = ref("basic");
 const saveNotice = ref("");
 const lastSavedAt = ref("");
@@ -696,6 +725,9 @@ async function openActivity(next: Activity): Promise<void> {
     }
     requestAnimationFrame(() => window.scrollTo({top: 0, behavior: "auto"}));
   }
+  if (next === "shelf") {
+    await loadShelfBooks();
+  }
   if (next === "context") {
     await Promise.allSettled([refreshNodes(), refreshReview()]);
   }
@@ -707,6 +739,186 @@ async function openActivity(next: Activity): Promise<void> {
 function toggleSidebar(): void {
   sidebarCollapsed.value = !sidebarCollapsed.value;
   localStorage.setItem("rhine-lore-sidebar-collapsed", sidebarCollapsed.value ? "1" : "0");
+}
+
+function persistReaderSettings(): void {
+  localStorage.setItem("rhine-lore-reader-line-height", String(readerLineHeight.value));
+  localStorage.setItem("rhine-lore-reader-theme", readerTheme.value);
+}
+
+function readerThemeClass(): string {
+  return `theme-${readerTheme.value}`;
+}
+
+async function loadShelfBooks(): Promise<void> {
+  try {
+    const result = await listBooks();
+    shelfBooks.value = result.books;
+  } catch (error) {
+    runState.value = {error: error instanceof Error ? error.message : String(error)};
+  }
+}
+
+function handleShelfTxtImport(event: Event): void {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file) {
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = async () => {
+    const text = String(reader.result ?? "");
+    if (!text.trim()) {
+      runState.value = {error: "文件内容为空"};
+      return;
+    }
+    await perform("导入 TXT", async () => {
+      const book = await importBook({
+        name: file.name.replace(/\.(txt|text)$/i, ""),
+        genre: "TXT 导入",
+        text,
+      });
+      shelfBooks.value = (await listBooks()).books;
+      await openShelfBook(book.book_id);
+      return {book_id: book.book_id, chapters: book.chapter_count, chars: book.total_chars};
+    });
+  };
+  reader.readAsText(file, "utf-8");
+  input.value = "";
+}
+
+async function openShelfBook(bookId: string): Promise<void> {
+  const result = await perform("打开书", () => getBook(bookId));
+  if (!result) {
+    return;
+  }
+  shelfBook.value = result.book;
+  shelfBookId.value = result.book.book_id;
+  shelfChapter.value = null;
+  shelfChapterIndex.value = -1;
+  shelfAiResult.value = "";
+  const saved = localStorage.getItem(`rhine-shelf-pos-${bookId}`);
+  const targetId =
+    saved && result.book.chapters.some((item) => item.id === saved)
+      ? saved
+      : (result.book.chapters[0]?.id ?? "");
+  if (targetId) {
+    await loadShelfChapter(targetId);
+  }
+  requestAnimationFrame(() => window.scrollTo({top: 0, behavior: "auto"}));
+}
+
+async function loadShelfChapter(chapterId: string): Promise<void> {
+  if (!shelfBookId.value) {
+    return;
+  }
+  const result = await perform("加载章节", () => getBookChapter(shelfBookId.value, chapterId), {
+    collapseOutput: true,
+  });
+  if (!result) {
+    return;
+  }
+  shelfChapter.value = result.chapter;
+  shelfChapterIndex.value =
+    shelfBook.value?.chapters.findIndex((item) => item.id === chapterId) ?? -1;
+  localStorage.setItem(`rhine-shelf-pos-${shelfBookId.value}`, chapterId);
+  requestAnimationFrame(() => window.scrollTo({top: 0, behavior: "auto"}));
+}
+
+function openShelfAdjacentChapter(direction: -1 | 1): void {
+  const chapters = shelfBook.value?.chapters ?? [];
+  const next = shelfChapterIndex.value + direction;
+  if (next < 0 || next >= chapters.length) {
+    return;
+  }
+  void loadShelfChapter(chapters[next].id);
+}
+
+async function saveShelfChapter(): Promise<void> {
+  const bookId = shelfBookId.value;
+  const chapter = shelfChapter.value;
+  if (!bookId || !chapter || shelfSaving.value) {
+    return;
+  }
+  shelfSaving.value = true;
+  try {
+    const result = await saveBookChapter(bookId, chapter.id, {
+      title: chapter.title,
+      content: chapter.content,
+    });
+    shelfChapter.value = result.chapter;
+    const meta = shelfBook.value?.chapters.find((item) => item.id === chapter.id);
+    if (meta) {
+      meta.char_count = result.chapter.char_count;
+      meta.title = result.chapter.title;
+    }
+    markSaved("章节已保存");
+  } catch (error) {
+    runState.value = {error: error instanceof Error ? error.message : String(error)};
+  } finally {
+    shelfSaving.value = false;
+  }
+}
+
+async function runShelfAiWrite(): Promise<void> {
+  const bookId = shelfBookId.value;
+  const chapter = shelfChapter.value;
+  if (!bookId || !chapter || shelfAiBusy.value) {
+    return;
+  }
+  shelfAiBusy.value = true;
+  shelfAiResult.value = "";
+  try {
+    const result = await aiWriteBook({
+      book_id: bookId,
+      chapter_id: chapter.id,
+      mode: shelfAiMode.value,
+      guidance: shelfGuidance.value.trim(),
+    });
+    shelfAiResult.value = result.text;
+    markSaved(result.offline ? "未配置 AI 通道，返回离线模板" : "AI 生成完成，可预览后应用");
+  } catch (error) {
+    runState.value = {error: error instanceof Error ? error.message : String(error)};
+  } finally {
+    shelfAiBusy.value = false;
+  }
+}
+
+function applyShelfAiResult(): void {
+  const chapter = shelfChapter.value;
+  if (!chapter || !shelfAiResult.value.trim()) {
+    return;
+  }
+  if (shelfAiMode.value === "continue") {
+    chapter.content = `${chapter.content.trim()}\n\n${shelfAiResult.value.trim()}`;
+  } else {
+    chapter.content = shelfAiResult.value.trim();
+  }
+  shelfAiResult.value = "";
+  markSaved("AI 正文已应用到本章，请保存");
+}
+
+async function removeShelfBook(bookId: string): Promise<void> {
+  await perform("删除书", () => deleteBook(bookId));
+  localStorage.removeItem(`rhine-shelf-pos-${bookId}`);
+  if (shelfBookId.value === bookId) {
+    shelfBook.value = null;
+    shelfBookId.value = "";
+    shelfChapter.value = null;
+  }
+  await loadShelfBooks();
+}
+
+function shelfChapterParagraphs(chapter: BookChapter): string[] {
+  return (chapter.content ?? "")
+    .split(/\n{2,}/)
+    .map((paragraph) => paragraph.trim())
+    .filter(Boolean);
+}
+
+function shelfProgressLabel(): string {
+  const total = shelfBook.value?.chapters.length ?? 0;
+  return total > 0 ? `第 ${Math.max(0, shelfChapterIndex.value + 1)} / ${total} 章` : "无章节";
 }
 
 async function openKnowledgeIntake(): Promise<void> {
@@ -2886,6 +3098,13 @@ onUnmounted(() => {
       accept="application/json"
       @change="importProjectFile"
     />
+    <input
+      ref="shelfImportInput"
+      class="sr-only"
+      type="file"
+      accept=".txt,.text,text/plain"
+      @change="handleShelfTxtImport"
+    />
     <aside class="sidebar">
       <div class="brand">
         <div class="brand-mark">RL</div>
@@ -3855,6 +4074,25 @@ onUnmounted(() => {
                       编辑
                     </el-button>
                     <el-input-number v-model="readerFontSize" :min="15" :max="26" size="small" />
+                    <el-input-number
+                      v-model="readerLineHeight"
+                      :min="1.4"
+                      :max="2.6"
+                      :step="0.1"
+                      size="small"
+                      title="行距"
+                      @change="persistReaderSettings"
+                    />
+                    <el-select
+                      v-model="readerTheme"
+                      size="small"
+                      style="width: 96px"
+                      @change="persistReaderSettings"
+                    >
+                      <el-option label="白" value="day" />
+                      <el-option label="米黄" value="sepia" />
+                      <el-option label="夜间" value="night" />
+                    </el-select>
                     <el-button @click="submitChapterExtract">保存为资料</el-button>
                   </el-space>
                 </div>
@@ -3879,7 +4117,8 @@ onUnmounted(() => {
                 <div
                   v-if="readerMode === 'read'"
                   class="novel-reader"
-                  :style="{fontSize: `${readerFontSize}px`}"
+                  :class="readerThemeClass()"
+                  :style="{fontSize: `${readerFontSize}px`, lineHeight: String(readerLineHeight)}"
                 >
                   <h2>{{ activeChapter.title }}</h2>
                   <p v-for="(paragraph, index) in activeChapterParagraphs" :key="index">
@@ -4621,6 +4860,25 @@ onUnmounted(() => {
                     />
                   </el-select>
                   <el-input-number v-model="readerFontSize" :min="15" :max="26" size="small" title="字号" />
+                  <el-input-number
+                    v-model="readerLineHeight"
+                    :min="1.4"
+                    :max="2.6"
+                    :step="0.1"
+                    size="small"
+                    title="行距"
+                    @change="persistReaderSettings"
+                  />
+                  <el-select
+                    v-model="readerTheme"
+                    size="small"
+                    style="width: 96px"
+                    @change="persistReaderSettings"
+                  >
+                    <el-option label="白" value="day" />
+                    <el-option label="米黄" value="sepia" />
+                    <el-option label="夜间" value="night" />
+                  </el-select>
                   <el-button size="small" @click="openActivity('evolution')">演化沙盘</el-button>
                   <el-button size="small" type="primary" @click="acceptEvolutionIntoChapter">
                     接收进正文
@@ -4655,7 +4913,11 @@ onUnmounted(() => {
                 </div>
 
                 <div class="reading-stage">
-                  <article class="evolution-chapter-reader reading-main" :style="{fontSize: `${readerFontSize}px`}">
+                  <article
+                    class="evolution-chapter-reader reading-main"
+                    :class="readerThemeClass()"
+                    :style="{fontSize: `${readerFontSize}px`, lineHeight: String(readerLineHeight)}"
+                  >
                     <h2>{{ evolutionActiveChapter.title }}</h2>
                     <p class="evolution-chapter-meta">
                       {{
@@ -4723,6 +4985,193 @@ onUnmounted(() => {
                 </div>
               </template>
               <p v-else class="empty-paragraph reading-empty-hint">还没有可读的章节，先推进一回合。</p>
+            </template>
+          </section>
+
+          <section v-else-if="activity === 'shelf'" class="activity-panel shelf-panel">
+            <template v-if="!shelfBook">
+              <div class="shelf-head">
+                <div>
+                  <strong>TXT 书库</strong>
+                  <small>导入 TXT 长篇小说，逐章阅读，支持 AI 续写 / 改写 / 扩写</small>
+                </div>
+                <el-button type="primary" @click="shelfImportInput?.click()">导入 TXT</el-button>
+              </div>
+              <div v-if="shelfBooks.length === 0" class="product-empty-state">
+                <strong>书架还是空的</strong>
+                <p>
+                  导入一个 .txt 文件，系统会自动按“第X章 / Chapter”拆分章节；
+                  没有章节标题的长文也会自动分节，百万字级小说按章存储、按章加载。
+                </p>
+                <el-button type="primary" @click="shelfImportInput?.click()">选择 TXT 文件</el-button>
+              </div>
+              <div v-else class="shelf-grid">
+                <el-card
+                  v-for="book in shelfBooks"
+                  :key="book.book_id"
+                  shadow="never"
+                  class="shelf-card"
+                >
+                  <template #header>
+                    <div class="card-header">
+                      <span>{{ book.name }}</span>
+                      <small>{{ book.genre }}</small>
+                    </div>
+                  </template>
+                  <p class="shelf-card-summary">{{ book.summary || "暂无简介" }}</p>
+                  <div class="shelf-card-meta">
+                    <span>{{ book.chapter_count }} 章</span>
+                    <span>{{ book.total_chars.toLocaleString() }} 字</span>
+                    <span>{{ book.updated_at }}</span>
+                  </div>
+                  <div class="shelf-card-actions">
+                    <el-button type="primary" size="small" @click="openShelfBook(book.book_id)">
+                      阅读
+                    </el-button>
+                    <el-button size="small" @click="removeShelfBook(book.book_id)">删除</el-button>
+                  </div>
+                </el-card>
+              </div>
+            </template>
+
+            <template v-else>
+              <div class="reading-toolbar shelf-toolbar">
+                <div class="reading-toolbar-title">
+                  <span class="section-icon"><GameIcon name="book" /></span>
+                  <div>
+                    <strong>{{ shelfBook.name }}</strong>
+                    <small>
+                      {{ shelfProgressLabel() }} ·
+                      {{ (shelfChapter?.char_count ?? 0).toLocaleString() }} 字
+                    </small>
+                  </div>
+                </div>
+                <div class="reading-toolbar-controls">
+                  <el-button
+                    size="small"
+                    @click="shelfBook = null; shelfBookId = ''; shelfChapter = null; shelfChapterIndex = -1"
+                  >
+                    返回书架
+                  </el-button>
+                  <el-button size="small" @click="shelfTocVisible = true">目录</el-button>
+                  <el-button size="small" @click="shelfSettingsVisible = true">阅读设置</el-button>
+                  <el-button
+                    size="small"
+                    :disabled="shelfChapterIndex <= 0"
+                    @click="openShelfAdjacentChapter(-1)"
+                  >
+                    上一章
+                  </el-button>
+                  <el-button
+                    size="small"
+                    :disabled="shelfChapterIndex < 0 || shelfChapterIndex >= shelfBook.chapters.length - 1"
+                    @click="openShelfAdjacentChapter(1)"
+                  >
+                    下一章
+                  </el-button>
+                </div>
+              </div>
+
+              <div v-if="!shelfChapter" class="product-empty-state">
+                <strong>加载章节中</strong>
+              </div>
+              <template v-else>
+                <article
+                  class="novel-reader shelf-reader"
+                  :class="readerThemeClass()"
+                  :style="{fontSize: `${readerFontSize}px`, lineHeight: String(readerLineHeight)}"
+                >
+                  <h2>{{ shelfChapter.title }}</h2>
+                  <p v-for="(paragraph, index) in shelfChapterParagraphs(shelfChapter)" :key="index">
+                    {{ paragraph }}
+                  </p>
+                </article>
+
+                <div class="shelf-ai-panel">
+                  <div class="shelf-ai-head">
+                    <strong>AI 创作</strong>
+                    <el-radio-group v-model="shelfAiMode" size="small">
+                      <el-radio-button value="continue">续写</el-radio-button>
+                      <el-radio-button value="rewrite">改写</el-radio-button>
+                      <el-radio-button value="expand">扩写</el-radio-button>
+                    </el-radio-group>
+                    <el-button type="primary" size="small" :loading="shelfAiBusy" @click="runShelfAiWrite">
+                      生成
+                    </el-button>
+                  </div>
+                  <el-input
+                    v-model="shelfGuidance"
+                    placeholder="引导 AI，例如：让主角发现旧码头火光，语气保持沉静"
+                    clearable
+                  />
+                  <template v-if="shelfAiResult">
+                    <el-input
+                      v-model="shelfAiResult"
+                      type="textarea"
+                      :rows="8"
+                      class="shelf-ai-result"
+                      placeholder="AI 结果预览"
+                    />
+                    <div class="shelf-ai-actions">
+                      <el-button type="primary" size="small" @click="applyShelfAiResult">
+                        应用到本章
+                      </el-button>
+                      <el-button size="small" @click="shelfAiResult = ''">丢弃</el-button>
+                    </div>
+                  </template>
+                  <div class="shelf-save-row">
+                    <el-button size="small" :loading="shelfSaving" @click="saveShelfChapter">
+                      保存本章
+                    </el-button>
+                    <small>AI 结果应用后需要保存才会写入磁盘。</small>
+                  </div>
+                </div>
+              </template>
+
+              <el-drawer v-model="shelfTocVisible" title="章节目录" size="82%">
+                <div class="shelf-toc-list">
+                  <button
+                    v-for="chapter in shelfBook.chapters"
+                    :key="chapter.id"
+                    type="button"
+                    class="shelf-toc-item"
+                    :class="{active: shelfChapter?.id === chapter.id}"
+                    @click="shelfTocVisible = false; loadShelfChapter(chapter.id)"
+                  >
+                    <strong>{{ chapter.title }}</strong>
+                    <small>{{ chapter.char_count.toLocaleString() }} 字</small>
+                  </button>
+                </div>
+              </el-drawer>
+
+              <el-drawer v-model="shelfSettingsVisible" title="阅读设置" size="82%">
+                <div class="shelf-settings">
+                  <label>字号</label>
+                  <el-slider
+                    v-model="readerFontSize"
+                    :min="15"
+                    :max="28"
+                    :step="1"
+                    show-input
+                    @change="persistReaderSettings"
+                  />
+                  <label>行距</label>
+                  <el-slider
+                    v-model="readerLineHeight"
+                    :min="1.4"
+                    :max="2.6"
+                    :step="0.1"
+                    show-input
+                    @change="persistReaderSettings"
+                  />
+                  <label>主题</label>
+                  <el-radio-group v-model="readerTheme" @change="persistReaderSettings">
+                    <el-radio-button value="day">白</el-radio-button>
+                    <el-radio-button value="sepia">米黄</el-radio-button>
+                    <el-radio-button value="night">夜间</el-radio-button>
+                  </el-radio-group>
+                </div>
+              </el-drawer>
             </template>
           </section>
 

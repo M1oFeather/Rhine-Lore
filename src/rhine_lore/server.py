@@ -38,6 +38,7 @@ from rhine_lore.engine import (
     turn_result_to_dict,
     viewpoint_options,
 )
+from rhine_lore.novel_store import BookStore
 
 
 ALLOWED_PROXY_HOSTS = {"127.0.0.1", "localhost", "::1"}
@@ -56,6 +57,7 @@ DEFAULT_VAULT_CHECKOUT = Path(__file__).resolve().parents[3] / "Rhine-Vault"
 DEFAULT_VAULT_DATABASE = PROJECT_ROOT / "data" / "rhine-vault-core.db"
 VAULT_WEB_INSTALL_TIMEOUT = 300
 EVOLUTION_STORE = EvolutionStore(PROJECTS_DIR)
+BOOK_STORE = BookStore(DATA_ROOT)
 
 
 def _is_embedded() -> bool:
@@ -480,6 +482,23 @@ def _llm_config_payload(config: dict[str, str]) -> dict[str, Any]:
     }
 
 
+def _offline_ai_write(mode: str) -> str:
+    if mode == "rewrite":
+        return (
+            "（离线模板·改写）请先在首页配置 AI 通道，即可对本章进行 AI 改写。\n\n"
+            "当前未配置 API Key，正文保持原样。"
+        )
+    if mode == "expand":
+        return (
+            "（离线模板·扩写）请先在首页配置 AI 通道，即可对本章进行 AI 扩写。\n\n"
+            "当前未配置 API Key，正文保持原样。"
+        )
+    return (
+        "（离线模板·续写）请先在首页配置 AI 通道，即可在章末续写下一段。\n\n"
+        "当前未配置 API Key，正文保持原样。"
+    )
+
+
 def _resolve_llm(payload_llm: dict[str, Any] | None = None) -> dict[str, str]:
     stored = _load_llm_config()
     explicit = payload_llm or {}
@@ -697,6 +716,20 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
                 self._handle_embedded_api()
                 return
             self._proxy_to_vault()
+            return
+        self.send_error(HTTPStatus.NOT_FOUND, "Not found")
+
+    def do_DELETE(self) -> None:
+        if self.path.startswith("/lore-api/books/"):
+            book_id = self.path[len("/lore-api/books/") :].strip("/")
+            if not book_id:
+                self._send_json(400, {"error": "book_id 为空"})
+                return
+            try:
+                BOOK_STORE.delete_book(book_id)
+                self._send_json(200, {"ok": True, "book_id": book_id})
+            except KeyError as exc:
+                self._send_json(404, {"error": str(exc)})
             return
         self.send_error(HTTPStatus.NOT_FOUND, "Not found")
 
@@ -990,6 +1023,69 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
                     },
                 )
                 return
+            if self.command == "GET" and parsed_request.path == "/lore-api/books":
+                self._send_json(200, {"books": BOOK_STORE.list_books()})
+                return
+            if self.command == "POST" and parsed_request.path == "/lore-api/books/import":
+                payload = self._read_json_body()
+                text = str(payload.get("text") or "")
+                if not text.strip():
+                    raise ValueError("TXT 内容为空，无法导入")
+                book = BOOK_STORE.import_txt(
+                    name=str(payload.get("name") or "未命名小说"),
+                    text=text,
+                    genre=str(payload.get("genre") or ""),
+                    summary=str(payload.get("summary") or ""),
+                )
+                self._send_json(200, book)
+                return
+            if "/lore-api/books/" in parsed_request.path and "/chapters/" in parsed_request.path:
+                parts = parsed_request.path[len("/lore-api/books/") :].split("/")
+                if len(parts) == 3 and parts[1] == "chapters":
+                    book_id, _, chapter_id = parts
+                    if self.command == "GET":
+                        self._send_json(200, {"chapter": BOOK_STORE.get_chapter(book_id, chapter_id)})
+                        return
+                    if self.command == "POST":
+                        payload = self._read_json_body()
+                        chapter = BOOK_STORE.save_chapter(
+                            book_id,
+                            chapter_id,
+                            str(payload.get("title") or ""),
+                            str(payload.get("content") or ""),
+                        )
+                        self._send_json(200, {"chapter": chapter})
+                        return
+            if self.command == "POST" and parsed_request.path.endswith("/ai/write") and "/lore-api/books/" in parsed_request.path:
+                book_id = parsed_request.path[len("/lore-api/books/") : -len("/ai/write")].strip("/")
+                payload = self._read_json_body()
+                chapter_id = str(payload.get("chapter_id") or "").strip()
+                mode = str(payload.get("mode") or "continue").strip()
+                if mode not in {"continue", "rewrite", "expand"}:
+                    mode = "continue"
+                messages = BOOK_STORE.build_ai_write_messages(
+                    book_id,
+                    chapter_id,
+                    mode,
+                    str(payload.get("guidance") or ""),
+                    text=str(payload.get("text") or "") or None,
+                )
+                llm = _resolve_llm(payload.get("llm"))
+                if not llm.get("api_key") or not llm.get("base_url") or not llm.get("model"):
+                    self._send_json(200, {"text": _offline_ai_write(mode), "offline": True})
+                    return
+                try:
+                    text = _chat_with_vault(messages, llm)
+                except Exception as exc:  # noqa: BLE001 - surface AI errors
+                    self._send_json(502, {"error": f"AI 调用失败：{exc}"})
+                    return
+                self._send_json(200, {"text": text, "offline": False})
+                return
+            if self.command == "GET" and parsed_request.path.startswith("/lore-api/books/"):
+                book_id = parsed_request.path[len("/lore-api/books/") :].strip("/")
+                if book_id:
+                    self._send_json(200, {"book": BOOK_STORE.get_book(book_id)})
+                    return
             if self.command == "GET" and parsed_request.path == "/lore-api/llm/config":
                 self._send_json(200, _llm_config_payload(_load_llm_config()))
                 return

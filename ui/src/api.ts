@@ -622,3 +622,92 @@ export function llmChat(body: {
   return postJson("/api/llm/openai-compatible/chat", {workspace_id: workspaceId, ...body});
 }
 
+export type BookMeta = {
+  book_id: string;
+  name: string;
+  genre: string;
+  summary: string;
+  chapter_count: number;
+  total_chars: number;
+  updated_at: string;
+};
+
+export type BookChapterMeta = {
+  id: string;
+  title: string;
+  order: number;
+  char_count: number;
+};
+
+export type BookDetail = BookMeta & {
+  chapters: BookChapterMeta[];
+};
+
+export type BookChapter = {
+  id: string;
+  title: string;
+  order: number;
+  content: string;
+  char_count: number;
+};
+
+export type AiWriteResult = {
+  text: string;
+  offline: boolean;
+};
+
+export function listBooks(): Promise<{books: BookMeta[]}> {
+  return getJson("/lore-api/books");
+}
+
+export function importBook(body: {
+  name: string;
+  genre?: string;
+  summary?: string;
+  text: string;
+}): Promise<BookDetail> {
+  return postJson("/lore-api/books/import", body);
+}
+
+export function getBook(bookId: string): Promise<{book: BookDetail}> {
+  return getJson(`/lore-api/books/${encodeURIComponent(bookId)}`);
+}
+
+export function deleteBook(bookId: string): Promise<{ok: boolean}> {
+  return fetch(`/lore-api/books/${encodeURIComponent(bookId)}`, {method: "DELETE"}).then((response) => {
+    if (!response.ok) {
+      return response.text().then((text) => {
+        throw new Error(text);
+      });
+    }
+    return response.json() as Promise<{ok: boolean}>;
+  });
+}
+
+export function getBookChapter(bookId: string, chapterId: string): Promise<{chapter: BookChapter}> {
+  return getJson(
+    `/lore-api/books/${encodeURIComponent(bookId)}/chapters/${encodeURIComponent(chapterId)}`,
+  );
+}
+
+export function saveBookChapter(
+  bookId: string,
+  chapterId: string,
+  body: {title: string; content: string},
+): Promise<{chapter: BookChapter}> {
+  return postJson(
+    `/lore-api/books/${encodeURIComponent(bookId)}/chapters/${encodeURIComponent(chapterId)}`,
+    body,
+  );
+}
+
+export function aiWriteBook(body: {
+  book_id: string;
+  chapter_id: string;
+  mode: "continue" | "rewrite" | "expand";
+  guidance?: string;
+  text?: string;
+}): Promise<AiWriteResult> {
+  return postJson(`/lore-api/books/${encodeURIComponent(body.book_id)}/ai/write`, body);
+}
+
