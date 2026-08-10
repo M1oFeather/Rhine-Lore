@@ -149,6 +149,13 @@ const activities: {id: Activity; label: string; icon: GameIconName; description:
 
 const activity = ref<Activity>("studio");
 const sidebarCollapsed = ref(localStorage.getItem("rhine-lore-sidebar-collapsed") === "1");
+const mobileNavOpen = ref(false);
+const mobileMoreOpen = ref(false);
+const novelTocVisible = ref(false);
+const novelSettingsVisible = ref(false);
+const readTocVisible = ref(false);
+const readSettingsVisible = ref(false);
+const mobilePrimaryIds = new Set<Activity>(["studio", "novel", "read", "shelf", "context", "settings"]);
 const notice = ref("就绪");
 const busyAction = ref("");
 const runState = ref<Record<string, unknown> | null>(null);
@@ -1085,6 +1092,10 @@ function switchWorkMode(mode: WorkMode): void {
 
 function isPrimaryActivity(next: Activity): boolean {
   return primaryActivityIds.includes(next);
+}
+
+function isMobileSecondary(next: Activity): boolean {
+  return !mobilePrimaryIds.has(next);
 }
 
 function isStudioChildActivity(next: Activity): boolean {
@@ -3115,7 +3126,10 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="app-shell" :class="{'sidebar-collapsed': sidebarCollapsed}">
+  <div
+    class="app-shell"
+    :class="{'sidebar-collapsed': sidebarCollapsed, 'mobile-nav-open': mobileNavOpen}"
+  >
     <input
       ref="projectImportInput"
       class="sr-only"
@@ -3130,7 +3144,7 @@ onUnmounted(() => {
       accept=".txt,.text,text/plain"
       @change="handleShelfTxtImport"
     />
-    <aside class="sidebar">
+    <aside class="sidebar" :class="{'mobile-more-open': mobileMoreOpen}">
       <div class="brand">
         <div class="brand-mark">RL</div>
         <strong>Rhine-Lore</strong>
@@ -3145,8 +3159,9 @@ onUnmounted(() => {
             active: activity === item.id,
             'nav-item-secondary': !isPrimaryActivity(item.id),
             'mobile-parent-active': isStudioChildActivity(item.id),
+            'mobile-secondary-nav-item': isMobileSecondary(item.id),
           }"
-          @click="openActivity(item.id)"
+          @click="openActivity(item.id); mobileNavOpen = false"
           :title="sidebarCollapsed ? item.label : ''"
         >
           <span class="nav-icon-dot"><GameIcon :name="item.icon" :label="item.label" /></span>
@@ -3155,14 +3170,30 @@ onUnmounted(() => {
             <small>{{ item.description }}</small>
           </span>
         </el-button>
+        <el-button class="nav-item mobile-more-toggle" @click="mobileMoreOpen = !mobileMoreOpen">
+          <span class="nav-icon-dot"><GameIcon name="nodes" label="更多" /></span>
+          <span class="nav-label">
+            <strong>{{ mobileMoreOpen ? "收起" : "更多功能" }}</strong>
+            <small>{{ mobileMoreOpen ? "显示次要功能" : "故事档案 / 角色 / 演化沙盘等" }}</small>
+          </span>
+        </el-button>
       </nav>
       <el-button class="collapse-button" title="折叠/展开侧边栏" aria-label="折叠/展开侧边栏" @click="toggleSidebar">
         {{ sidebarCollapsed ? "»" : "«" }}
       </el-button>
     </aside>
 
+    <div v-if="mobileNavOpen" class="sidebar-backdrop" @click="mobileNavOpen = false" />
+
     <section class="workspace">
       <header class="workspace-topbar">
+        <el-button
+          class="mobile-menu-button"
+          aria-label="打开菜单"
+          @click="mobileNavOpen = true"
+        >
+          ☰
+        </el-button>
         <div class="workspace-title-group">
           <span class="section-icon"><GameIcon :name="activeTabMeta.icon" /></span>
           <div>
@@ -4081,12 +4112,22 @@ onUnmounted(() => {
                 <div class="card-header">
                   <span>正文</span>
                   <el-space wrap>
-                    <span class="chapter-meter">{{ chapterNavigationLabel }} · {{ chapterCharacterCount }} 字</span>
-                    <el-button size="small" :disabled="activeChapterIndex <= 0" @click="openAdjacentChapter(-1)">
+                    <el-button size="small" @click="novelTocVisible = true">目录</el-button>
+                    <el-button size="small" @click="novelSettingsVisible = true">阅读设置</el-button>
+                    <span class="chapter-meter desktop-only-control">
+                      {{ chapterNavigationLabel }} · {{ chapterCharacterCount }} 字
+                    </span>
+                    <el-button
+                      size="small"
+                      class="desktop-only-control"
+                      :disabled="activeChapterIndex <= 0"
+                      @click="openAdjacentChapter(-1)"
+                    >
                       上一章
                     </el-button>
                     <el-button
                       size="small"
+                      class="desktop-only-control"
                       :disabled="activeChapterIndex < 0 || activeChapterIndex >= activeProject.chapters.length - 1"
                       @click="openAdjacentChapter(1)"
                     >
@@ -4098,7 +4139,13 @@ onUnmounted(() => {
                     <el-button :type="readerMode === 'edit' ? 'primary' : 'default'" @click="readerMode = 'edit'">
                       编辑
                     </el-button>
-                    <el-input-number v-model="readerFontSize" :min="15" :max="26" size="small" />
+                    <el-input-number
+                      v-model="readerFontSize"
+                      :min="15"
+                      :max="26"
+                      size="small"
+                      class="desktop-only-control"
+                    />
                     <el-input-number
                       v-model="readerLineHeight"
                       :min="1.4"
@@ -4106,19 +4153,23 @@ onUnmounted(() => {
                       :step="0.1"
                       size="small"
                       title="行距"
+                      class="desktop-only-control"
                       @change="persistReaderSettings"
                     />
                     <el-select
                       v-model="readerTheme"
                       size="small"
                       style="width: 96px"
+                      class="desktop-only-control"
                       @change="persistReaderSettings"
                     >
                       <el-option label="白" value="day" />
                       <el-option label="米黄" value="sepia" />
                       <el-option label="夜间" value="night" />
                     </el-select>
-                    <el-button @click="submitChapterExtract">保存为资料</el-button>
+                    <el-button class="desktop-only-control" @click="submitChapterExtract">
+                      保存为资料
+                    </el-button>
                   </el-space>
                 </div>
               </template>
@@ -4161,6 +4212,73 @@ onUnmounted(() => {
                 />
               </div>
             </el-card>
+
+            <div v-if="activeChapter" class="mobile-chapter-bar">
+              <el-button
+                size="small"
+                :disabled="activeChapterIndex <= 0"
+                @click="openAdjacentChapter(-1)"
+              >
+                上一章
+              </el-button>
+              <span>{{ chapterNavigationLabel }}</span>
+              <el-button
+                size="small"
+                :disabled="activeChapterIndex >= activeProject.chapters.length - 1"
+                @click="openAdjacentChapter(1)"
+              >
+                下一章
+              </el-button>
+            </div>
+
+            <el-drawer v-model="novelTocVisible" title="章节目录" size="82%">
+              <div class="shelf-toc-list">
+                <button
+                  v-for="chapter in activeProject.chapters"
+                  :key="chapter.id"
+                  type="button"
+                  class="shelf-toc-item"
+                  :class="{active: activeChapter?.id === chapter.id}"
+                  @click="novelTocVisible = false; selectChapter(chapter.id)"
+                >
+                  <strong>{{ chapter.title }}</strong>
+                  <small>{{ chapterLength(chapter) }} 字</small>
+                </button>
+                <div v-if="activeProject.chapters.length === 0" class="product-empty-state compact">
+                  <strong>从第一章开始</strong>
+                  <el-button type="primary" @click="startWriting">创建并编辑</el-button>
+                </div>
+              </div>
+            </el-drawer>
+
+            <el-drawer v-model="novelSettingsVisible" title="阅读设置" size="82%">
+              <div class="shelf-settings">
+                <label>字号</label>
+                <el-slider
+                  v-model="readerFontSize"
+                  :min="15"
+                  :max="28"
+                  :step="1"
+                  show-input
+                  @change="persistReaderSettings"
+                />
+                <label>行距</label>
+                <el-slider
+                  v-model="readerLineHeight"
+                  :min="1.4"
+                  :max="2.6"
+                  :step="0.1"
+                  show-input
+                  @change="persistReaderSettings"
+                />
+                <label>主题</label>
+                <el-radio-group v-model="readerTheme" @change="persistReaderSettings">
+                  <el-radio-button value="day">白</el-radio-button>
+                  <el-radio-button value="sepia">米黄</el-radio-button>
+                  <el-radio-button value="night">夜间</el-radio-button>
+                </el-radio-group>
+              </div>
+            </el-drawer>
           </section>
 
           <section v-else-if="activity === 'context'" class="activity-panel">
@@ -4858,10 +4976,12 @@ onUnmounted(() => {
                   </div>
                 </div>
                 <div class="reading-toolbar-controls">
+                  <el-button size="small" @click="readTocVisible = true">目录</el-button>
+                  <el-button size="small" @click="readSettingsVisible = true">阅读设置</el-button>
                   <el-select
                     v-model="evolutionViewpoint"
                     size="small"
-                    class="reading-viewpoint"
+                    class="reading-viewpoint desktop-only-control"
                     @change="switchEvolutionViewpoint"
                   >
                     <el-option
@@ -4874,7 +4994,7 @@ onUnmounted(() => {
                   <el-select
                     v-model="activeProject.chapter_turns"
                     size="small"
-                    class="reading-chapter-size"
+                    class="reading-chapter-size desktop-only-control"
                     @change="setChapterTurns"
                   >
                     <el-option
@@ -4884,7 +5004,14 @@ onUnmounted(() => {
                       :value="size"
                     />
                   </el-select>
-                  <el-input-number v-model="readerFontSize" :min="15" :max="26" size="small" title="字号" />
+                  <el-input-number
+                    v-model="readerFontSize"
+                    :min="15"
+                    :max="26"
+                    size="small"
+                    title="字号"
+                    class="desktop-only-control"
+                  />
                   <el-input-number
                     v-model="readerLineHeight"
                     :min="1.4"
@@ -4892,12 +5019,14 @@ onUnmounted(() => {
                     :step="0.1"
                     size="small"
                     title="行距"
+                    class="desktop-only-control"
                     @change="persistReaderSettings"
                   />
                   <el-select
                     v-model="readerTheme"
                     size="small"
                     style="width: 96px"
+                    class="desktop-only-control"
                     @change="persistReaderSettings"
                   >
                     <el-option label="白" value="day" />
@@ -4905,7 +5034,12 @@ onUnmounted(() => {
                     <el-option label="夜间" value="night" />
                   </el-select>
                   <el-button size="small" @click="openActivity('evolution')">演化沙盘</el-button>
-                  <el-button size="small" type="primary" @click="acceptEvolutionIntoChapter">
+                  <el-button
+                    size="small"
+                    type="primary"
+                    class="desktop-only-control"
+                    @click="acceptEvolutionIntoChapter"
+                  >
                     接收进正文
                   </el-button>
                 </div>
@@ -5011,6 +5145,57 @@ onUnmounted(() => {
               </template>
               <p v-else class="empty-paragraph reading-empty-hint">还没有可读的章节，先推进一回合。</p>
             </template>
+
+            <el-drawer v-model="readTocVisible" title="章节目录" size="82%">
+              <div class="shelf-toc-list">
+                <button
+                  v-for="chapter in evolutionNovelChapters"
+                  :key="chapter.index"
+                  type="button"
+                  class="shelf-toc-item"
+                  :class="{active: evolutionActiveChapter?.index === chapter.index}"
+                  @click="readTocVisible = false; selectReadingChapter(chapter.index)"
+                >
+                  <strong>{{ chapter.title }}</strong>
+                  <small>
+                    {{
+                      chapter.startTurn === chapter.endTurn
+                        ? `第${chapter.startTurn}回合`
+                        : `第${chapter.startTurn}–${chapter.endTurn}回合`
+                    }}
+                  </small>
+                </button>
+              </div>
+            </el-drawer>
+
+            <el-drawer v-model="readSettingsVisible" title="阅读设置" size="82%">
+              <div class="shelf-settings">
+                <label>字号</label>
+                <el-slider
+                  v-model="readerFontSize"
+                  :min="15"
+                  :max="28"
+                  :step="1"
+                  show-input
+                  @change="persistReaderSettings"
+                />
+                <label>行距</label>
+                <el-slider
+                  v-model="readerLineHeight"
+                  :min="1.4"
+                  :max="2.6"
+                  :step="0.1"
+                  show-input
+                  @change="persistReaderSettings"
+                />
+                <label>主题</label>
+                <el-radio-group v-model="readerTheme" @change="persistReaderSettings">
+                  <el-radio-button value="day">白</el-radio-button>
+                  <el-radio-button value="sepia">米黄</el-radio-button>
+                  <el-radio-button value="night">夜间</el-radio-button>
+                </el-radio-group>
+              </div>
+            </el-drawer>
           </section>
 
           <section v-else-if="activity === 'shelf'" class="activity-panel shelf-panel">
