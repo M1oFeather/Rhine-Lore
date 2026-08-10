@@ -309,6 +309,14 @@ export type LanInfo = {
   lan_urls: string[];
 };
 
+export type LlmServerConfig = {
+  configured: boolean;
+  base_url: string;
+  model: string;
+  preset: string;
+  masked_key: string;
+};
+
 export const workspaceIdKey = "rhine-lore-workspace-id";
 
 export let workspaceId = localStorage.getItem(workspaceIdKey) || "story-workspace";
@@ -480,7 +488,7 @@ export function resetEvolutionRun(projectId: string): Promise<{ok: boolean}> {
 export function generateEvolutionProseApi(body: {
   project_id: string;
   viewpoint_id?: string;
-  llm: {
+  llm?: {
     base_url?: string;
     api_key?: string;
     model?: string;
@@ -525,7 +533,7 @@ export function regenerateEvolutionChapter(body: {
   start_turn: number;
   end_turn: number;
   global_guidance?: string;
-  llm: {
+  llm?: {
     base_url?: string;
     api_key?: string;
     model?: string;
@@ -550,6 +558,28 @@ export function restoreProjectBackup(projectId: string): Promise<{project: Story
 
 export function getLanInfo(): Promise<LanInfo> {
   return getJson("/lore-api/lan");
+}
+
+export function getLlmServerConfig(): Promise<LlmServerConfig> {
+  return getJson("/lore-api/llm/config");
+}
+
+export function saveLlmServerConfig(body: {
+  base_url?: string;
+  api_key?: string;
+  model?: string;
+  preset?: string;
+  clear_key?: boolean;
+}): Promise<LlmServerConfig> {
+  return postJson("/lore-api/llm/config", body);
+}
+
+export function llmServerPing(message = "你好"): Promise<ApiRecord> {
+  return postJson("/lore-api/llm/ping", {message});
+}
+
+export function llmServerChat(messages: LlmChatMessage[]): Promise<ApiRecord> {
+  return postJson("/lore-api/llm/chat", {messages});
 }
 
 export type LlmChatMessage = {

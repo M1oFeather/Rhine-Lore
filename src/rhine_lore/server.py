@@ -43,6 +43,7 @@ ALLOWED_METHODS = {"GET", "POST", "PATCH"}
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PROJECTS_DIR = PROJECT_ROOT / "data" / "projects"
 PROJECT_BACKUP_FORMAT = "rhine-lore-project-v1"
+LLM_CONFIG_PATH = PROJECT_ROOT / "data" / "llm-config.json"
 DEFAULT_VAULT_HOST = "127.0.0.1"
 DEFAULT_VAULT_PORT = 8795
 DEFAULT_VAULT_PORT_CANDIDATES = (8795, 8796, 8797)
@@ -417,6 +418,59 @@ def _evolution_payload(
     }
 
 
+def _load_llm_config() -> dict[str, str]:
+    if LLM_CONFIG_PATH.is_file():
+        try:
+            data = json.loads(LLM_CONFIG_PATH.read_text(encoding="utf-8"))
+            return {
+                "base_url": str(data.get("base_url") or "").strip(),
+                "api_key": str(data.get("api_key") or "").strip(),
+                "model": str(data.get("model") or "").strip(),
+                "preset": str(data.get("preset") or "deepseek").strip(),
+            }
+        except (OSError, json.JSONDecodeError):
+            pass
+    return {"base_url": "", "api_key": "", "model": "", "preset": "deepseek"}
+
+
+def _save_llm_config(config: dict[str, str]) -> None:
+    LLM_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    temporary = LLM_CONFIG_PATH.with_suffix(".json.tmp")
+    temporary.write_text(
+        json.dumps(config, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    os.replace(temporary, LLM_CONFIG_PATH)
+
+
+def _mask_key(api_key: str) -> str:
+    if not api_key:
+        return ""
+    if len(api_key) <= 6:
+        return "••••"
+    return f"{api_key[:3]}••••{api_key[-3:]}"
+
+
+def _llm_config_payload(config: dict[str, str]) -> dict[str, Any]:
+    return {
+        "configured": bool(config.get("api_key")),
+        "base_url": config.get("base_url") or "",
+        "model": config.get("model") or "",
+        "preset": config.get("preset") or "deepseek",
+        "masked_key": _mask_key(config.get("api_key") or ""),
+    }
+
+
+def _resolve_llm(payload_llm: dict[str, Any] | None = None) -> dict[str, str]:
+    stored = _load_llm_config()
+    explicit = payload_llm or {}
+    return {
+        "base_url": str(explicit.get("base_url") or stored.get("base_url") or "").strip(),
+        "api_key": str(explicit.get("api_key") or stored.get("api_key") or "").strip(),
+        "model": str(explicit.get("model") or stored.get("model") or "").strip(),
+    }
+
+
 def _chat_with_vault(messages: list[dict[str, str]], llm: dict[str, Any]) -> str:
     """Call the local Vault OpenAI-compatible chat endpoint and return text."""
     vault_base = VAULT_MANAGER.status()["base_url"]
@@ -634,6 +688,76 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
                     },
                 )
                 return
+            if self.command == "GET" and parsed_request.path == "/lore-api/llm/config":
+                self._send_json(200, _llm_config_payload(_load_llm_config()))
+                return
+            if self.command == "POST" and parsed_request.path == "/lore-api/llm/config":
+                payload = self._read_json_body()
+                config = _load_llm_config()
+                if str(payload.get("base_url") or "").strip():
+                    config["base_url"] = str(payload["base_url"]).strip()
+                if str(payload.get("api_key") or "").strip():
+                    config["api_key"] = str(payload["api_key"]).strip()
+                elif payload.get("clear_key") is True:
+                    config["api_key"] = ""
+                if str(payload.get("model") or "").strip():
+                    config["model"] = str(payload["model"]).strip()
+                if str(payload.get("preset") or "").strip():
+                    config["preset"] = str(payload["preset"]).strip()
+                _save_llm_config(config)
+                self._send_json(200, _llm_config_payload(config))
+                return
+            if self.command == "POST" and parsed_request.path == "/lore-api/llm/ping":
+                payload = self._read_json_body()
+                llm = _resolve_llm(None)
+                if not llm["api_key"]:
+                    self._send_json(400, {"error": "未配置 API Key"})
+                    return
+                messages = [
+                    {
+                        "role": "system",
+                        "content": "Reply normally and briefly. This is a provider connectivity test.",
+                    },
+                    {"role": "user", "content": str(payload.get("message") or "你好")},
+                ]
+                try:
+                    text = _chat_with_vault(messages, llm)
+                except HTTPError as exc:
+                    detail = exc.read().decode("utf-8", errors="replace")[-300:]
+                    self._send_json(502, {"error": f"AI 连接失败：{detail or exc}"})
+                    return
+                except (URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError) as exc:
+                    self._send_json(502, {"error": f"AI 连接失败：{exc}"})
+                    return
+                self._send_json(200, {"answer": text, "model": llm["model"], "provider": "openai-compatible"})
+                return
+            if self.command == "POST" and parsed_request.path == "/lore-api/llm/chat":
+                payload = self._read_json_body()
+                raw_messages = payload.get("messages") or []
+                if not isinstance(raw_messages, list) or not raw_messages:
+                    raise ValueError("messages 不能为空")
+                llm = _resolve_llm(None)
+                if not llm["api_key"]:
+                    self._send_json(400, {"error": "未配置 API Key"})
+                    return
+                messages = [
+                    {
+                        "role": str(item.get("role") or "user"),
+                        "content": str(item.get("content") or ""),
+                    }
+                    for item in raw_messages
+                ]
+                try:
+                    text = _chat_with_vault(messages, llm)
+                except HTTPError as exc:
+                    detail = exc.read().decode("utf-8", errors="replace")[-300:]
+                    self._send_json(502, {"error": f"AI 请求失败：{detail or exc}"})
+                    return
+                except (URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError) as exc:
+                    self._send_json(502, {"error": f"AI 请求失败：{exc}"})
+                    return
+                self._send_json(200, {"answer": text, "model": llm["model"], "provider": "openai-compatible"})
+                return
             if self.command == "POST" and parsed_request.path == "/lore-api/evolution/start":
                 payload = self._read_json_body()
                 project_id = str(payload.get("project_id") or "").strip()
@@ -678,7 +802,7 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
                     self._send_json(404, {"error": "演化尚未开始"})
                     return
                 viewpoint_id = str(payload.get("viewpoint_id") or "").strip()
-                llm = payload.get("llm") or {}
+                llm = _resolve_llm(payload.get("llm"))
                 api_key = str(llm.get("api_key") or "").strip()
                 if not api_key:
                     self._send_json(400, {"error": "未配置 API Key"})
@@ -706,7 +830,7 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
                     return
                 viewpoint_id = str(payload.get("viewpoint_id") or "").strip()
                 turns = max(1, min(8, int(payload.get("turns") or 4)))
-                llm = payload.get("llm") or {}
+                llm = _resolve_llm(payload.get("llm"))
                 api_key = str(llm.get("api_key") or "").strip()
                 global_guidance = str(payload.get("global_guidance") or "").strip()
                 advanced = 0
@@ -739,7 +863,7 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
                 if start_turn < 1 or end_turn < start_turn:
                     self._send_json(400, {"error": "章节范围无效"})
                     return
-                llm = payload.get("llm") or {}
+                llm = _resolve_llm(payload.get("llm"))
                 api_key = str(llm.get("api_key") or "").strip()
                 if not api_key:
                     self._send_json(400, {"error": "重新生成本章需要 AI 通道"})

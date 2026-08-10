@@ -36,6 +36,8 @@ class EvolutionApiTests(unittest.TestCase):
         cls.tempdir = tempfile.TemporaryDirectory()
         cls.original_store = server.EVOLUTION_STORE
         server.EVOLUTION_STORE = EvolutionStore(Path(cls.tempdir.name))
+        cls.original_llm_path = server.LLM_CONFIG_PATH
+        server.LLM_CONFIG_PATH = Path(cls.tempdir.name) / "llm-config.json"
         cls.httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.RhineLoreHandler)
         cls.thread = threading.Thread(target=cls.httpd.serve_forever, daemon=True)
         cls.thread.start()
@@ -46,11 +48,17 @@ class EvolutionApiTests(unittest.TestCase):
         cls.httpd.shutdown()
         cls.httpd.server_close()
         server.EVOLUTION_STORE = cls.original_store
+        server.LLM_CONFIG_PATH = cls.original_llm_path
         cls.tempdir.cleanup()
 
     def setUp(self) -> None:
         for path in Path(self.tempdir.name).glob("*.evolution.json"):
             path.unlink()
+        for path in Path(self.tempdir.name).glob("*.project.json"):
+            path.unlink()
+        llm_path = Path(self.tempdir.name) / "llm-config.json"
+        if llm_path.is_file():
+            llm_path.unlink()
 
     def _request(self, method: str, path: str, body: dict | None = None):
         data = json.dumps(body).encode("utf-8") if body is not None else None
@@ -241,6 +249,39 @@ class EvolutionApiTests(unittest.TestCase):
         self.assertIsInstance(payload["addresses"], list)
         self.assertTrue(payload["local_url"].startswith("http://127.0.0.1:"))
         self.assertIsInstance(payload["lan_urls"], list)
+
+    def test_llm_config_roundtrip_and_masking(self) -> None:
+        status, payload = self._request(
+            "POST",
+            "/lore-api/llm/config",
+            {
+                "base_url": "https://api.deepseek.com/v1",
+                "api_key": "sk-test-123456",
+                "model": "deepseek-chat",
+                "preset": "deepseek",
+            },
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["configured"])
+        self.assertNotIn("sk-test-123456", payload["masked_key"])
+        self.assertIn("••••", payload["masked_key"])
+        status, payload = self._request("GET", "/lore-api/llm/config")
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["configured"])
+        self.assertEqual(payload["model"], "deepseek-chat")
+        # 空 key 不覆盖已有 key
+        status, payload = self._request("POST", "/lore-api/llm/config", {"model": "deepseek-v4"})
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["configured"])
+        self.assertEqual(payload["model"], "deepseek-v4")
+
+    def test_llm_ping_requires_key(self) -> None:
+        status, payload = self._request("POST", "/lore-api/llm/config", {"clear_key": True})
+        self.assertEqual(status, 200)
+        self.assertFalse(payload["configured"])
+        status, payload = self._request("POST", "/lore-api/llm/ping", {"message": "hi"})
+        self.assertEqual(status, 400)
+        self.assertIn("API Key", payload["error"])
 
     def test_chinese_project_id_roundtrip(self) -> None:
         self._start("我的故事")

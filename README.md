@@ -183,7 +183,8 @@ Open the `演化` activity for any story project to create an evolution run:
 
 工作台首页的「AI 生成通道」可以直接配置（DeepSeek / OpenAI / 自定义预设，
 默认 DeepSeek：`https://api.deepseek.com/v1` + `deepseek-chat`）。API Key
-仅保存在浏览器 localStorage，经本机 Vault 转发，不写入磁盘。配置后：
+保存在服务端磁盘（`data/llm-config.json`），所有设备（本机、局域网手机）
+共用同一份配置；浏览器不再持有密钥，生成请求统一经本机 Vault 转发。配置后：
 
 - 演化页“小说”视图的“AI 扩写当前回合”会把最近事件和角色/世界观信息组成
   场景简报，生成 300-500 字的有限视角正文，可编辑并一键追加进章节；
@@ -234,7 +235,8 @@ Open the `演化` activity for any story project to create an evolution run:
 
 该功能必须配置 AI 通道（首页或右上角 AI 面板）。
 
-未配置时演化与创作完全可用，正文使用本地模板。
+未配置时演化与创作完全可用，正文使用本地模板。旧的浏览器 localStorage
+配置不会自动迁移，请在任意设备上重新填写一次，之后全局域网共享。
 
 ## Frontend
 

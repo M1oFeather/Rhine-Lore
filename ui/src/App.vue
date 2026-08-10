@@ -34,15 +34,16 @@ import {
   fakeCreativeAnswer,
   generateEvolutionProseApi,
   generateKnowledgeDocument,
-  getLanInfo,
   getEvolutionState,
+  getLanInfo,
+  getLlmServerConfig,
   getVaultRuntimeStatus,
   getVaultWebStatus,
   guideEvolution,
   health,
   installVaultWeb,
-  llmChat,
-  llmPing,
+  llmServerChat,
+  llmServerPing,
   listNodes,
   listProposals,
   listStaging,
@@ -52,6 +53,7 @@ import {
   regenerateEvolutionChapter,
   resetEvolutionRun,
   restoreProjectBackup,
+  saveLlmServerConfig,
   setWorkspaceId,
   stageProposal,
   startEvolutionRun,
@@ -201,10 +203,12 @@ const mapConnectMode = ref(false);
 const mapPendingNodeId = ref("");
 const mapZoom = ref(1);
 const mapDragging = ref<{id: string; dx: number; dy: number} | null>(null);
-const llmBaseUrl = ref(localStorage.getItem("rhine-lore-llm-base-url") || "https://api.deepseek.com/v1");
-const llmApiKey = ref(localStorage.getItem("rhine-lore-llm-api-key") || "");
-const llmModel = ref(localStorage.getItem("rhine-lore-llm-model") || "deepseek-chat");
-const llmPreset = ref(localStorage.getItem("rhine-lore-llm-preset") || "deepseek");
+const llmBaseUrl = ref("https://api.deepseek.com/v1");
+const llmApiKey = ref("");
+const llmModel = ref("deepseek-chat");
+const llmPreset = ref("deepseek");
+const llmConfigured = ref(false);
+const llmMaskedKey = ref("");
 const aiProse = ref("");
 const aiProseBusy = ref(false);
 const aiAutoProse = ref(localStorage.getItem("rhine-lore-ai-auto") !== "0");
@@ -410,6 +414,7 @@ onMounted(async () => {
   void runAiCheck();
   void loadDiskBackups();
   void loadLanInfo();
+  void loadLlmServerConfig();
 });
 
 function loadProjects(): StoryProject[] {
@@ -1228,20 +1233,15 @@ async function sendCreativeMessage(): Promise<void> {
   const prompt = buildCreativePrompt(text);
   const fallback = localCreativeDraft(text);
   const result = await perform("对话创作", () => {
-    if (llmApiKey.value.trim()) {
-      return llmChat({
-        base_url: llmBaseUrl.value.trim() || undefined,
-        api_key: llmApiKey.value.trim() || undefined,
-        model: llmModel.value.trim() || undefined,
-        messages: [
-          {
-            role: "system",
-            content:
-              "你是 Rhine-Lore 的创作助手：基于用户给出的世界观、角色与章节续写或讨论剧情，语言平实细腻，不要编造未提供的设定。",
-          },
-          {role: "user", content: prompt},
-        ],
-      });
+    if (llmConfigured.value) {
+      return llmServerChat([
+        {
+          role: "system",
+          content:
+            "你是 Rhine-Lore 的创作助手：基于用户给出的世界观、角色与章节续写或讨论剧情，语言平实细腻，不要编造未提供的设定。",
+        },
+        {role: "user", content: prompt},
+      ]);
     }
     return fakeCreativeAnswer({
       query: prompt,
@@ -1350,11 +1350,10 @@ async function generateRevision(): Promise<void> {
   if (!instruction || revisionBusy.value) {
     return;
   }
-  if (!llmApiKey.value.trim()) {
+  if (!llmConfigured.value) {
     runState.value = {error: "调整正文需要 AI 通道，请先在首页或右上角配置 API Key"};
     return;
   }
-  persistLlmConfig();
   revisionBusy.value = true;
   revisionPreview.value = null;
   let threadsText = "";
@@ -1369,12 +1368,7 @@ async function generateRevision(): Promise<void> {
     // 没有演化存档不影响正文修订
   }
   const result = await perform("生成修订与评估", () =>
-    llmChat({
-      base_url: llmBaseUrl.value.trim() || undefined,
-      api_key: llmApiKey.value.trim() || undefined,
-      model: llmModel.value.trim() || undefined,
-      messages: buildRevisionMessages(instruction, threadsText),
-    }),
+    llmServerChat(buildRevisionMessages(instruction, threadsText)),
   );
   revisionBusy.value = false;
   if (!result) {
@@ -2116,21 +2110,15 @@ async function sendEvolutionChatMessage(): Promise<void> {
   if (!text || !state || evolutionChatBusy.value) {
     return;
   }
-  if (!llmApiKey.value.trim()) {
+  if (!llmConfigured.value) {
     runState.value = {error: "与故事对话需要 AI 通道，请先在首页或右上角配置 API Key"};
     return;
   }
   evolutionChat.value.push({id: uid("chat-message"), role: "user", content: text});
   evolutionChatInput.value = "";
   evolutionChatBusy.value = true;
-  persistLlmConfig();
   const result = await perform("与故事对话", () =>
-    llmChat({
-      base_url: llmBaseUrl.value.trim() || undefined,
-      api_key: llmApiKey.value.trim() || undefined,
-      model: llmModel.value.trim() || undefined,
-      messages: buildEvolutionChatMessages(text),
-    }),
+    llmServerChat(buildEvolutionChatMessages(text)),
   );
   evolutionChatBusy.value = false;
   const reply = result ? String(result.answer ?? "").trim() : "";
@@ -2273,7 +2261,7 @@ async function runEvolutionTurn(choiceId?: string): Promise<void> {
     });
     evolutionView.value = view;
     evolutionGuidance.value = view.state.guidance ?? "";
-    if (llmApiKey.value.trim() && aiAutoProse.value && view.result?.advanced) {
+    if (llmConfigured.value && aiAutoProse.value && view.result?.advanced) {
       void generateStoredProse();
     }
     if (view.message) {
@@ -2381,24 +2369,15 @@ function acceptEvolutionIntoChapter(): void {
   activity.value = "novel";
 }
 
-const llmMaskedKey = computed(() => {
-  const key = llmApiKey.value.trim();
-  if (!key) {
-    return "";
-  }
-  return key.length <= 6 ? "••••" : `${key.slice(0, 3)}••••${key.slice(-3)}`;
-});
-
 const llmStatusLabel = computed(() => {
-  const key = llmApiKey.value.trim();
-  if (!key) {
+  if (!llmConfigured.value) {
     return "未配置（离线模板模式）";
   }
-  return `${llmModel.value.trim() || "模型"} · ${llmMaskedKey.value}`;
+  return `${llmModel.value.trim() || "模型"} · ${llmMaskedKey.value || "已配置"}`;
 });
 
 const llmChannelLabel = computed(() => {
-  return llmApiKey.value.trim() ? `已接入 ${llmModel.value.trim() || "模型"}` : "离线模板";
+  return llmConfigured.value ? `已接入 ${llmModel.value.trim() || "模型"}` : "离线模板";
 });
 
 const aiStatusLabel = computed(() => {
@@ -2442,20 +2421,14 @@ function apiErrorMessage(error: unknown): string {
 async function runAiCheck(): Promise<void> {
   aiStatus.value = "checking";
   aiStatusDetail.value = "正在检查通道…";
-  const key = llmApiKey.value.trim();
-  if (!key) {
+  if (!llmConfigured.value) {
     aiStatus.value = "unset";
     aiStatusDetail.value = "未配置 API Key：对话创作与演化扩写将使用离线模板。";
     return;
   }
-  persistLlmConfig();
+  await persistLlmConfig();
   try {
-    const result = await llmPing({
-      base_url: llmBaseUrl.value.trim() || undefined,
-      api_key: key,
-      model: llmModel.value.trim() || undefined,
-      message: "你好",
-    });
+    const result = await llmServerPing("你好");
     aiStatus.value = "ok";
     aiStatusDetail.value = `功能正常（${String(result.model || llmModel.value)} 响应正常）`;
   } catch (error) {
@@ -2471,9 +2444,8 @@ function toggleAiPanel(): void {
   }
 }
 
-function applyLlmProvider(provider: "deepseek" | "openai" | "custom"): void {
+async function applyLlmProvider(provider: "deepseek" | "openai" | "custom"): Promise<void> {
   llmPreset.value = provider;
-  localStorage.setItem("rhine-lore-llm-preset", provider);
   if (provider === "deepseek") {
     llmBaseUrl.value = "https://api.deepseek.com/v1";
     llmModel.value = "deepseek-chat";
@@ -2481,21 +2453,51 @@ function applyLlmProvider(provider: "deepseek" | "openai" | "custom"): void {
     llmBaseUrl.value = "https://api.openai.com/v1";
     llmModel.value = "gpt-4o-mini";
   }
-  persistLlmConfig();
+  await persistLlmConfig();
   markSaved("模型预设已切换");
 }
 
-function persistLlmConfig(): void {
-  localStorage.setItem("rhine-lore-llm-base-url", llmBaseUrl.value.trim());
-  localStorage.setItem("rhine-lore-llm-api-key", llmApiKey.value.trim());
-  localStorage.setItem("rhine-lore-llm-model", llmModel.value.trim());
+async function persistLlmConfig(): Promise<void> {
+  try {
+    const config = await saveLlmServerConfig({
+      base_url: llmBaseUrl.value.trim() || undefined,
+      model: llmModel.value.trim() || undefined,
+      preset: llmPreset.value,
+      api_key: llmApiKey.value.trim() || undefined,
+    });
+    llmConfigured.value = config.configured;
+    llmMaskedKey.value = config.masked_key;
+    llmApiKey.value = "";
+  } catch {
+    // 保存失败时保持现状
+  }
 }
 
-function saveLlmConfig(): void {
-  persistLlmConfig();
-  localStorage.setItem("rhine-lore-llm-preset", llmPreset.value);
+async function saveLlmConfig(): Promise<void> {
+  await persistLlmConfig();
   markSaved("模型设置已保存");
   void runAiCheck();
+}
+
+async function loadLlmServerConfig(): Promise<void> {
+  try {
+    const config = await getLlmServerConfig();
+    llmConfigured.value = config.configured;
+    llmBaseUrl.value = config.base_url || llmBaseUrl.value;
+    llmModel.value = config.model || llmModel.value;
+    llmPreset.value = config.preset || llmPreset.value;
+    llmMaskedKey.value = config.masked_key;
+  } catch {
+    llmConfigured.value = false;
+  }
+}
+
+function clearLlmKey(): void {
+  void saveLlmServerConfig({clear_key: true}).then((config) => {
+    llmConfigured.value = config.configured;
+    llmMaskedKey.value = config.masked_key;
+    markSaved("API Key 已清除");
+  });
 }
 
 function toggleAiAutoProse(): void {
@@ -2588,13 +2590,6 @@ async function generateNextChapter(): Promise<void> {
       viewpoint_id: evolutionViewpoint.value || "",
       turns: 4,
       global_guidance: project.global_guidance || "",
-      llm: llmApiKey.value.trim()
-        ? {
-            base_url: llmBaseUrl.value.trim() || undefined,
-            api_key: llmApiKey.value.trim() || undefined,
-            model: llmModel.value.trim() || undefined,
-          }
-        : undefined,
     });
     evolutionView.value = view;
     evolutionGuidance.value = view.state.guidance ?? "";
@@ -2615,7 +2610,7 @@ async function regenerateCurrentChapter(): Promise<void> {
   if (!project || !state || !chapter || chapterBusy.value) {
     return;
   }
-  if (!llmApiKey.value.trim()) {
+  if (!llmConfigured.value) {
     runState.value = {error: "重新生成本章需要 AI 通道，请先配置 API Key"};
     return;
   }
@@ -2627,11 +2622,6 @@ async function regenerateCurrentChapter(): Promise<void> {
       start_turn: chapter.startTurn,
       end_turn: chapter.endTurn,
       global_guidance: project.global_guidance || "",
-      llm: {
-        base_url: llmBaseUrl.value.trim() || undefined,
-        api_key: llmApiKey.value.trim() || undefined,
-        model: llmModel.value.trim() || undefined,
-      },
     });
     evolutionView.value = view;
     evolutionGuidance.value = view.state.guidance ?? "";
@@ -2654,11 +2644,6 @@ async function generateStoredProse(): Promise<void> {
     const view = await generateEvolutionProseApi({
       project_id: project.id,
       viewpoint_id: evolutionViewpoint.value || "",
-      llm: {
-        base_url: llmBaseUrl.value.trim() || undefined,
-        api_key: llmApiKey.value.trim() || undefined,
-        model: llmModel.value.trim() || undefined,
-      },
     });
     if (view) {
       evolutionView.value = view;
@@ -2676,17 +2661,11 @@ async function generateEvolutionProse(): Promise<void> {
   if (!state || aiProseBusy.value) {
     return;
   }
-  persistLlmConfig();
   aiProseBusy.value = true;
   const result = await perform("AI 扩写", () =>
     generateEvolutionProseApi({
       project_id: activeProject.value.id,
       viewpoint_id: evolutionViewpoint.value || "",
-      llm: {
-        base_url: llmBaseUrl.value.trim() || undefined,
-        api_key: llmApiKey.value.trim() || undefined,
-        model: llmModel.value.trim() || undefined,
-      },
     }),
   );
   aiProseBusy.value = false;
@@ -2839,7 +2818,7 @@ onUnmounted(() => {
               type="password"
               show-password
               size="small"
-              placeholder="API Key（仅本机）"
+              placeholder="已配置则留空保持不变"
             />
           </div>
           <div class="ai-status-actions">
@@ -3011,7 +2990,7 @@ onUnmounted(() => {
               <div class="ai-channel-copy">
                 <span>AI 生成通道</span>
                 <strong>{{ llmStatusLabel }}</strong>
-                <small>用于演化扩写与对话创作；密钥只保存在本机浏览器，经本机 Vault 转发。</small>
+                <small>用于演化扩写与对话创作；配置保存在服务端，局域网手机等所有设备共用。</small>
               </div>
               <div class="ai-channel-fields">
                 <el-select v-model="llmPreset" size="small" @change="applyLlmProvider">
@@ -3025,7 +3004,7 @@ onUnmounted(() => {
                   type="password"
                   show-password
                   size="small"
-                  placeholder="API Key（仅本机）"
+                  placeholder="已配置则留空保持不变"
                 />
               </div>
               <el-space wrap>
@@ -3507,12 +3486,12 @@ onUnmounted(() => {
                 <el-button
                   type="primary"
                   :loading="revisionBusy || busyAction === '生成修订与评估'"
-                  :disabled="!llmApiKey.trim()"
+                  :disabled="!llmConfigured"
                   @click="generateRevision"
                 >
                   生成修订 + 评估
                 </el-button>
-                <small v-if="!llmApiKey.trim()">需要先配置 AI 通道</small>
+                <small v-if="!llmConfigured">需要先配置 AI 通道</small>
               </div>
               <div v-if="revisionPreview" class="revision-panel">
                 <div class="revision-head">
@@ -3951,7 +3930,7 @@ onUnmounted(() => {
                         v-model="aiAutoProse"
                         active-text="AI 扩写"
                         inactive-text="模板"
-                        :disabled="!llmApiKey.trim()"
+                        :disabled="!llmConfigured"
                         @change="toggleAiAutoProse"
                       />
                       <span v-if="aiGenerating" class="ai-generating-tag">AI 生成中…</span>
@@ -4202,6 +4181,7 @@ onUnmounted(() => {
                       size="small"
                       type="primary"
                       :loading="aiProseBusy || busyAction === 'AI 扩写'"
+                      :disabled="!llmConfigured"
                       @click="generateEvolutionProse"
                     >
                       AI 扩写当前回合
@@ -4281,12 +4261,12 @@ onUnmounted(() => {
                       <el-button
                         size="small"
                         :loading="chapterBusy"
-                        :disabled="!llmApiKey.trim()"
+                        :disabled="!llmConfigured"
                         @click="regenerateCurrentChapter"
                       >
                         重新生成本章
                       </el-button>
-                      <small v-if="!llmApiKey.trim()">需要 AI 通道</small>
+                      <small v-if="!llmConfigured">需要 AI 通道</small>
                     </div>
                     <div
                       v-if="evolutionActiveChapter.index === evolutionNovelChapters.length - 1"
@@ -4359,13 +4339,13 @@ onUnmounted(() => {
                   <el-button
                     type="primary"
                     :loading="evolutionChatBusy"
-                    :disabled="!llmApiKey.trim()"
+                    :disabled="!llmConfigured"
                     @click="sendEvolutionChatMessage"
                   >
                     发送
                   </el-button>
                 </div>
-                <small v-if="!llmApiKey.trim()" class="chat-key-hint">需要先配置 AI 通道（首页或右上角）</small>
+                <small v-if="!llmConfigured" class="chat-key-hint">需要先配置 AI 通道（首页或右上角）</small>
               </el-card>
             </template>
           </section>
@@ -4545,15 +4525,21 @@ onUnmounted(() => {
                             v-model="llmApiKey"
                             type="password"
                             show-password
-                            placeholder="仅保存在本机浏览器"
+                            placeholder="已配置则留空保持不变"
                           />
                         </el-form-item>
                       </el-col>
                     </el-row>
                     <p class="knowledge-flow-note">
-                      生成请求经本机 Rhine-Vault 转发；密钥只存在浏览器 localStorage，不写入磁盘，也不会发送给资料库以外的地方。
+                      配置保存在服务端磁盘（data/llm-config.json），所有设备（含局域网手机）共用同一份；
+                      生成请求经本机 Rhine-Vault 转发，浏览器不再持有密钥。
                       演化引擎本身仍离线可用，配置模型后只是把“场景简报”扩写成更完整的正文。
                     </p>
+                    <el-space wrap>
+                      <el-button size="small" type="danger" plain :disabled="!llmConfigured" @click="clearLlmKey">
+                        清除 API Key
+                      </el-button>
+                    </el-space>
                   </el-form>
                 </el-card>
 
