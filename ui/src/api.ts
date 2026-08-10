@@ -12,6 +12,7 @@ export type StoryProject = {
   genre: string;
   summary: string;
   global_guidance: string;
+  chapter_turns: number;
   world: WorldCard[];
   characters: CharacterCard[];
   map: StoryMap;

@@ -108,6 +108,7 @@ const evolutionStartPresets = [
   {label: "混乱", chaos: 85, branch: 60},
 ];
 const evolutionChatStarters = ["总结现在的局势", "下一步制造一场冲突", "推进感情线", "回收一个伏笔", "建议一个新角色"];
+const chapterTurnsOptions = [2, 3, 4, 6, 8];
 
 const activities: {id: Activity; label: string; icon: GameIconName; description: string}[] = [
   {id: "studio", label: "工作台", icon: "book", description: "选择故事和开始写作"},
@@ -434,6 +435,7 @@ function loadProjects(): StoryProject[] {
       genre: "未分类",
       summary: "",
       global_guidance: "",
+      chapter_turns: 4,
       world: [],
       characters: [],
       map: {nodes: [], edges: []},
@@ -543,6 +545,7 @@ function normalizeProject(project: Partial<StoryProject>): StoryProject {
     genre: project.genre || "未分类",
     summary: project.summary || "",
     global_guidance: project.global_guidance || "",
+    chapter_turns: Math.min(8, Math.max(1, Number(project.chapter_turns) || 4)),
     world: (project.world ?? []).map(normalizeWorld),
     characters: (project.characters ?? []).map(normalizeCharacter),
     map: normalizeMap(project.map),
@@ -692,6 +695,7 @@ function confirmCreateProject(destination: CreateDestination): void {
     genre: newProjectGenre.value.trim() || "未分类",
     summary: newProjectIdea.value.trim(),
     global_guidance: "",
+    chapter_turns: 4,
     world: [],
     characters: [],
     map: {nodes: [], edges: []},
@@ -1997,6 +2001,10 @@ const evolutionActName = computed(() => {
   return evolutionActNames[index] ?? "尾声";
 });
 
+const evolutionChapterSize = computed(() => {
+  return Math.min(8, Math.max(1, Number(activeProject.value.chapter_turns) || 4));
+});
+
 const evolutionNeedsCharacter = computed(() => {
   const view = evolutionView.value;
   return Boolean(
@@ -2531,9 +2539,10 @@ const evolutionNovelChapters = computed(() => {
     actName: string;
     paragraphs: string[];
   }[] = [];
+  const chapterSize = evolutionChapterSize.value;
   for (const part of parts) {
-    const groupIndex = Math.floor((part.turn - 1) / 4);
-    let group = groups.find((item) => Math.floor((item.startTurn - 1) / 4) === groupIndex);
+    const groupIndex = Math.floor((part.turn - 1) / chapterSize);
+    let group = groups.find((item) => Math.floor((item.startTurn - 1) / chapterSize) === groupIndex);
     if (!group) {
       group = {
         index: groups.length,
@@ -2573,6 +2582,12 @@ function openEvolutionAdjacentChapter(direction: -1 | 1): void {
   evolutionChapterIndex.value = next;
 }
 
+function setChapterTurns(turns: number): void {
+  activeProject.value.chapter_turns = Math.min(8, Math.max(1, Number(turns) || 4));
+  saveProjects();
+  markSaved(`单章长度已设为 ${activeProject.value.chapter_turns} 回合`);
+}
+
 async function generateNextChapter(): Promise<void> {
   const project = activeProject.value;
   const state = evolutionState.value;
@@ -2588,7 +2603,7 @@ async function generateNextChapter(): Promise<void> {
     const view = await advanceEvolutionChapter({
       project_id: project.id,
       viewpoint_id: evolutionViewpoint.value || "",
-      turns: 4,
+      turns: evolutionChapterSize.value,
       global_guidance: project.global_guidance || "",
     });
     evolutionView.value = view;
@@ -4162,6 +4177,19 @@ onUnmounted(() => {
                           :key="viewpoint.id"
                           :label="`${viewpoint.name} 的视角`"
                           :value="viewpoint.id"
+                        />
+                      </el-select>
+                      <el-select
+                        v-model="activeProject.chapter_turns"
+                        size="small"
+                        style="width: 130px"
+                        @change="setChapterTurns"
+                      >
+                        <el-option
+                          v-for="size in chapterTurnsOptions"
+                          :key="size"
+                          :label="`单章 ${size} 回合`"
+                          :value="size"
                         />
                       </el-select>
                       <el-input-number v-model="readerFontSize" :min="15" :max="26" size="small" />
