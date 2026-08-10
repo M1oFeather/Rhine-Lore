@@ -35,6 +35,10 @@ state, snapshots, and long-term retrieval.
   edit place descriptions. Map nodes become evolution locations, characters
   are assigned starting locations, and events move participants along
   connected routes.
+- Map editing is fully interactive: drag nodes (with pointer capture so it
+  never drops), click a connection to select and delete it, edit the selected
+  node's name/description, and jump straight from the evolution sandbox's
+  world-state tab to the map editor.
 - Conversation-based drafting tied to the active story project and chapter.
 - Conversation messages and chapter excerpts can be saved as story reference
   material without exposing backend workflow terms.

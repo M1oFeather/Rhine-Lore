@@ -2752,6 +2752,23 @@ body {
   stroke-linecap: round;
 }
 
+.map-edge.selected {
+  stroke: #2563eb;
+  stroke-width: 4;
+}
+
+.map-edit-hint {
+  margin: 8px 0 0;
+  color: #5b6b7c;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.world-edit-map-button {
+  margin-top: 10px;
+  width: 100%;
+}
+
 .map-node-group {
   cursor: pointer;
 }

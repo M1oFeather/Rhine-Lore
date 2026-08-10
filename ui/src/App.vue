@@ -15,6 +15,7 @@ import {
   type ManuscriptIssue,
   type ProjectBackupRow,
   type StoryMap,
+  type StoryMapEdge,
   type StoryMapNode,
   type StoryProject,
   type VaultRuntimeStatus,
@@ -193,6 +194,7 @@ const characterEditorMode = ref<"simple" | "full">(
   localStorage.getItem("rhine-lore-character-mode") === "full" ? "full" : "simple",
 );
 const mapSelectedNodeId = ref("");
+const mapSelectedEdgeId = ref("");
 const mapConnectMode = ref(false);
 const mapPendingNodeId = ref("");
 const mapZoom = ref(1);
@@ -970,6 +972,7 @@ function addMapNode(): void {
 }
 
 function selectMapNode(node: StoryMapNode): void {
+  mapSelectedEdgeId.value = "";
   if (mapConnectMode.value) {
     if (mapPendingNodeId.value && mapPendingNodeId.value !== node.id) {
       const exists = activeProject.value.map.edges.some(
@@ -993,8 +996,21 @@ function selectMapNode(node: StoryMapNode): void {
   mapSelectedNodeId.value = node.id;
 }
 
+function selectMapEdge(edge: StoryMapEdge): void {
+  mapSelectedNodeId.value = "";
+  mapSelectedEdgeId.value = edge.id;
+}
+
 function removeMapSelection(): void {
   const map = activeProject.value.map;
+  const edgeId = mapSelectedEdgeId.value;
+  if (edgeId) {
+    map.edges = map.edges.filter((edge) => edge.id !== edgeId);
+    mapSelectedEdgeId.value = "";
+    mapPendingNodeId.value = "";
+    saveProjects();
+    return;
+  }
   const nodeId = mapSelectedNodeId.value;
   if (!nodeId) {
     return;
@@ -1002,11 +1018,14 @@ function removeMapSelection(): void {
   map.nodes = map.nodes.filter((node) => node.id !== nodeId);
   map.edges = map.edges.filter((edge) => edge.from !== nodeId && edge.to !== nodeId);
   mapSelectedNodeId.value = "";
+  mapSelectedEdgeId.value = "";
   mapPendingNodeId.value = "";
   saveProjects();
 }
 
 function onMapNodePointerDown(node: StoryMapNode, event: PointerEvent): void {
+  const svg = (event.currentTarget as Element).closest("svg");
+  svg?.setPointerCapture?.(event.pointerId);
   const point = mapEventPoint(event);
   mapDragging.value = {id: node.id, dx: node.x - point.x, dy: node.y - point.y};
 }
@@ -1019,6 +1038,7 @@ function onMapSvgPointerDown(event: PointerEvent): void {
     return;
   }
   mapSelectedNodeId.value = "";
+  mapSelectedEdgeId.value = "";
   mapPendingNodeId.value = "";
 }
 
@@ -3201,6 +3221,8 @@ onUnmounted(() => {
                   :x2="mapNodeX(edge.to)"
                   :y2="mapNodeY(edge.to)"
                   class="map-edge"
+                  :class="{selected: mapSelectedEdgeId === edge.id}"
+                  @click.stop="selectMapEdge(edge)"
                 />
                 <g
                   v-for="node in activeProject.map.nodes"
@@ -3218,6 +3240,10 @@ onUnmounted(() => {
                   <text text-anchor="middle" dy="5" class="map-node-text">{{ (node.name || "?").slice(0, 4) }}</text>
                 </g>
               </svg>
+              <p class="map-edit-hint">
+                拖动节点调整位置；点选连线可高亮，再按「删除选中」删除该连线；
+                选中节点后可在下方编辑名称与描述。
+              </p>
               <div v-if="mapSelectedNode" class="map-node-editor">
                 <el-input v-model="mapSelectedNode.name" placeholder="地点名称" @input="saveProjects" />
                 <el-input
@@ -4088,6 +4114,9 @@ onUnmounted(() => {
                             <span>{{ evolutionState.world.facts.join('；') || '暂无' }}</span>
                           </div>
                         </div>
+                        <el-button size="small" class="world-edit-map-button" @click="activity = 'map'">
+                          编辑地图
+                        </el-button>
                       </el-tab-pane>
                       <el-tab-pane label="线索伏笔" name="threads">
                         <div v-if="evolutionThreads.length === 0" class="product-empty-state compact">
