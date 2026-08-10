@@ -74,6 +74,16 @@ GENRE_ENDING_KINDS = {
     "轻小说": "新的开始",
 }
 
+QUALITY_GUIDE = (
+    "写作质量要求：1) 用具体的感官细节（视觉、听觉、触觉、气味）代替空泛形容；"
+    "2) 心理描写要有层次，避免直白贴标签；"
+    "3) 对话自然，符合人物身份与说话风格；"
+    "4) 长短句交替，控制叙事节奏；"
+    "5) 段落留白，避免流水账；"
+    "6) 避免 AI 腔（慎用“仿佛、不禁、然而、不禁让人”等套话）；"
+    "7) 与已知设定、人物声音、时间线严格一致，不发明未发生的情节。"
+)
+
 GUIDANCE_KIND_KEYWORDS: dict[str, str] = {
     "背叛": "背叛",
     "结盟": "结盟",
@@ -1264,6 +1274,7 @@ def build_ai_prose_prompt(
     viewpoint_id: str = "",
     global_guidance: str = "",
     variation: str = "",
+    writing_style: str = "",
 ) -> list[dict[str, str]]:
     """Build an OpenAI-compatible chat prompt for the latest evolution turn."""
     viewpoint = _member(state, viewpoint_id) if viewpoint_id else None
@@ -1302,7 +1313,9 @@ def build_ai_prose_prompt(
     ]
     system = (
         "你是小说续写引擎。只依据给定的事件与设定写作，不要发明未发生的情节、"
-        "未出场的人物或超出已知世界的设定。用第三人称有限视角，侧重心理描写，语言平实细腻。"
+        "未出场的人物或超出已知世界的设定。用第三人称有限视角，侧重心理描写。"
+        + (f"文风：{writing_style}。" if writing_style else "")
+        + QUALITY_GUIDE
     )
     user = [
         f"项目：《{state.project_name or '未命名故事'}》",

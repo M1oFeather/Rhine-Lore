@@ -13,6 +13,8 @@ export type StoryProject = {
   summary: string;
   global_guidance: string;
   chapter_turns: number;
+  writing_style: string;
+  polish_writing: boolean;
   world: WorldCard[];
   characters: CharacterCard[];
   map: StoryMap;
@@ -489,6 +491,10 @@ export function resetEvolutionRun(projectId: string): Promise<{ok: boolean}> {
 export function generateEvolutionProseApi(body: {
   project_id: string;
   viewpoint_id?: string;
+  global_guidance?: string;
+  variation?: string;
+  writing_style?: string;
+  quality_pass?: boolean;
   llm?: {
     base_url?: string;
     api_key?: string;
@@ -519,6 +525,8 @@ export function advanceEvolutionChapter(body: {
   viewpoint_id?: string;
   turns?: number;
   global_guidance?: string;
+  writing_style?: string;
+  quality_pass?: boolean;
   llm?: {
     base_url?: string;
     api_key?: string;
@@ -534,6 +542,8 @@ export function regenerateEvolutionChapter(body: {
   start_turn: number;
   end_turn: number;
   global_guidance?: string;
+  writing_style?: string;
+  quality_pass?: boolean;
   llm?: {
     base_url?: string;
     api_key?: string;

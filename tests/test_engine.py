@@ -362,6 +362,15 @@ class WorldMapTests(unittest.TestCase):
         self.assertIn("重写要求", content)
         self.assertIn("换一种写法", content)
 
+    def test_ai_prompt_includes_style_and_quality_guide(self) -> None:
+        settings = EvolutionSettings(branch_frequency=0)
+        state = start_run("p1", "雾港来信", "悬疑", CHARACTERS, WORLD, settings=settings, seed=5)
+        state, _ = advance(state)
+        messages = build_ai_prose_prompt(state, "hero", writing_style="冷峻悬疑")
+        content = messages[0]["content"]
+        self.assertIn("文风：冷峻悬疑", content)
+        self.assertIn("避免 AI 腔", content)
+
     def test_needs_new_character_when_cast_small(self) -> None:
         settings = EvolutionSettings(branch_frequency=0)
         state = start_run("p1", "雾港来信", "悬疑", CHARACTERS[:1], WORLD, settings=settings, seed=3)

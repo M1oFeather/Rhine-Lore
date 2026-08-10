@@ -21,6 +21,7 @@ from urllib.request import Request, urlopen
 from rhine_lore.engine import (
     EvolutionState,
     EvolutionStore,
+    QUALITY_GUIDE,
     TurnResult,
     add_character_to_run,
     advance,
@@ -503,6 +504,8 @@ def _store_turn_prose(
     global_guidance: str = "",
     variation: str = "",
     turn_override: int | None = None,
+    writing_style: str = "",
+    quality_pass: bool = False,
 ) -> bool:
     """Generate prose for the latest (or specified) turn and store it in state."""
     api_key = str(llm.get("api_key") or "").strip()
@@ -513,8 +516,11 @@ def _store_turn_prose(
         viewpoint_id,
         global_guidance=global_guidance,
         variation=variation,
+        writing_style=writing_style,
     )
     text = _chat_with_vault(messages, llm)
+    if quality_pass:
+        text = _polish_text(text, llm)
     latest_turn = (
         turn_override
         if turn_override is not None
@@ -550,6 +556,8 @@ def _store_chapter_prose(
     llm: dict[str, Any],
     global_guidance: str = "",
     variation: str = "",
+    writing_style: str = "",
+    quality_pass: bool = False,
 ) -> bool:
     api_key = str(llm.get("api_key") or "").strip()
     if not api_key:
@@ -560,12 +568,30 @@ def _store_chapter_prose(
         viewpoint_id,
         global_guidance=global_guidance,
         variation=variation,
+        writing_style=writing_style,
     )
     text = _chat_with_vault(messages, llm)
+    if quality_pass:
+        text = _polish_text(text, llm)
     key = f"chapter:{start_turn}:{viewpoint_id or (state.cast[0].id if state.cast else '')}"
     state.ai_prose[key] = text
     _prune_ai_prose(state)
     return True
+
+
+def _polish_text(text: str, llm: dict[str, Any]) -> str:
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "你是中文小说润色编辑。保持事件、设定、人物与时间线完全不变，"
+                "只提升文学质感、节奏与细节，删除 AI 腔套话。"
+                + QUALITY_GUIDE
+            ),
+        },
+        {"role": "user", "content": f"请润色以下正文，直接输出润色后的完整正文，不要解释：\n\n{text}"},
+    ]
+    return _chat_with_vault(messages, llm)
 
 
 def _chapter_snapshot(state: EvolutionState, end_turn: int) -> EvolutionState:
@@ -846,8 +872,18 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
                     return
                 global_guidance = str(payload.get("global_guidance") or "").strip()
                 variation = str(payload.get("variation") or "").strip()
+                writing_style = str(payload.get("writing_style") or "").strip()
+                quality_pass = bool(payload.get("quality_pass") or False)
                 try:
-                    _store_turn_prose(state, viewpoint_id, llm, global_guidance, variation)
+                    _store_turn_prose(
+                        state,
+                        viewpoint_id,
+                        llm,
+                        global_guidance,
+                        variation,
+                        writing_style=writing_style,
+                        quality_pass=quality_pass,
+                    )
                 except HTTPError as exc:
                     detail = exc.read().decode("utf-8", errors="replace")[-300:]
                     self._send_json(502, {"error": f"AI 生成失败：{detail or exc}"})
@@ -870,6 +906,8 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
                 llm = _resolve_llm(payload.get("llm"))
                 api_key = str(llm.get("api_key") or "").strip()
                 global_guidance = str(payload.get("global_guidance") or "").strip()
+                writing_style = str(payload.get("writing_style") or "").strip()
+                quality_pass = bool(payload.get("quality_pass") or False)
                 advanced = 0
                 iterations = 0
                 result: TurnResult | None = None
@@ -888,6 +926,8 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
                             viewpoint_id,
                             llm,
                             global_guidance,
+                            writing_style=writing_style,
+                            quality_pass=quality_pass,
                         )
                     except (HTTPError, URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError):
                         # 整章扩写失败不阻塞章节生成
@@ -914,6 +954,8 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
                     self._send_json(400, {"error": "重新生成本章需要 AI 通道"})
                     return
                 global_guidance = str(payload.get("global_guidance") or "").strip()
+                writing_style = str(payload.get("writing_style") or "").strip()
+                quality_pass = bool(payload.get("quality_pass") or False)
                 event_turns = {event.turn for event in state.history}
                 chapter_turns = sorted(
                     turn for turn in range(start_turn, end_turn + 1) if turn in event_turns
@@ -934,6 +976,8 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
                         llm,
                         global_guidance,
                         variation,
+                        writing_style=writing_style,
+                        quality_pass=quality_pass,
                     )
                 except HTTPError as exc:
                     detail = exc.read().decode("utf-8", errors="replace")[-300:]

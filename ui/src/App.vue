@@ -109,6 +109,15 @@ const evolutionStartPresets = [
 ];
 const evolutionChatStarters = ["总结现在的局势", "下一步制造一场冲突", "推进感情线", "回收一个伏笔", "建议一个新角色"];
 const chapterTurnsOptions = [2, 3, 4, 6, 8];
+const writingStylePresets = ["平实细腻", "轻快活泼", "冷峻悬疑", "华丽诗意", "幽默吐槽"];
+const WRITING_QUALITY_GUIDE =
+  "写作质量要求：1) 用具体的感官细节（视觉、听觉、触觉、气味）代替空泛形容；" +
+  "2) 心理描写要有层次，避免直白贴标签；" +
+  "3) 对话自然，符合人物身份与说话风格；" +
+  "4) 长短句交替，控制叙事节奏；" +
+  "5) 段落留白，避免流水账；" +
+  "6) 避免 AI 腔（慎用“仿佛、不禁、然而、不禁让人”等套话）；" +
+  "7) 与已知设定、人物声音、时间线严格一致，不发明未发生的情节。";
 
 const activities: {id: Activity; label: string; icon: GameIconName; description: string}[] = [
   {id: "studio", label: "工作台", icon: "book", description: "选择故事和开始写作"},
@@ -437,6 +446,8 @@ function loadProjects(): StoryProject[] {
       summary: "",
       global_guidance: "",
       chapter_turns: 4,
+      writing_style: "",
+      polish_writing: true,
       world: [],
       characters: [],
       map: {nodes: [], edges: []},
@@ -547,6 +558,8 @@ function normalizeProject(project: Partial<StoryProject>): StoryProject {
     summary: project.summary || "",
     global_guidance: project.global_guidance || "",
     chapter_turns: Math.min(8, Math.max(1, Number(project.chapter_turns) || 4)),
+    writing_style: project.writing_style || "",
+    polish_writing: project.polish_writing !== false,
     world: (project.world ?? []).map(normalizeWorld),
     characters: (project.characters ?? []).map(normalizeCharacter),
     map: normalizeMap(project.map),
@@ -697,6 +710,8 @@ function confirmCreateProject(destination: CreateDestination): void {
     summary: newProjectIdea.value.trim(),
     global_guidance: "",
     chapter_turns: 4,
+    writing_style: "",
+    polish_writing: true,
     world: [],
     characters: [],
     map: {nodes: [], edges: []},
@@ -921,6 +936,12 @@ function setGlobalGuidance(text: string): void {
   activeProject.value.global_guidance = text;
   saveProjects();
   markSaved("全局引导已设置");
+}
+
+function setWritingStyle(style: string): void {
+  activeProject.value.writing_style = style;
+  saveProjects();
+  markSaved(`文风已设为「${style}」`);
 }
 
 function fillWorldTags(item: WorldCard, tag: string): void {
@@ -1243,7 +1264,9 @@ async function sendCreativeMessage(): Promise<void> {
         {
           role: "system",
           content:
-            "你是 Rhine-Lore 的创作助手：基于用户给出的世界观、角色与章节续写或讨论剧情，语言平实细腻，不要编造未提供的设定。",
+            "你是 Rhine-Lore 的创作助手：基于用户给出的世界观、角色与章节续写或讨论剧情，不要编造未提供的设定。" +
+            (activeProject.value.writing_style ? `文风：${activeProject.value.writing_style}。` : "") +
+            WRITING_QUALITY_GUIDE,
         },
         {role: "user", content: prompt},
       ]);
@@ -1255,7 +1278,28 @@ async function sendCreativeMessage(): Promise<void> {
       tags: ["lore"],
     });
   });
-  appendChat("assistant", result ? extractAssistantText(result, fallback) : fallback);
+  let reply = result ? extractAssistantText(result, fallback) : fallback;
+  if (reply && reply !== fallback && activeProject.value.polish_writing && llmConfigured.value) {
+    notice.value = "正在润色…";
+    try {
+      const polished = await llmServerChat([
+        {
+          role: "system",
+          content:
+            "你是中文小说润色编辑。保持事件、设定、人物与时间线完全不变，只提升文学质感、节奏与细节，删除 AI 腔套话。" +
+            WRITING_QUALITY_GUIDE,
+        },
+        {role: "user", content: `请润色以下正文，直接输出润色后的完整正文，不要解释：\n\n${reply}`},
+      ]);
+      const polishedText = polished ? String(polished.answer ?? "").trim() : "";
+      if (polishedText) {
+        reply = polishedText;
+      }
+    } catch {
+      // 润色失败时保留原稿
+    }
+  }
+  appendChat("assistant", reply);
 }
 
 const pendingIssueCount = computed(() => {
@@ -1289,7 +1333,9 @@ function buildRevisionMessages(instruction: string, threadsText: string): LlmCha
     "你是小说的修订编辑与设定管理员。根据用户指令修改已有正文，并对照角色卡、世界观、伏笔清单和所有章节评估整体影响。" +
     "必须只输出一个 JSON 对象，不要输出任何其他文字。格式：" +
     '{"revisions":[{"chapter_id":"...","chapter_title":"...","revised_text":"修订后的完整章节正文"}],"evaluation":[{"kind":"冲突|误区|不一致|提醒","item":"问题一句话","reason":"依据（哪条设定或哪一章）","suggestion":"处理建议"}]}。' +
-    "如果没有需要修改的章节，revisions 为空数组；局部修改时 revised_text 必须是包含修改后的完整章节正文。";
+    "如果没有需要修改的章节，revisions 为空数组；局部修改时 revised_text 必须是包含修改后的完整章节正文。" +
+    (project.writing_style ? `文风：${project.writing_style}。` : "") +
+    WRITING_QUALITY_GUIDE;
   const user = [
     `调整指令：${instruction}`,
     `项目：《${project.name}》 类型：${project.genre} 概要：${project.summary || "未设定"}`,
@@ -2109,6 +2155,7 @@ function buildEvolutionChatMessages(question: string): LlmChatMessage[] {
     `结局方向：${state.arc.ending_kind || "未定"}`,
     `引导指令：${state.guidance || "无"}`,
     `全局引导：${activeProject.value.global_guidance || "无"}`,
+    `文风：${activeProject.value.writing_style || "未指定"}`,
     `角色：${cast}`,
     threads ? `活跃线索：\n${threads}` : "活跃线索：无",
     `最近事件：\n${recent || "暂无"}`,
@@ -2620,6 +2667,8 @@ async function generateNextChapter(): Promise<void> {
       viewpoint_id: evolutionViewpoint.value || "",
       turns: evolutionChapterSize.value,
       global_guidance: project.global_guidance || "",
+      writing_style: project.writing_style || "",
+      quality_pass: project.polish_writing,
     });
     evolutionView.value = view;
     evolutionGuidance.value = view.state.guidance ?? "";
@@ -2652,6 +2701,8 @@ async function regenerateCurrentChapter(): Promise<void> {
       start_turn: chapter.startTurn,
       end_turn: chapter.endTurn,
       global_guidance: project.global_guidance || "",
+      writing_style: project.writing_style || "",
+      quality_pass: project.polish_writing,
     });
     evolutionView.value = view;
     evolutionGuidance.value = view.state.guidance ?? "";
@@ -2674,6 +2725,9 @@ async function generateStoredProse(): Promise<void> {
     const view = await generateEvolutionProseApi({
       project_id: project.id,
       viewpoint_id: evolutionViewpoint.value || "",
+      global_guidance: activeProject.value.global_guidance || "",
+      writing_style: activeProject.value.writing_style || "",
+      quality_pass: activeProject.value.polish_writing,
     });
     if (view) {
       evolutionView.value = view;
@@ -2696,6 +2750,9 @@ async function generateEvolutionProse(): Promise<void> {
     generateEvolutionProseApi({
       project_id: activeProject.value.id,
       viewpoint_id: evolutionViewpoint.value || "",
+      global_guidance: activeProject.value.global_guidance || "",
+      writing_style: activeProject.value.writing_style || "",
+      quality_pass: activeProject.value.polish_writing,
     }),
   );
   aiProseBusy.value = false;
@@ -3111,6 +3168,26 @@ onUnmounted(() => {
                           {{ preset }}
                         </button>
                       </div>
+                    </el-form-item>
+                    <el-form-item label="文风">
+                      <div class="preset-chips">
+                        <button
+                          v-for="style in writingStylePresets"
+                          :key="style"
+                          type="button"
+                          class="preset-chip"
+                          :class="{used: activeProject.writing_style === style}"
+                          @click="setWritingStyle(style)"
+                        >
+                          {{ style }}
+                        </button>
+                      </div>
+                      <el-switch
+                        v-model="activeProject.polish_writing"
+                        active-text="生成后自动润色"
+                        inactive-text="不润色"
+                        @change="saveProjects"
+                      />
                     </el-form-item>
                   </el-form>
                 </el-card>
