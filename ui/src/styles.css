@@ -3567,6 +3567,50 @@ body {
   }
 }
 
+/* Preset chips */
+.preset-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.preset-chip {
+  padding: 3px 10px;
+  border: 1px solid #d5dce5;
+  border-radius: 999px;
+  background: #f8fafc;
+  color: #44566b;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.preset-chip:hover {
+  border-color: #2563eb;
+  color: #1f6feb;
+  background: #eaf2ff;
+}
+
+.preset-chip.used {
+  background: #e5f7ec;
+  border-color: #bfe3cd;
+  color: #2e8b57;
+}
+
+.preset-label {
+  color: #5b6b7c;
+  font-size: 12px;
+}
+
+.evolution-start-presets {
+  margin-bottom: 10px;
+}
+
+.evolution-chat-starters {
+  margin-bottom: 8px;
+}
+
 /* Disk backup and restore */
 .disk-restore-strip {
   display: grid;

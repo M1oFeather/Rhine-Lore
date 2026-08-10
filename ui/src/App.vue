@@ -86,6 +86,23 @@ const genreOptions = ["奇幻", "科幻", "悬疑", "都市", "历史", "爱情"
 const characterRoles = ["主角", "重要配角", "配角", "反派", "盟友", "导师", "恋人"];
 const characterStatusOptions = ["正常", "受伤", "失踪", "被囚禁", "死亡", "未知"];
 const worldTypes = ["地点", "势力", "规则", "历史", "物品", "传说", "其他"];
+const guidancePresets = ["制造一场冲突", "推进感情线", "回收一个伏笔", "引入新角色", "让局势紧张起来", "给一段平静日常"];
+const worldTagPresets: Record<string, string[]> = {
+  地点: ["港口", "校园", "森林", "废墟", "水域", "城郊"],
+  势力: ["家族", "商会", "教会", "王国", "公会", "组织"],
+  规则: ["禁令", "魔法", "登记", "契约", "禁忌"],
+  历史: ["战争", "灾变", "旧日", "传说"],
+  物品: ["信物", "武器", "古籍", "钥匙"],
+  传说: ["龙族", "神明", "诅咒", "预言"],
+  其他: ["秘密", "日常", "线索", "伏笔"],
+};
+const characterTraitPresets = ["谨慎", "毒舌", "重情义", "社恐", "开朗", "固执", "温柔", "腹黑", "胆大", "多疑", "理性", "浪漫"];
+const evolutionStartPresets = [
+  {label: "平静", chaos: 10, branch: 15},
+  {label: "标准", chaos: 45, branch: 35},
+  {label: "混乱", chaos: 85, branch: 60},
+];
+const evolutionChatStarters = ["总结现在的局势", "下一步制造一场冲突", "推进感情线", "回收一个伏笔", "建议一个新角色"];
 
 const activities: {id: Activity; label: string; icon: GameIconName; description: string}[] = [
   {id: "studio", label: "工作台", icon: "book", description: "选择故事和开始写作"},
@@ -851,6 +868,50 @@ function addCharacter(): void {
 function setCharacterEditorMode(mode: "simple" | "full"): void {
   characterEditorMode.value = mode;
   localStorage.setItem("rhine-lore-character-mode", mode);
+}
+
+function hasTag(text: string, tag: string): boolean {
+  return text
+    .split(/[，,、;；\n]+/)
+    .map((item) => item.trim())
+    .includes(tag);
+}
+
+function appendTagToText(current: string, tag: string): string {
+  const tags = current
+    .split(/[，,、;；\n]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  if (!tags.includes(tag)) {
+    tags.push(tag);
+  }
+  return tags.join("、");
+}
+
+function applyGuidancePreset(text: string): void {
+  evolutionGuidance.value = text;
+  void saveEvolutionGuidance();
+}
+
+function setGlobalGuidance(text: string): void {
+  activeProject.value.global_guidance = text;
+  saveProjects();
+  markSaved("全局引导已设置");
+}
+
+function fillWorldTags(item: WorldCard, tag: string): void {
+  item.tags = appendTagToText(item.tags, tag);
+  saveProjects();
+}
+
+function fillCharacterTraits(card: CharacterCard, tag: string): void {
+  card.traits = appendTagToText(card.traits, tag);
+  saveProjects();
+}
+
+function applyEvolutionStartPreset(preset: {label: string; chaos: number; branch: number}): void {
+  evolutionChaos.value = preset.chaos;
+  evolutionBranchFrequency.value = preset.branch;
 }
 
 function removeCharacter(card: CharacterCard): void {
@@ -2998,6 +3059,17 @@ onUnmounted(() => {
                         placeholder="贯穿整个故事的方向，例如：保持校园日常基调，百合线缓慢推进，伏笔必须回收"
                         @input="saveProjects"
                       />
+                      <div class="preset-chips">
+                        <button
+                          v-for="preset in guidancePresets"
+                          :key="preset"
+                          type="button"
+                          class="preset-chip"
+                          @click="setGlobalGuidance(preset)"
+                        >
+                          {{ preset }}
+                        </button>
+                      </div>
                     </el-form-item>
                   </el-form>
                 </el-card>
@@ -3066,6 +3138,18 @@ onUnmounted(() => {
                   <div class="character-card-section">
                     <label>标签</label>
                     <el-input v-model="item.tags" placeholder="例如：港口、海雾、禁行（逗号分隔）" @input="saveProjects" />
+                    <div class="preset-chips">
+                      <button
+                        v-for="tag in worldTagPresets[item.type] || worldTagPresets['其他']"
+                        :key="tag"
+                        type="button"
+                        class="preset-chip"
+                        :class="{used: hasTag(item.tags, tag)}"
+                        @click="fillWorldTags(item, tag)"
+                      >
+                        {{ tag }}
+                      </button>
+                    </div>
                   </div>
                   <div class="character-card-actions">
                     <el-button size="small" @click="submitLoreItem('world', item)">同步到资料库</el-button>
@@ -3204,6 +3288,18 @@ onUnmounted(() => {
                   <div class="character-card-section">
                     <label>性格标签</label>
                     <el-input v-model="card.traits" placeholder="例如：谨慎、毒舌、重情义（用逗号分隔）" @input="saveProjects" />
+                    <div class="preset-chips">
+                      <button
+                        v-for="tag in characterTraitPresets"
+                        :key="tag"
+                        type="button"
+                        class="preset-chip"
+                        :class="{used: hasTag(card.traits, tag)}"
+                        @click="fillCharacterTraits(card, tag)"
+                      >
+                        {{ tag }}
+                      </button>
+                    </div>
                   </div>
 
                   <div v-if="characterEditorMode === 'full'" class="character-card-section character-detail-grid">
@@ -3731,6 +3827,18 @@ onUnmounted(() => {
                 </p>
               </div>
               <el-form label-position="top" class="evolution-setup-form">
+                <div class="preset-chips evolution-start-presets">
+                  <span class="preset-label">难度预设</span>
+                  <button
+                    v-for="preset in evolutionStartPresets"
+                    :key="preset.label"
+                    type="button"
+                    class="preset-chip"
+                    @click="applyEvolutionStartPreset(preset)"
+                  >
+                    {{ preset.label }}
+                  </button>
+                </div>
                 <el-row :gutter="14">
                   <el-col :xs="24" :sm="12">
                     <el-form-item label="种子（留空自动生成）">
@@ -3865,6 +3973,17 @@ onUnmounted(() => {
                   </el-button>
                   <small>会偏置下一回合的事件与角色，并进入 AI 正文；不清空则持续生效。</small>
                   <small v-if="activeProject.global_guidance">全局引导：{{ activeProject.global_guidance }}</small>
+                  <div class="preset-chips">
+                    <button
+                      v-for="preset in guidancePresets"
+                      :key="preset"
+                      type="button"
+                      class="preset-chip"
+                      @click="applyGuidancePreset(preset)"
+                    >
+                      {{ preset }}
+                    </button>
+                  </div>
                 </div>
                 <div v-if="evolutionState.ending" class="evolution-ending">
                   <strong>尾声</strong>
@@ -4177,6 +4296,16 @@ onUnmounted(() => {
                     </div>
                     <p>{{ message.content }}</p>
                   </article>
+                </div>
+                <div class="prompt-starters evolution-chat-starters">
+                  <el-button
+                    v-for="starter in evolutionChatStarters"
+                    :key="starter"
+                    size="small"
+                    @click="evolutionChatInput = starter"
+                  >
+                    {{ starter }}
+                  </el-button>
                 </div>
                 <div class="chat-composer evolution-chat-composer">
                   <el-input
