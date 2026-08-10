@@ -371,6 +371,19 @@ class WorldMapTests(unittest.TestCase):
         self.assertIn("文风：冷峻悬疑", content)
         self.assertIn("避免 AI 腔", content)
 
+    def test_ai_prompt_includes_style_card(self) -> None:
+        settings = EvolutionSettings(branch_frequency=0)
+        state = start_run("p1", "雾港来信", "悬疑", CHARACTERS, WORLD, settings=settings, seed=5)
+        state, _ = advance(state)
+        messages = build_ai_prose_prompt(
+            state,
+            "hero",
+            style_card="文风：冷峻悬疑\n风格参考：短句，克制",
+        )
+        content = messages[0]["content"]
+        self.assertIn("风格基准", content)
+        self.assertIn("短句，克制", content)
+
     def test_needs_new_character_when_cast_small(self) -> None:
         settings = EvolutionSettings(branch_frequency=0)
         state = start_run("p1", "雾港来信", "悬疑", CHARACTERS[:1], WORLD, settings=settings, seed=3)

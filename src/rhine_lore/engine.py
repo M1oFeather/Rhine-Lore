@@ -1275,6 +1275,7 @@ def build_ai_prose_prompt(
     global_guidance: str = "",
     variation: str = "",
     writing_style: str = "",
+    style_card: str = "",
 ) -> list[dict[str, str]]:
     """Build an OpenAI-compatible chat prompt for the latest evolution turn."""
     viewpoint = _member(state, viewpoint_id) if viewpoint_id else None
@@ -1315,6 +1316,11 @@ def build_ai_prose_prompt(
         "你是小说续写引擎。只依据给定的事件与设定写作，不要发明未发生的情节、"
         "未出场的人物或超出已知世界的设定。用第三人称有限视角，侧重心理描写。"
         + (f"文风：{writing_style}。" if writing_style else "")
+        + (
+            f"\n风格基准（本故事的语感、句式、节奏必须与以下内容保持一致，不得中途变调）：\n{style_card}"
+            if style_card
+            else ""
+        )
         + QUALITY_GUIDE
     )
     user = [

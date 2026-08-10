@@ -505,6 +505,7 @@ def _store_turn_prose(
     variation: str = "",
     turn_override: int | None = None,
     writing_style: str = "",
+    style_card: str = "",
     quality_pass: bool = False,
 ) -> bool:
     """Generate prose for the latest (or specified) turn and store it in state."""
@@ -517,10 +518,11 @@ def _store_turn_prose(
         global_guidance=global_guidance,
         variation=variation,
         writing_style=writing_style,
+        style_card=style_card,
     )
     text = _chat_with_vault(messages, llm)
     if quality_pass:
-        text = _polish_text(text, llm)
+        text = _polish_text(text, llm, style_card)
     latest_turn = (
         turn_override
         if turn_override is not None
@@ -557,6 +559,7 @@ def _store_chapter_prose(
     global_guidance: str = "",
     variation: str = "",
     writing_style: str = "",
+    style_card: str = "",
     quality_pass: bool = False,
 ) -> bool:
     api_key = str(llm.get("api_key") or "").strip()
@@ -569,23 +572,25 @@ def _store_chapter_prose(
         global_guidance=global_guidance,
         variation=variation,
         writing_style=writing_style,
+        style_card=style_card,
     )
     text = _chat_with_vault(messages, llm)
     if quality_pass:
-        text = _polish_text(text, llm)
+        text = _polish_text(text, llm, style_card)
     key = f"chapter:{start_turn}:{viewpoint_id or (state.cast[0].id if state.cast else '')}"
     state.ai_prose[key] = text
     _prune_ai_prose(state)
     return True
 
 
-def _polish_text(text: str, llm: dict[str, Any]) -> str:
+def _polish_text(text: str, llm: dict[str, Any], style_card: str = "") -> str:
     messages = [
         {
             "role": "system",
             "content": (
                 "你是中文小说润色编辑。保持事件、设定、人物与时间线完全不变，"
                 "只提升文学质感、节奏与细节，删除 AI 腔套话。"
+                + (f"风格基准（润色后必须保持）：{style_card}" if style_card else "")
                 + QUALITY_GUIDE
             ),
         },
@@ -873,6 +878,7 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
                 global_guidance = str(payload.get("global_guidance") or "").strip()
                 variation = str(payload.get("variation") or "").strip()
                 writing_style = str(payload.get("writing_style") or "").strip()
+                style_card = str(payload.get("style_card") or "").strip()
                 quality_pass = bool(payload.get("quality_pass") or False)
                 try:
                     _store_turn_prose(
@@ -882,6 +888,7 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
                         global_guidance,
                         variation,
                         writing_style=writing_style,
+                        style_card=style_card,
                         quality_pass=quality_pass,
                     )
                 except HTTPError as exc:
@@ -907,6 +914,7 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
                 api_key = str(llm.get("api_key") or "").strip()
                 global_guidance = str(payload.get("global_guidance") or "").strip()
                 writing_style = str(payload.get("writing_style") or "").strip()
+                style_card = str(payload.get("style_card") or "").strip()
                 quality_pass = bool(payload.get("quality_pass") or False)
                 advanced = 0
                 iterations = 0
@@ -927,6 +935,7 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
                             llm,
                             global_guidance,
                             writing_style=writing_style,
+                            style_card=style_card,
                             quality_pass=quality_pass,
                         )
                     except (HTTPError, URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError):
@@ -955,6 +964,7 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
                     return
                 global_guidance = str(payload.get("global_guidance") or "").strip()
                 writing_style = str(payload.get("writing_style") or "").strip()
+                style_card = str(payload.get("style_card") or "").strip()
                 quality_pass = bool(payload.get("quality_pass") or False)
                 event_turns = {event.turn for event in state.history}
                 chapter_turns = sorted(
@@ -977,6 +987,7 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
                         global_guidance,
                         variation,
                         writing_style=writing_style,
+                        style_card=style_card,
                         quality_pass=quality_pass,
                     )
                 except HTTPError as exc:

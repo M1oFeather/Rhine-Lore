@@ -15,6 +15,9 @@ export type StoryProject = {
   chapter_turns: number;
   writing_style: string;
   polish_writing: boolean;
+  style_example: string;
+  style_notes: string;
+  style_avoid: string;
   world: WorldCard[];
   characters: CharacterCard[];
   map: StoryMap;
@@ -494,6 +497,7 @@ export function generateEvolutionProseApi(body: {
   global_guidance?: string;
   variation?: string;
   writing_style?: string;
+  style_card?: string;
   quality_pass?: boolean;
   llm?: {
     base_url?: string;
@@ -526,6 +530,7 @@ export function advanceEvolutionChapter(body: {
   turns?: number;
   global_guidance?: string;
   writing_style?: string;
+  style_card?: string;
   quality_pass?: boolean;
   llm?: {
     base_url?: string;
@@ -543,6 +548,7 @@ export function regenerateEvolutionChapter(body: {
   end_turn: number;
   global_guidance?: string;
   writing_style?: string;
+  style_card?: string;
   quality_pass?: boolean;
   llm?: {
     base_url?: string;

@@ -448,6 +448,9 @@ function loadProjects(): StoryProject[] {
       chapter_turns: 4,
       writing_style: "",
       polish_writing: true,
+      style_example: "",
+      style_notes: "",
+      style_avoid: "",
       world: [],
       characters: [],
       map: {nodes: [], edges: []},
@@ -560,6 +563,9 @@ function normalizeProject(project: Partial<StoryProject>): StoryProject {
     chapter_turns: Math.min(8, Math.max(1, Number(project.chapter_turns) || 4)),
     writing_style: project.writing_style || "",
     polish_writing: project.polish_writing !== false,
+    style_example: project.style_example || "",
+    style_notes: project.style_notes || "",
+    style_avoid: project.style_avoid || "",
     world: (project.world ?? []).map(normalizeWorld),
     characters: (project.characters ?? []).map(normalizeCharacter),
     map: normalizeMap(project.map),
@@ -712,6 +718,9 @@ function confirmCreateProject(destination: CreateDestination): void {
     chapter_turns: 4,
     writing_style: "",
     polish_writing: true,
+    style_example: "",
+    style_notes: "",
+    style_avoid: "",
     world: [],
     characters: [],
     map: {nodes: [], edges: []},
@@ -942,6 +951,36 @@ function setWritingStyle(style: string): void {
   activeProject.value.writing_style = style;
   saveProjects();
   markSaved(`文风已设为「${style}」`);
+}
+
+function buildStyleCard(): string {
+  const project = activeProject.value;
+  const lines: string[] = [];
+  if (project.writing_style) {
+    lines.push(`文风：${project.writing_style}`);
+  }
+  const example = project.style_example.trim();
+  if (example) {
+    lines.push(`风格参考（以下文字的语感、句式、节奏就是本故事的基准）：\n${example.slice(0, 800)}`);
+  }
+  if (project.style_notes.trim()) {
+    lines.push(`风格要点：${project.style_notes.trim()}`);
+  }
+  if (project.style_avoid.trim()) {
+    lines.push(`避免：${project.style_avoid.trim()}`);
+  }
+  return lines.join("\n\n");
+}
+
+function setStyleExampleFromChapter(): void {
+  const chapter = activeChapter.value;
+  if (!chapter || !chapter.content.trim()) {
+    runState.value = {error: "当前章节还没有正文"};
+    return;
+  }
+  activeProject.value.style_example = chapter.content.trim().slice(0, 800);
+  saveProjects();
+  markSaved("已把当前章节设为风格基准");
 }
 
 function fillWorldTags(item: WorldCard, tag: string): void {
@@ -1258,6 +1297,7 @@ async function sendCreativeMessage(): Promise<void> {
   chatInput.value = "";
   const prompt = buildCreativePrompt(text);
   const fallback = localCreativeDraft(text);
+  const styleCard = buildStyleCard();
   const result = await perform("对话创作", () => {
     if (llmConfigured.value) {
       return llmServerChat([
@@ -1265,7 +1305,7 @@ async function sendCreativeMessage(): Promise<void> {
           role: "system",
           content:
             "你是 Rhine-Lore 的创作助手：基于用户给出的世界观、角色与章节续写或讨论剧情，不要编造未提供的设定。" +
-            (activeProject.value.writing_style ? `文风：${activeProject.value.writing_style}。` : "") +
+            (styleCard ? `\n风格基准（必须严格遵守）：\n${styleCard}` : "") +
             WRITING_QUALITY_GUIDE,
         },
         {role: "user", content: prompt},
@@ -1287,6 +1327,7 @@ async function sendCreativeMessage(): Promise<void> {
           role: "system",
           content:
             "你是中文小说润色编辑。保持事件、设定、人物与时间线完全不变，只提升文学质感、节奏与细节，删除 AI 腔套话。" +
+            (styleCard ? `风格基准（润色后必须保持）：${styleCard}` : "") +
             WRITING_QUALITY_GUIDE,
         },
         {role: "user", content: `请润色以下正文，直接输出润色后的完整正文，不要解释：\n\n${reply}`},
@@ -1334,7 +1375,7 @@ function buildRevisionMessages(instruction: string, threadsText: string): LlmCha
     "必须只输出一个 JSON 对象，不要输出任何其他文字。格式：" +
     '{"revisions":[{"chapter_id":"...","chapter_title":"...","revised_text":"修订后的完整章节正文"}],"evaluation":[{"kind":"冲突|误区|不一致|提醒","item":"问题一句话","reason":"依据（哪条设定或哪一章）","suggestion":"处理建议"}]}。' +
     "如果没有需要修改的章节，revisions 为空数组；局部修改时 revised_text 必须是包含修改后的完整章节正文。" +
-    (project.writing_style ? `文风：${project.writing_style}。` : "") +
+    (buildStyleCard() ? `\n风格基准（修订后必须保持）：\n${buildStyleCard()}` : "") +
     WRITING_QUALITY_GUIDE;
   const user = [
     `调整指令：${instruction}`,
@@ -2155,7 +2196,7 @@ function buildEvolutionChatMessages(question: string): LlmChatMessage[] {
     `结局方向：${state.arc.ending_kind || "未定"}`,
     `引导指令：${state.guidance || "无"}`,
     `全局引导：${activeProject.value.global_guidance || "无"}`,
-    `文风：${activeProject.value.writing_style || "未指定"}`,
+    buildStyleCard() ? `风格基准：\n${buildStyleCard()}` : "文风：未指定",
     `角色：${cast}`,
     threads ? `活跃线索：\n${threads}` : "活跃线索：无",
     `最近事件：\n${recent || "暂无"}`,
@@ -2668,6 +2709,7 @@ async function generateNextChapter(): Promise<void> {
       turns: evolutionChapterSize.value,
       global_guidance: project.global_guidance || "",
       writing_style: project.writing_style || "",
+      style_card: buildStyleCard(),
       quality_pass: project.polish_writing,
     });
     evolutionView.value = view;
@@ -2702,6 +2744,7 @@ async function regenerateCurrentChapter(): Promise<void> {
       end_turn: chapter.endTurn,
       global_guidance: project.global_guidance || "",
       writing_style: project.writing_style || "",
+      style_card: buildStyleCard(),
       quality_pass: project.polish_writing,
     });
     evolutionView.value = view;
@@ -2727,6 +2770,7 @@ async function generateStoredProse(): Promise<void> {
       viewpoint_id: evolutionViewpoint.value || "",
       global_guidance: activeProject.value.global_guidance || "",
       writing_style: activeProject.value.writing_style || "",
+      style_card: buildStyleCard(),
       quality_pass: activeProject.value.polish_writing,
     });
     if (view) {
@@ -2752,6 +2796,7 @@ async function generateEvolutionProse(): Promise<void> {
       viewpoint_id: evolutionViewpoint.value || "",
       global_guidance: activeProject.value.global_guidance || "",
       writing_style: activeProject.value.writing_style || "",
+      style_card: buildStyleCard(),
       quality_pass: activeProject.value.polish_writing,
     }),
   );
@@ -3187,6 +3232,32 @@ onUnmounted(() => {
                         active-text="生成后自动润色"
                         inactive-text="不润色"
                         @change="saveProjects"
+                      />
+                    </el-form-item>
+                    <el-form-item label="风格参考（可选）">
+                      <el-input
+                        v-model="activeProject.style_example"
+                        type="textarea"
+                        :rows="4"
+                        placeholder="粘贴一段你满意的正文，作为全故事的语感、句式、节奏基准"
+                        @input="saveProjects"
+                      />
+                      <el-button size="small" @click="setStyleExampleFromChapter">
+                        取当前正文为基准
+                      </el-button>
+                    </el-form-item>
+                    <el-form-item label="风格要点（可选）">
+                      <el-input
+                        v-model="activeProject.style_notes"
+                        placeholder="例如：多用短句；心理描写克制；对话带一点疏离感"
+                        @input="saveProjects"
+                      />
+                    </el-form-item>
+                    <el-form-item label="避免（可选）">
+                      <el-input
+                        v-model="activeProject.style_avoid"
+                        placeholder="例如：避免华丽辞藻、网络用语、过度比喻"
+                        @input="saveProjects"
                       />
                     </el-form-item>
                   </el-form>
