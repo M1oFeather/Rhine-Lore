@@ -1207,6 +1207,7 @@ def proxy_url(base_url: str, api_path: str) -> str:
 
 
 def serve(host: str, port: int, web_root: Path) -> None:
+    web_root = Path(web_root)
     if not web_root.exists():
         raise FileNotFoundError(f"web root does not exist: {web_root}")
 

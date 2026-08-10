@@ -48,6 +48,32 @@ cd E:\Project\Python\Rhine-Lore\android
 > `ui/dist` 会在构建时由 `copyWebAssets` 任务自动拷贝进 APK 资源，无需手动
 > 处理；本机已验证可产出约 35 MB 的 debug APK（arm64-v8a + x86_64）。
 
+## 本地模拟器验收（可选）
+
+本机已装好：模拟器 37.1.11、android-34 x86_64 系统镜像
+（均在 `D:\Android\Sdk`），以及 AEHD 加速驱动
+（`D:\Android\Sdk\extras\google\Android_Emulator_Hypervisor_Driver`，
+需管理员运行 `silent_install.bat` 安装一次）。
+
+```powershell
+$env:ANDROID_AVD_HOME = "D:\Android\avd"
+
+# 首次创建 AVD
+& "D:\Android\Sdk\cmdline-tools\latest\bin\avdmanager.bat" create avd `
+    -n rhine_test -k "system-images;android-34;default;x86_64" -d pixel_5
+
+# 无窗口启动
+& "D:\Android\Sdk\emulator\emulator.exe" -avd rhine_test -no-window `
+    -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot
+
+# 安装并启动 App
+& "D:\Android\Sdk\platform-tools\adb.exe" install -r app\build\outputs\apk\debug\app-debug.apk
+& "D:\Android\Sdk\platform-tools\adb.exe" shell am start -n com.rhinelore.app/.MainActivity
+```
+
+本机模拟器验收已通过：WebView 正常加载首页，内嵌 Python 服务在
+`127.0.0.1:8796` 返回 200，前端资源与 LLM 配置接口均正常。
+
 ## 已知边界（内嵌版）
 
 - 资料库（Rhine-Vault）功能在手机上不可用：知识检索、提案/入库等页面会显示
