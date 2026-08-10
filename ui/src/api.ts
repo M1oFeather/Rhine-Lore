@@ -11,6 +11,7 @@ export type StoryProject = {
   name: string;
   genre: string;
   summary: string;
+  global_guidance: string;
   world: WorldCard[];
   characters: CharacterCard[];
   map: StoryMap;
@@ -495,6 +496,35 @@ export function addEvolutionCharacter(body: {
   character: ApiRecord;
 }): Promise<EvolutionView> {
   return postJson("/lore-api/evolution/add-character", body);
+}
+
+export function advanceEvolutionChapter(body: {
+  project_id: string;
+  viewpoint_id?: string;
+  turns?: number;
+  global_guidance?: string;
+  llm?: {
+    base_url?: string;
+    api_key?: string;
+    model?: string;
+  };
+}): Promise<EvolutionView> {
+  return postJson("/lore-api/evolution/advance-chapter", body);
+}
+
+export function regenerateEvolutionChapter(body: {
+  project_id: string;
+  viewpoint_id?: string;
+  start_turn: number;
+  end_turn: number;
+  global_guidance?: string;
+  llm: {
+    base_url?: string;
+    api_key?: string;
+    model?: string;
+  };
+}): Promise<EvolutionView> {
+  return postJson("/lore-api/evolution/regenerate-chapter", body);
 }
 
 export function backupProject(project: StoryProject): Promise<{ok: boolean}> {

@@ -22,6 +22,7 @@ import {
   type WorkspaceRecord,
   type WorldCard,
   advanceEvolution,
+  advanceEvolutionChapter,
   addEvolutionCharacter,
   approveStaging,
   backupProject,
@@ -45,6 +46,7 @@ import {
   listWorkspaces,
   listProjectBackups,
   registerWorkspace,
+  regenerateEvolutionChapter,
   resetEvolutionRun,
   restoreProjectBackup,
   setWorkspaceId,
@@ -162,6 +164,8 @@ const evolutionSeedInput = ref("");
 const evolutionGuidance = ref("");
 const evolutionStateTab = ref("arc");
 const evolutionChapterIndex = ref(0);
+const chapterGuidanceInput = ref("");
+const chapterBusy = ref(false);
 const evolutionChat = ref<EvolutionChatMessage[]>([]);
 const evolutionChatInput = ref("");
 const evolutionChatBusy = ref(false);
@@ -401,6 +405,7 @@ function loadProjects(): StoryProject[] {
       name: "我的故事",
       genre: "未分类",
       summary: "",
+      global_guidance: "",
       world: [],
       characters: [],
       map: {nodes: [], edges: []},
@@ -509,6 +514,7 @@ function normalizeProject(project: Partial<StoryProject>): StoryProject {
     name: project.name || "未命名故事",
     genre: project.genre || "未分类",
     summary: project.summary || "",
+    global_guidance: project.global_guidance || "",
     world: (project.world ?? []).map(normalizeWorld),
     characters: (project.characters ?? []).map(normalizeCharacter),
     map: normalizeMap(project.map),
@@ -649,6 +655,7 @@ function confirmCreateProject(destination: CreateDestination): void {
     name: projectName,
     genre: newProjectGenre.value.trim() || "未分类",
     summary: newProjectIdea.value.trim(),
+    global_guidance: "",
     world: [],
     characters: [],
     map: {nodes: [], edges: []},
@@ -1188,6 +1195,7 @@ function buildRevisionMessages(instruction: string, threadsText: string): LlmCha
   const user = [
     `调整指令：${instruction}`,
     `项目：《${project.name}》 类型：${project.genre} 概要：${project.summary || "未设定"}`,
+    `全局引导：${project.global_guidance || "无"}`,
     `当前激活章节：${activeChapter.value?.title ?? "无"}`,
     `全部章节：\n${chaptersText || "暂无"}`,
     `角色卡：\n${charactersText || "暂无"}`,
@@ -1996,6 +2004,7 @@ function buildEvolutionChatMessages(question: string): LlmChatMessage[] {
     `当前第 ${state.turn} 回合 · ${actName} · 张力 ${state.world.tension}（目标 ${state.arc.tension_range[0]}–${state.arc.tension_range[1]}）`,
     `结局方向：${state.arc.ending_kind || "未定"}`,
     `引导指令：${state.guidance || "无"}`,
+    `全局引导：${activeProject.value.global_guidance || "无"}`,
     `角色：${cast}`,
     threads ? `活跃线索：\n${threads}` : "活跃线索：无",
     `最近事件：\n${recent || "暂无"}`,
@@ -2469,6 +2478,78 @@ function openEvolutionAdjacentChapter(direction: -1 | 1): void {
   evolutionChapterIndex.value = next;
 }
 
+async function generateNextChapter(): Promise<void> {
+  const project = activeProject.value;
+  const state = evolutionState.value;
+  if (!project || !state || chapterBusy.value) {
+    return;
+  }
+  chapterBusy.value = true;
+  try {
+    if (chapterGuidanceInput.value.trim()) {
+      evolutionGuidance.value = chapterGuidanceInput.value.trim();
+      await saveEvolutionGuidance();
+    }
+    const view = await advanceEvolutionChapter({
+      project_id: project.id,
+      viewpoint_id: evolutionViewpoint.value || "",
+      turns: 4,
+      global_guidance: project.global_guidance || "",
+      llm: llmApiKey.value.trim()
+        ? {
+            base_url: llmBaseUrl.value.trim() || undefined,
+            api_key: llmApiKey.value.trim() || undefined,
+            model: llmModel.value.trim() || undefined,
+          }
+        : undefined,
+    });
+    evolutionView.value = view;
+    evolutionGuidance.value = view.state.guidance ?? "";
+    evolutionChapterIndex.value = Math.max(0, evolutionNovelChapters.value.length - 1);
+    chapterGuidanceInput.value = "";
+    markSaved("下一章已生成");
+  } catch (error) {
+    runState.value = {error: error instanceof Error ? error.message : String(error)};
+  } finally {
+    chapterBusy.value = false;
+  }
+}
+
+async function regenerateCurrentChapter(): Promise<void> {
+  const project = activeProject.value;
+  const state = evolutionState.value;
+  const chapter = evolutionActiveChapter.value;
+  if (!project || !state || !chapter || chapterBusy.value) {
+    return;
+  }
+  if (!llmApiKey.value.trim()) {
+    runState.value = {error: "重新生成本章需要 AI 通道，请先配置 API Key"};
+    return;
+  }
+  chapterBusy.value = true;
+  try {
+    const view = await regenerateEvolutionChapter({
+      project_id: project.id,
+      viewpoint_id: evolutionViewpoint.value || "",
+      start_turn: chapter.startTurn,
+      end_turn: chapter.endTurn,
+      global_guidance: project.global_guidance || "",
+      llm: {
+        base_url: llmBaseUrl.value.trim() || undefined,
+        api_key: llmApiKey.value.trim() || undefined,
+        model: llmModel.value.trim() || undefined,
+      },
+    });
+    evolutionView.value = view;
+    evolutionGuidance.value = view.state.guidance ?? "";
+    markSaved("本章已重新生成");
+  } catch (error) {
+    runState.value = {error: error instanceof Error ? error.message : String(error)};
+  } finally {
+    chapterBusy.value = false;
+  }
+}
+
 async function generateStoredProse(): Promise<void> {
   const project = activeProject.value;
   const state = evolutionState.value;
@@ -2906,6 +2987,15 @@ onUnmounted(() => {
                         type="textarea"
                         :rows="8"
                         placeholder="用一两句话写下主角是谁、想做什么、会遇到什么困难"
+                        @input="saveProjects"
+                      />
+                    </el-form-item>
+                    <el-form-item label="全局引导">
+                      <el-input
+                        v-model="activeProject.global_guidance"
+                        type="textarea"
+                        :rows="3"
+                        placeholder="贯穿整个故事的方向，例如：保持校园日常基调，百合线缓慢推进，伏笔必须回收"
                         @input="saveProjects"
                       />
                     </el-form-item>
@@ -3774,6 +3864,7 @@ onUnmounted(() => {
                     清空
                   </el-button>
                   <small>会偏置下一回合的事件与角色，并进入 AI 正文；不清空则持续生效。</small>
+                  <small v-if="activeProject.global_guidance">全局引导：{{ activeProject.global_guidance }}</small>
                 </div>
                 <div v-if="evolutionState.ending" class="evolution-ending">
                   <strong>尾声</strong>
@@ -4024,6 +4115,34 @@ onUnmounted(() => {
                         @click="openEvolutionAdjacentChapter(1)"
                       >
                         下一章
+                      </el-button>
+                    </div>
+                    <div class="regenerate-chapter-bar">
+                      <el-button
+                        size="small"
+                        :loading="chapterBusy"
+                        :disabled="!llmApiKey.trim()"
+                        @click="regenerateCurrentChapter"
+                      >
+                        重新生成本章
+                      </el-button>
+                      <small v-if="!llmApiKey.trim()">需要 AI 通道</small>
+                    </div>
+                    <div
+                      v-if="evolutionActiveChapter.index === evolutionNovelChapters.length - 1"
+                      class="next-chapter-panel"
+                    >
+                      <div class="next-chapter-copy">
+                        <strong>生成下一章</strong>
+                        <small>读完本章后点击生成；可以给下一章一个方向，留空则由故事自己延续。</small>
+                      </div>
+                      <el-input
+                        v-model="chapterGuidanceInput"
+                        placeholder="引导下一章，例如：让林薇在旧码头发现火光"
+                        clearable
+                      />
+                      <el-button type="primary" :loading="chapterBusy" @click="generateNextChapter">
+                        生成下一章
                       </el-button>
                     </div>
                   </div>

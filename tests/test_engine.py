@@ -346,6 +346,22 @@ class WorldMapTests(unittest.TestCase):
         self.assertIn("旧码头有火光", content)
         self.assertIn("林澈沿着河岸慢慢往前走", content)
 
+    def test_ai_prompt_includes_global_guidance_and_variation(self) -> None:
+        settings = EvolutionSettings(branch_frequency=0)
+        state = start_run("p1", "雾港来信", "悬疑", CHARACTERS, WORLD, settings=settings, seed=5)
+        state, _ = advance(state)
+        messages = build_ai_prose_prompt(
+            state,
+            "hero",
+            global_guidance="保持校园日常基调",
+            variation="换一种写法",
+        )
+        content = messages[1]["content"]
+        self.assertIn("全局引导", content)
+        self.assertIn("校园日常基调", content)
+        self.assertIn("重写要求", content)
+        self.assertIn("换一种写法", content)
+
     def test_needs_new_character_when_cast_small(self) -> None:
         settings = EvolutionSettings(branch_frequency=0)
         state = start_run("p1", "雾港来信", "悬疑", CHARACTERS[:1], WORLD, settings=settings, seed=3)

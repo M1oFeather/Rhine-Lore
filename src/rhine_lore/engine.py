@@ -1259,7 +1259,12 @@ def viewpoint_options(state: EvolutionState) -> list[dict[str, str]]:
     return [{"id": member.id, "name": member.name} for member in state.cast]
 
 
-def build_ai_prose_prompt(state: EvolutionState, viewpoint_id: str = "") -> list[dict[str, str]]:
+def build_ai_prose_prompt(
+    state: EvolutionState,
+    viewpoint_id: str = "",
+    global_guidance: str = "",
+    variation: str = "",
+) -> list[dict[str, str]]:
     """Build an OpenAI-compatible chat prompt for the latest evolution turn."""
     viewpoint = _member(state, viewpoint_id) if viewpoint_id else None
     if viewpoint is None:
@@ -1307,6 +1312,10 @@ def build_ai_prose_prompt(state: EvolutionState, viewpoint_id: str = "") -> list
     ]
     if state.guidance:
         user.append(f"导演指令（必须遵守）：{state.guidance}")
+    if global_guidance:
+        user.append(f"全局引导（始终遵守）：{global_guidance}")
+    if variation:
+        user.append(f"重写要求：{variation}")
     if previous_prose:
         user.append(
             "上文（最近两回 AI 正文，续写时保持人物、语气与时间连续性，不要重复）：\n"

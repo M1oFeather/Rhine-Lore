@@ -3519,6 +3519,54 @@ body {
   }
 }
 
+/* Chapter serialization actions */
+.regenerate-chapter-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.regenerate-chapter-bar small {
+  color: #5b6b7c;
+}
+
+.next-chapter-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 10px;
+  align-items: center;
+  margin-top: 20px;
+  padding: 14px 16px;
+  border: 1px dashed #b8cfe8;
+  border-radius: 12px;
+  background: #f2f8ff;
+}
+
+.next-chapter-copy {
+  display: grid;
+  gap: 2px;
+}
+
+.next-chapter-copy strong {
+  color: #16324f;
+}
+
+.next-chapter-copy small {
+  color: #5b6b7c;
+}
+
+@media (max-width: 720px) {
+  .next-chapter-panel {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .next-chapter-panel .el-button {
+    width: 100%;
+  }
+}
+
 /* Disk backup and restore */
 .disk-restore-strip {
   display: grid;

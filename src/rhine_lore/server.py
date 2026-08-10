@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import copy
 import os
 import socket
 import subprocess
@@ -416,6 +417,79 @@ def _evolution_payload(
     }
 
 
+def _chat_with_vault(messages: list[dict[str, str]], llm: dict[str, Any]) -> str:
+    """Call the local Vault OpenAI-compatible chat endpoint and return text."""
+    vault_base = VAULT_MANAGER.status()["base_url"]
+    target = _join_base_and_path(vault_base, "/api/llm/openai-compatible/chat")
+    chat_body = {
+        "workspace_id": "story-workspace",
+        "base_url": str(llm.get("base_url") or "").strip() or None,
+        "api_key": str(llm.get("api_key") or "").strip(),
+        "model": str(llm.get("model") or "").strip() or None,
+        "messages": messages,
+    }
+    request = Request(
+        target,
+        data=json.dumps(chat_body, ensure_ascii=False).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urlopen(request, timeout=60) as response:
+        result = json.loads(response.read().decode("utf-8"))
+    text = str(result.get("answer") or "").strip()
+    if not text:
+        raise ValueError("AI 返回为空")
+    return text
+
+
+def _store_turn_prose(
+    state: EvolutionState,
+    viewpoint_id: str,
+    llm: dict[str, Any],
+    global_guidance: str = "",
+    variation: str = "",
+    turn_override: int | None = None,
+) -> bool:
+    """Generate prose for the latest (or specified) turn and store it in state."""
+    api_key = str(llm.get("api_key") or "").strip()
+    if not api_key:
+        return False
+    messages = build_ai_prose_prompt(
+        state,
+        viewpoint_id,
+        global_guidance=global_guidance,
+        variation=variation,
+    )
+    text = _chat_with_vault(messages, llm)
+    latest_turn = (
+        turn_override
+        if turn_override is not None
+        else (state.history[-1].turn if state.history else state.turn)
+    )
+    prose_key = f"{latest_turn}:{viewpoint_id or (state.cast[0].id if state.cast else '')}"
+    state.ai_prose[prose_key] = text
+    min_turn = max(1, state.turn - 20)
+    state.ai_prose = {
+        key: value
+        for key, value in state.ai_prose.items()
+        if int(key.split(":")[0]) >= min_turn
+    }
+    return True
+
+
+def _chapter_snapshot(state: EvolutionState, end_turn: int) -> EvolutionState:
+    """Snapshot of the story up to a chapter's last turn for regeneration."""
+    snapshot = copy.deepcopy(state)
+    snapshot.history = [event for event in snapshot.history if event.turn <= end_turn]
+    snapshot.ai_prose = {
+        key: value
+        for key, value in snapshot.ai_prose.items()
+        if int(key.split(":")[0]) <= end_turn
+    }
+    snapshot.turn = end_turn
+    return snapshot
+
+
 def _lan_addresses() -> list[str]:
     try:
         probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -596,39 +670,100 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
                 if not api_key:
                     self._send_json(400, {"error": "未配置 API Key"})
                     return
-                messages = build_ai_prose_prompt(state, viewpoint_id)
-                chat_body = {
-                    "workspace_id": "story-workspace",
-                    "base_url": str(llm.get("base_url") or "").strip() or None,
-                    "api_key": api_key,
-                    "model": str(llm.get("model") or "").strip() or None,
-                    "messages": messages,
-                }
-                vault_base = VAULT_MANAGER.status()["base_url"]
+                global_guidance = str(payload.get("global_guidance") or "").strip()
+                variation = str(payload.get("variation") or "").strip()
                 try:
-                    target = _join_base_and_path(vault_base, "/api/llm/openai-compatible/chat")
-                    request = Request(
-                        target,
-                        data=json.dumps(chat_body, ensure_ascii=False).encode("utf-8"),
-                        headers={"Content-Type": "application/json"},
-                        method="POST",
-                    )
-                    with urlopen(request, timeout=60) as response:
-                        result = json.loads(response.read().decode("utf-8"))
+                    _store_turn_prose(state, viewpoint_id, llm, global_guidance, variation)
                 except HTTPError as exc:
                     detail = exc.read().decode("utf-8", errors="replace")[-300:]
                     self._send_json(502, {"error": f"AI 生成失败：{detail or exc}"})
                     return
-                except (URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+                except (URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError) as exc:
                     self._send_json(502, {"error": f"AI 生成失败：{exc}"})
                     return
-                text = str(result.get("answer") or "").strip()
-                if not text:
-                    self._send_json(502, {"error": "AI 返回为空"})
+                EVOLUTION_STORE.save(state)
+                self._send_json(200, _evolution_payload(state, viewpoint_id=viewpoint_id))
+                return
+            if self.command == "POST" and parsed_request.path == "/lore-api/evolution/advance-chapter":
+                payload = self._read_json_body()
+                project_id = str(payload.get("project_id") or "").strip()
+                state = EVOLUTION_STORE.load(project_id)
+                if state is None:
+                    self._send_json(404, {"error": "演化尚未开始"})
                     return
-                latest_turn = state.history[-1].turn if state.history else state.turn
-                prose_key = f"{latest_turn}:{viewpoint_id or (state.cast[0].id if state.cast else '')}"
-                state.ai_prose[prose_key] = text
+                viewpoint_id = str(payload.get("viewpoint_id") or "").strip()
+                turns = max(1, min(8, int(payload.get("turns") or 4)))
+                llm = payload.get("llm") or {}
+                api_key = str(llm.get("api_key") or "").strip()
+                global_guidance = str(payload.get("global_guidance") or "").strip()
+                advanced = 0
+                iterations = 0
+                result: TurnResult | None = None
+                while advanced < turns and not state.ending and iterations < 40:
+                    state, result = advance(state, choice_id="fate")
+                    iterations += 1
+                    if result.advanced:
+                        advanced += 1
+                        if api_key:
+                            try:
+                                _store_turn_prose(state, viewpoint_id, llm, global_guidance)
+                            except (HTTPError, URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError):
+                                # 单回合扩写失败不阻塞整章
+                                pass
+                EVOLUTION_STORE.save(state)
+                self._send_json(200, _evolution_payload(state, result, viewpoint_id))
+                return
+            if self.command == "POST" and parsed_request.path == "/lore-api/evolution/regenerate-chapter":
+                payload = self._read_json_body()
+                project_id = str(payload.get("project_id") or "").strip()
+                state = EVOLUTION_STORE.load(project_id)
+                if state is None:
+                    self._send_json(404, {"error": "演化尚未开始"})
+                    return
+                viewpoint_id = str(payload.get("viewpoint_id") or "").strip()
+                start_turn = int(payload.get("start_turn") or 0)
+                end_turn = int(payload.get("end_turn") or 0)
+                if start_turn < 1 or end_turn < start_turn:
+                    self._send_json(400, {"error": "章节范围无效"})
+                    return
+                llm = payload.get("llm") or {}
+                api_key = str(llm.get("api_key") or "").strip()
+                if not api_key:
+                    self._send_json(400, {"error": "重新生成本章需要 AI 通道"})
+                    return
+                global_guidance = str(payload.get("global_guidance") or "").strip()
+                event_turns = {event.turn for event in state.history}
+                chapter_turns = sorted(
+                    turn for turn in range(start_turn, end_turn + 1) if turn in event_turns
+                )
+                if not chapter_turns:
+                    self._send_json(400, {"error": "该章节还没有可重写的回合"})
+                    return
+                variation = (
+                    f"重新生成第{start_turn}–{end_turn}回合这一章：事件与事实保持不变，"
+                    "换一种写法重写整章正文，保持人物语气与时间连续性。"
+                )
+                try:
+                    for turn in chapter_turns:
+                        snapshot = _chapter_snapshot(state, turn)
+                        _store_turn_prose(
+                            snapshot,
+                            viewpoint_id,
+                            llm,
+                            global_guidance,
+                            variation,
+                            turn_override=turn,
+                        )
+                        prose_key = f"{turn}:{viewpoint_id or (state.cast[0].id if state.cast else '')}"
+                        if prose_key in snapshot.ai_prose:
+                            state.ai_prose[prose_key] = snapshot.ai_prose[prose_key]
+                except HTTPError as exc:
+                    detail = exc.read().decode("utf-8", errors="replace")[-300:]
+                    self._send_json(502, {"error": f"AI 重写失败：{detail or exc}"})
+                    return
+                except (URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError) as exc:
+                    self._send_json(502, {"error": f"AI 重写失败：{exc}"})
+                    return
                 min_turn = max(1, state.turn - 20)
                 state.ai_prose = {
                     key: value

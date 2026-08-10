@@ -141,6 +141,40 @@ class EvolutionApiTests(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertIn("API Key", payload["error"])
 
+    def test_advance_chapter_advances_four_turns(self) -> None:
+        status, payload = self._request(
+            "POST",
+            "/lore-api/evolution/start",
+            {
+                "project_id": "story-chapter",
+                "project_name": "雾港来信",
+                "genre": "悬疑",
+                "characters": CHARACTERS,
+                "world": WORLD,
+                "seed": 42,
+                "settings": {"chaos": 30, "branch_frequency": 0, "events_per_turn": 1, "auto_resolve": False},
+            },
+        )
+        self.assertEqual(status, 200)
+        status, payload = self._request(
+            "POST",
+            "/lore-api/evolution/advance-chapter",
+            {"project_id": "story-chapter", "turns": 4, "viewpoint_id": "hero"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["state"]["turn"], 4)
+        self.assertGreaterEqual(len(payload["state"]["history"]), 4)
+
+    def test_regenerate_chapter_requires_api_key(self) -> None:
+        self._start("story-regen")
+        status, payload = self._request(
+            "POST",
+            "/lore-api/evolution/regenerate-chapter",
+            {"project_id": "story-regen", "start_turn": 1, "end_turn": 4, "llm": {"api_key": ""}},
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("AI 通道", payload["error"])
+
     def test_guide_sets_guidance(self) -> None:
         self._start("story-guide")
         status, payload = self._request(
