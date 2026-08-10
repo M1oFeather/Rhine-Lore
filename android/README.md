@@ -85,6 +85,8 @@ $env:ANDROID_AVD_HOME = "D:\Android\avd"
   （需配置 AI 通道；未配置时提供离线高频角色提取与模板回复）。
 - 内嵌服务监听 `0.0.0.0:8796`：同一份数据可直接在局域网浏览器打开
   （`http://<手机IP>:8796/`），即手机端与网页版共用同一个后端与书库。
+- AI 面板内置 **DeepSeek 登录助手**：WebView 打开 DeepSeek 控制台，登录后
+  复制 API Key 会被自动捕获并写入本机 AI 配置。
 - 首次进入需在首页配置 AI 通道（DeepSeek/OpenAI 兼容），密钥保存在 App 内。
 - 本版绑定 `127.0.0.1:8796`，仅 App 自身可访问；如需手机对外提供服务，
   把 `rhine_lore_launcher.py` 的 host 改为 `0.0.0.0` 并加防火墙放行。

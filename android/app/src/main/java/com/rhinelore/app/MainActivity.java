@@ -1,11 +1,13 @@
 package com.rhinelore.app;
 
 import android.app.Activity;
+import android.content.Intent;
 import android.content.res.AssetManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
+import android.webkit.JavascriptInterface;
 import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
@@ -76,6 +78,12 @@ public class MainActivity extends Activity {
                 showError("页面加载失败：" + description);
             }
         });
+        webView.addJavascriptInterface(new Object() {
+            @JavascriptInterface
+            public void openDeepSeekLogin() {
+                startActivity(new Intent(MainActivity.this, KeyAssistantActivity.class));
+            }
+        }, "AndroidBridge");
         setContentView(webView);
 
         waitForServer(() -> webView.loadUrl("http://127.0.0.1:" + PORT + "/"));

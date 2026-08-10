@@ -79,6 +79,9 @@ python3 main.py --host 0.0.0.0 --port 8786
 首页右上角 **AI 面板**：选择 DeepSeek / OpenAI / 自定义，填写 API Key 与模型。
 密钥只保存在本机（`data/llm-config.json` 或 App 私有目录）。
 
+安卓端 AI 面板提供 **DeepSeek 登录取 Key**：内置浏览器打开 DeepSeek 控制台，
+登录后复制 API Key 会被自动捕获并写入配置；网页版提供“打开控制台 + 从剪贴板读取”。
+
 未配置时：对话创作与演化使用离线模板，书架 AI 返回离线提示，写作功能不受影响。
 
 ## 🏗️ 构建

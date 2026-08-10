@@ -2805,8 +2805,11 @@ async function runAiCheck(): Promise<void> {
 
 function toggleAiPanel(): void {
   aiPanelOpen.value = !aiPanelOpen.value;
-  if (aiPanelOpen.value && aiStatus.value === "unset") {
-    void runAiCheck();
+  if (aiPanelOpen.value) {
+    void loadLlmServerConfig();
+    if (aiStatus.value === "unset") {
+      void runAiCheck();
+    }
   }
 }
 
@@ -3117,6 +3120,47 @@ async function testLlmConnection(): Promise<void> {
   }
 }
 
+function openDeepSeekKeyAssistant(): void {
+  const bridge = (
+    window as unknown as {
+      AndroidBridge?: {openDeepSeekLogin?: () => void};
+    }
+  ).AndroidBridge;
+  if (bridge?.openDeepSeekLogin) {
+    bridge.openDeepSeekLogin();
+    return;
+  }
+  window.open("https://platform.deepseek.com/", "_blank", "noopener");
+  markSaved("已打开 DeepSeek 控制台：登录后创建 API Key 并复制，再点「从剪贴板读取」");
+}
+
+async function pasteDeepSeekKey(): Promise<void> {
+  try {
+    if (!navigator.clipboard?.readText) {
+      runState.value = {error: "当前环境不支持读取剪贴板，请手动把 Key 粘贴到上方输入框"};
+      return;
+    }
+    const text = await navigator.clipboard.readText();
+    const match = (text || "").trim().match(/sk-[A-Za-z0-9_-]{16,}/);
+    if (!match) {
+      runState.value = {error: "剪贴板中没有找到 sk- 开头的 API Key"};
+      return;
+    }
+    await perform("配置 DeepSeek Key", () =>
+      saveLlmServerConfig({
+        base_url: "https://api.deepseek.com",
+        api_key: match[0],
+        model: llmModel.value.trim() || "deepseek-chat",
+        preset: "deepseek",
+      }),
+    );
+    await loadLlmServerConfig();
+    markSaved("DeepSeek API Key 已配置");
+  } catch (error) {
+    runState.value = {error: error instanceof Error ? error.message : String(error)};
+  }
+}
+
 onUnmounted(() => {
   if (evolutionTimer) {
     window.clearInterval(evolutionTimer);
@@ -3253,6 +3297,8 @@ onUnmounted(() => {
               测试连接
             </el-button>
             <el-button size="small" type="primary" @click="saveLlmConfig">保存并检查</el-button>
+            <el-button size="small" @click="openDeepSeekKeyAssistant">DeepSeek 登录取 Key</el-button>
+            <el-button size="small" @click="pasteDeepSeekKey">从剪贴板读取</el-button>
             <small>配置后对话创作与演化正文都走此通道；未配置时使用离线模板。</small>
           </div>
         </div>
