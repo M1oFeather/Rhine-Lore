@@ -1,289 +1,139 @@
-﻿# Rhine-Lore
+<h1 align="center">🌊 Rhine-Lore</h1>
 
-> A friendly writing studio with optional audited knowledge support.
+<p align="center">
+  <em>本地优先的中文写作工作室 · 演化沙盘 · TXT 书架 · AI 续写</em>
+</p>
 
-Rhine-Lore is a standalone writing workspace for story projects, worldbuilding,
-character notes, creative conversation, and long-form chapter editing.
+<p align="center">
+  <img src="https://img.shields.io/badge/Python-3.10%2B-blue?style=flat-square" alt="Python 3.10+">
+  <img src="https://img.shields.io/badge/Web-Vue%203%20%2B%20Element%20Plus-42b883?style=flat-square" alt="Vue 3 + Element Plus">
+  <img src="https://img.shields.io/badge/Android-API%2026%2B-brightgreen?style=flat-square" alt="Android API 26+">
+  <img src="https://img.shields.io/badge/Version-0.1.0-purple?style=flat-square" alt="Version 0.1.0">
+  <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20Android-lightgrey?style=flat-square" alt="Platforms">
+</p>
 
-Rhine-Lore owns editor and project state. Rhine-Vault remains the canonical
-audited knowledge backend for approved world facts, Context Bundles, review
-state, snapshots, and long-term retrieval.
+---
 
-## Features
+## 📖 简介
 
-- Story project dashboard stored locally in the browser.
-- Automatic disk backup: every project save is mirrored to
-  `data/projects/<project-id>.project.json` after a short debounce. If the
-  browser storage is cleared, the workbench shows a “从磁盘恢复” entry with a
-  backup list; restoring keeps the same project id, so the on-disk evolution
-  run reconnects automatically.
-- Guided story creation with a lightweight name, genre, and one-line idea form;
-  the first chapter is prepared automatically.
-- Project import, export, and duplication for browser-local story backups.
-- The active story and chapter are restored after a page refresh.
-- Worldbuilding, character, outline, timeline, foreshadowing, and chapter
-  work areas.
-- Structured character cards: identity, role, drive, fear, personality tags,
-  appearance, background, relationship web, and current status. The cards
-  seed the evolution sandbox and can be synced to the knowledge library as
-  formatted proposals.
-- Detailed character editor with a simplified/full view toggle, plus extra
-  fields (age, stance, abilities, weakness, secret, speech style).
-- Structured worldbuilding cards (location, faction, rule, history, item,
-  legend) with one-click placement onto the story map.
-- A story map: drag location nodes, draw connections between them, zoom, and
-  edit place descriptions. Map nodes become evolution locations, characters
-  are assigned starting locations, and events move participants along
-  connected routes.
-- Map editing is fully interactive: drag nodes (with pointer capture so it
-  never drops), click a connection to select and delete it, edit the selected
-  node's name/description, and jump straight from the evolution sandbox's
-  world-state tab to the map editor.
-- Conversation-based drafting tied to the active story project and chapter.
-- Conversation messages and chapter excerpts can be saved as story reference
-  material without exposing backend workflow terms.
-- A productized knowledge intake page for manual reference drafts, chapter
-  extraction, review staging, approval, and one-click chat references.
-- A novel reader/editor page with chapter navigation, formatted reading view,
-  character count, chapter progress, auto-save status, and long-form text
-  editing.
-- An evolution sandbox that advances the story itself turn by turn: characters
-  meet, clash, ally, uncover secrets, and betray; the world tension rises and
-  falls. Branch moments can be decided by the player or by the "fate dice",
-  and an auto-play mode lets the world run on its own.
-- A limited-perspective novel view that only shows what one viewpoint
-  character personally experienced or witnessed, with one-click acceptance of
-  the evolution record into the manuscript.
-- Deterministic evolution runs: every run has a seed, so the same seed plus
-  the same choices always produces the same story. Runs are saved locally
-  under `data/projects/`.
-- Simple writing-first entry points, with backend and AI-related details kept in
-  settings and advanced settings.
-- A four-item mobile navigation bar for the workbench, conversation, manuscript,
-  and reference library; detailed story setup remains available from the
-  workbench.
-- Candidate knowledge submission through `POST /api/manual`.
-- Approved reference lookup through `POST /api/context`.
-- Default Rhine-Vault Core startup, optional Vault Web installation, and
-  external local Vault connection.
-- Local proxy for same-origin browser calls to a local Rhine-Vault backend.
-- Optional local Rhine-Vault launcher in Settings so non-technical writers can
-  deploy their own knowledge backend from a checkout path.
+**Rhine-Lore** 是一个本地优先的中文写作工作室。它把“写正文”、“让故事自己演化”、
+“像读小说一样追更”、“导入并续写长篇小说”放进同一个工具里：
 
-## Project Structure
+- **正文**：章节阅读/编辑、字号/行距/护眼主题、章节目录、自动保存与磁盘备份；
+- **演化沙盘**：回合制自动推进故事，角色相遇、冲突、结盟、背叛，分支可手动选择
+  或交给命运骰子，同一颗种子得到同一个故事；
+- **小说阅读**：像追更一样读演化正文，读到末尾一键生成下一章，支持引导与重写；
+- **TXT 书架**：导入百万字级 TXT，自动按“第X章 / Chapter”拆章，按章加载，
+  支持 AI 续写 / 改写 / 扩写，并建立全书角色 / 设定 / 事实 / 伏笔档案；
+- **资料库**：本机内嵌知识库，草稿 → 送审 → 入库 → 检索全流程可用；
+- **全内嵌安卓版**：Chaquopy 在 App 内运行 Python 引擎，手机离线可用。
 
-```text
-Rhine-Lore/
-├─ README.md
-├─ pyproject.toml
-├─ main.py
-├─ src/
-│  └─ rhine_lore/
-│     ├─ core.py
-│     ├─ engine.py                  # deterministic story evolution engine
-│     └─ server.py
-├─ ui/                           # Vite + Vue + Element Plus primary UI
-│  ├─ src/
-│  │  ├─ api.ts
-│  │  ├─ App.vue
-│  │  ├─ main.ts
-│  │  └─ styles.css
-├─ web/                          # dependency-free fallback UI
-├─ docs/
-│  ├─ architecture/
-│  └─ implementation/
-├─ tests/
-└─ data/
+> 数据默认全部保存在本地（`data/` 目录或 App 私有目录），不依赖云端。
+
+---
+
+## ✨ 核心特性
+
+| 模块 | 说明 |
+| --- | --- |
+| 故事项目 | 章节、世界观、角色卡、故事地图、对话创作、待处理问题 |
+| 正文阅读/编辑 | 阅读/编辑双模式、字号/行距/白/米黄/夜间主题、章节导航、字数统计 |
+| 演化沙盘 | 确定性随机种子、回合推进、分支选择、自动播放、沙盘观演 |
+| 小说阅读 | 有限视角（只看主角亲历）、章节条、生成下一章、重新生成本章、全局引导 |
+| TXT 书架 | 自动拆章（无标题按字数分节）、百万字级按章存储与加载、阅读进度记忆 |
+| AI 创作 | 续写 / 改写 / 扩写、全书角色/设定/事实/伏笔分析、文风与一致性约束 |
+| 资料库 | 内嵌知识库（workspace / 草稿 / 送审 / 入库 / 检索 / 设定文档） |
+| AI 通道 | DeepSeek / OpenAI 兼容，未配置时使用离线模板，不阻塞写作 |
+
+---
+
+## 🚀 运行（源码）
+
+要求：Python 3.10+（仅使用标准库，无需安装依赖）。
+
+```bash
+# Windows
+start.bat
+# 或手动
+python main.py --host 0.0.0.0 --port 8786
+
+# Linux / macOS
+python3 main.py --host 0.0.0.0 --port 8786
 ```
 
-## Start
+浏览器打开 `http://127.0.0.1:8786/`；同一局域网设备访问
+`http://<本机IP>:8786/`。
 
-```powershell
-python main.py
-```
+## 📦 发行包
 
-Or double-click `start.bat` at the project root to launch with the same
-settings in a visible console.
+| 平台 | 包 | 说明 |
+| --- | --- | --- |
+| Windows x64 | `Rhine-Lore-v0.1.0-win-x64.zip` | 解压后运行 `start.bat` |
+| Linux x64 | `Rhine-Lore-v0.1.0-linux-x64.tar.gz` | 解压后运行 `./start.sh` |
+| Android | `app-release.apk` | 全内嵌版，安装即用 |
 
-The app defaults to binding every local interface (`0.0.0.0`), so it is
-reachable from other devices on the same local network:
+> 发布包见仓库 GitHub Releases 或本地 `dist/` 目录。
 
-```text
-本机:    http://127.0.0.1:8786/
-局域网:  http://<电脑局域网IP>:8786/
-```
+## 🤖 AI 配置
 
-The console prints the exact LAN address on startup. If a phone cannot open
-it, allow Python through Windows Defender Firewall for private networks, or
-run locally only with `python main.py --host 127.0.0.1`.
+首页右上角 **AI 面板**：选择 DeepSeek / OpenAI / 自定义，填写 API Key 与模型。
+密钥只保存在本机（`data/llm-config.json` 或 App 私有目录）。
 
-The app also shows the current LAN address in 设置 → 常用设置（“局域网访问”），
-由服务端 `/lore-api/lan` 实时返回；`start.bat` 显式以 `--host 0.0.0.0` 启动，
-保证每次都对局域网开放。
+未配置时：对话创作与演化使用离线模板，书架 AI 返回离线提示，写作功能不受影响。
 
-On startup Rhine-Lore tries to bring up the default Rhine-Vault Core for its
-own workspace. Port `8765` is intentionally not used because common local
-tools (for example the Blender MCP host) bind it; Lore tries `8795`, then
-`8796`, then `8797` automatically:
+## 🏗️ 构建
 
-```text
-http://127.0.0.1:8795/
-```
+### Web 前端
 
-The default Core checkout is the sibling `Rhine-Vault` project, and the default
-database lives under `data/rhine-vault-core.db`. If that checkout is missing,
-Rhine-Lore still opens and shows the Vault status in Settings.
-
-`main.py` serves `ui/dist` when it exists. If the Element UI has not been built,
-it falls back to the dependency-free `web/` workspace.
-
-
-## Rhine-Vault Integration
-
-Rhine-Lore has three Vault paths:
-
-- Default Core: started automatically from the default local checkout when
-  available.
-- Vault Web: installable from Lore Settings when the Vault checkout contains
-  `ui/package.json`, then opened through the Vault URL.
-- External Vault: connected by pasting a local Vault Web/API URL or by setting
-  host and port.
-
-Open `设置 -> 高级设置 -> Rhine-Vault` to adjust:
-
-- `Rhine-Vault 项目路径`: a local checkout containing `main.py`;
-- `主机` / `端口`: local bind target, usually `127.0.0.1:8795`;
-- `数据库路径`: SQLite database path, defaulting to Rhine-Lore's `data/`;
-- `Python 解释器`: optional, otherwise Rhine-Lore prefers the Vault checkout's
-  `.venv\Scripts\python.exe` and falls back to the current Python runtime.
-
-The launcher only starts a fixed local command, never an arbitrary shell command.
-The normal `/api/*` calls proxy to the selected local Vault URL.
-
-## Evolution Sandbox
-
-Open the `演化` activity for any story project to create an evolution run:
-
-- The engine advances the story one turn at a time. Event choices are shaped
-  by the genre, character drives, world tension, and the chaos setting.
-- At branch moments you can pick an option or roll the "fate dice"; in
-  auto-play mode branches resolve themselves and the world keeps moving.
-- The sandbox view shows every event, world state, plot threads, open
-  foreshadowing, and character relations. The novel view only renders what
-  the selected viewpoint character knows, so the story can be read as an
-  immersive limited-perspective novel.
-- Evolution runs are Lore-owned local files (`data/projects/*.evolution.json`);
-  they never enter the Rhine-Vault approval workflow. "接收进正文" appends the
-  current evolution record to the active chapter.
-- The engine is deterministic pure Python and works offline. Real-LLM prose
-  expansion through the Vault OpenAI-compatible endpoint is a future switch;
-  conversation drafting still uses the offline FakeLLM by default.
-
-### AI 正文扩写
-
-工作台首页的「AI 生成通道」可以直接配置（DeepSeek / OpenAI / 自定义预设，
-默认 DeepSeek：`https://api.deepseek.com/v1` + `deepseek-chat`）。API Key
-保存在服务端磁盘（`data/llm-config.json`），所有设备（本机、局域网手机）
-共用同一份配置；浏览器不再持有密钥，生成请求统一经本机 Vault 转发。配置后：
-
-- 演化页“小说”视图的“AI 扩写当前回合”会把最近事件和角色/世界观信息组成
-  场景简报，生成 300-500 字的有限视角正文，可编辑并一键追加进章节；
-- 对话创作的“发送”改用真实模型续写/讨论（未配置时仍为离线 FakeLLM 兜底）。
-- 演化回合默认自动扩写：每推进一回合，配置过 Key 时自动为当前视角生成
-  该回合正文并存入演化存档（`ai_prose`），小说视图直接显示 AI 文本并带
-  「AI」标记；模板正文只在未配置或生成失败时兜底。控制台可以关闭
-  「AI 扩写」开关，切回模板。
-- 小说视图是连续阅读：所有回合正文连成一整篇故事，不再按回合分卡片；
-  AI 续写时会把最近两回正文作为上文，保证人物、语气和时间连续。
-- 演化小说按章阅读：每 4 个回合自动成章（第一章、第二章……），顶部章节
-  列表可点击跳转，阅读区与正文页一致——章节标题、回合/幕信息、可调字号、
-  上一章/下一章导航；章内正文连续，AI 扩写按视角自动覆盖对应回合。
-- 连载阅读模式：读完最后一章点击「生成下一章」，服务端一次推进 4 个回合并
-  按当前视角写完本章 AI 正文；可在输入框填写「引导下一章」（临时写入演化
-  引导）；「重新生成本章」基于本章事件、前文与全局引导换一种写法重写整章。
-- 单章长度可设置：演化小说阅读页可选择每章 2 / 3 / 4 / 6 / 8 个回合，
-  按项目保存；章节分组与「生成下一章」都按该长度推进。
-- 整章一次性生成：生成下一章 / 重新生成本章时，AI 只调用一次、以整章
-  事件与前文为上下文产出连贯正文（不再逐回合调用），速度更快、衔接更自然；
-  沙盘时间线默认只渲染最近 30 条事件，可展开加载更早记录，长故事不卡顿。
-- 写作质量链路：所有生成（对话创作、演化正文、章节生成/重写、正文修订、
-  演化对话）统一携带写作质量标准——感官细节、心理层次、对话自然、节奏控制、
-  反 AI 腔、设定一致；每个故事可在「故事档案」选择文风（平实细腻 / 轻快活泼 /
-  冷峻悬疑 / 华丽诗意 / 幽默吐槽），并开启「生成后自动润色」（草稿 → 润色
-  两轮生成，默认开启）。
-- 文风一致性控制：每个故事可在「故事档案」维护一份「风格档案」——预设文风
-  + 风格参考文本（可一键取当前正文为基准）+ 风格要点 + 避免项；该基准会进入
-  所有生成与润色提示词，要求全篇语感、句式、节奏保持一致，不得中途变调。
-- 全局引导：故事档案里可以为整个故事设置一条贯穿始终的方向（例如“保持校园
-  日常基调，百合线缓慢推进，伏笔必须回收”），会进入演化正文、章节生成、
-  章节重写、演化对话与正文修订的全部提示词。
-- 预设选项：演化启动提供 平静 / 标准 / 混乱 难度预设；引导与全局引导旁有
-  一键填入的常用方向（制造冲突、推进感情线、回收伏笔、引入新角色等）；
-  世界观标签和角色性格标签按类型提供可点击预设 chips（已选中的会高亮）；
-  演化对话提供快捷提问。
-- 引导功能：控制台输入“导演指令”（例如“让沈砚背叛林澈”），会偏置下一回合
-  的事件类型与参与角色，并作为指令进入 AI 正文；不清空则持续生效。
-- 长期故事视野：演化按五幕弧线推进（序幕 → 发展 → 转折 → 高潮 → 尾声），
-  每幕有目标张力区间与里程碑节拍（关系萌芽、秘密浮现、冲突升级、伏笔回收、
-  重大转折、真相揭露、最终对决、结局落定）；角色按参与轮次轮转不冷落；
-  成熟超过 4 回合的冲突线索会被“了结”事件回收；到尾声阶段按类型走向结局
-  （悬疑→真相大白、奇幻→守护与封印等），未解的暗流会留作续章。沙盘的
-  「故事弧线」面板展示当前幕、目标张力、结局方向与节拍完成情况。
-- 角色不足提示：存活角色少于 3 个且故事进行到第 3 回合后，控制台会出现
-  “故事需要新面孔”提示，可一键打开弹窗创建角色卡（角色、欲望、秘密），
-  同时写入项目角色卡与演化存档，秘密自动成为伏笔。
-- 与故事对话：演化页新增「对话」视图，可像聊天一样问局势、要建议、下指令；
-  对话基于当前幕、张力、线索、角色与最近事件，用户消息可一键「设为引导」。
-  状态面板改为页签式（故事弧线 / 世界状态 / 线索伏笔 / 角色状态），布局更紧凑。
-
-### 对话调整正文与一致性评估
-
-对话创作页切换到「调整正文」模式，输入修改意图（例如“把林薇改成从小认识
-陈栩”）。AI 会对照全部章节、角色卡、世界观与演化活跃伏笔，输出：
-
-- 修订预览：原文 / 修订后对照，确认后一键应用到对应章节；
-- 整体影响评估：发现的「冲突 / 误区 / 不一致 / 提醒」逐条列出依据与处理建议，
-  应用修订后自动进入项目的“待处理项”列表；
-- 待处理项：对话侧栏可查看、标记已处理 / 忽略 / 删除，随项目导出导入。
-
-该功能必须配置 AI 通道（首页或右上角 AI 面板）。
-
-未配置时演化与创作完全可用，正文使用本地模板。旧的浏览器 localStorage
-配置不会自动迁移，请在任意设备上重新填写一次，之后全局域网共享。
-
-## Frontend
-
-Rhine-Lore follows the Rhine-Vault frontend architecture:
-
-- Vite + Vue 3 + Element Plus under `ui/`;
-- typed API helper functions in `ui/src/api.ts`;
-- a single shell in `ui/src/App.vue`;
-- shared activity-sidebar, topbar, workspace, and run-output layout patterns;
-- `/api` proxied to Rhine-Vault in both Vite dev mode and the local Python
-  server.
-
-```powershell
+```bash
 cd ui
 npm install
-npm run build
+npm run build   # 产物在 ui/dist
 ```
 
-## Development Checks
+### Android APK
+
+完整说明见 [android/README.md](android/README.md)。本机构建环境：
 
 ```powershell
-python -m unittest discover -s tests
+$env:ANDROID_HOME = "D:\Android\Sdk"
+$env:ANDROID_SDK_ROOT = "D:\Android\Sdk"
+$env:GRADLE_USER_HOME = "D:\GradleHome"
+cd android
+.\gradlew.bat assembleRelease --no-daemon
 ```
 
-## Android（全内嵌）
+正式签名需要提供环境变量 `RHINE_STORE_FILE` / `RHINE_STORE_PASSWORD` /
+`RHINE_KEY_ALIAS` / `RHINE_KEY_PASSWORD`（密钥库不随仓库分发）。
 
-`android/` 目录包含全内嵌安卓工程：Chaquopy 在 App 内运行演化引擎与本地服务，
-WebView 加载现有界面，数据与 AI 配置全部保存在手机本地，不依赖电脑。构建
-与已知边界见 [android/README.md](android/README.md)。
+## 🗂️ 数据与存储结构
 
-## Boundary
+```text
+data/
+├─ projects/            # 故事项目备份与演化存档
+├─ books/<book_id>/     # TXT 书库（百万字级）
+│  ├─ book.json         # 元数据 + 章节摘要 + 全书档案（角色/设定/事实/伏笔）
+│  ├─ chapters.json     # 章节索引
+│  └─ chapters/*.txt    # 每章一个文件
+├─ embedded-vault.json  # 内嵌资料库
+└─ llm-config.json      # AI 通道配置（本机）
+```
 
-Rhine-Lore does not import private Rhine-Vault Python modules, read the
-Rhine-Vault SQLite database directly, or mutate approved Markdown files. It uses
-public HTTP APIs and submits durable story facts as proposals for explicit
-review.
+## 📚 文档
 
+- [发布管理](docs/releases/index.md)
+- [v0.1.0 Release Notes](docs/releases/v0.1.0.md)
+- [更新日志](docs/releases/changelog.md)
+- [Android 构建说明](android/README.md)
+
+## 🧩 技术栈
+
+- 后端：Python 标准库（`http.server` + `urllib`），无第三方运行时依赖
+- 前端：Vue 3 + TypeScript + Element Plus + Vite
+- 安卓：Chaquopy（App 内嵌 Python）+ Android WebView
+- 文档：MkDocs（GitHub Pages 自动部署）
+
+## 📜 版本
+
+- **v0.1.0**（2026-08-11）：首个公开发布，包含正文 / 演化 / 小说阅读 / TXT 书架 /
+  AI 续写 / 内嵌资料库 / 安卓全内嵌版。

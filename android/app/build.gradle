@@ -7,6 +7,18 @@ android {
     namespace 'com.rhinelore.app'
     compileSdk 34
 
+    signingConfigs {
+        release {
+            def storeFileEnv = System.getenv("RHINE_STORE_FILE")
+            if (storeFileEnv) {
+                storeFile file(storeFileEnv)
+                storePassword System.getenv("RHINE_STORE_PASSWORD") ?: "RhineLore@2026-Release"
+                keyAlias System.getenv("RHINE_KEY_ALIAS") ?: "rhine-lore"
+                keyPassword System.getenv("RHINE_KEY_PASSWORD") ?: "RhineLore@2026-Release"
+            }
+        }
+    }
+
     defaultConfig {
         applicationId "com.rhinelore.app"
         minSdk 26
@@ -28,6 +40,9 @@ android {
     buildTypes {
         release {
             minifyEnabled false
+            if (System.getenv("RHINE_STORE_FILE")) {
+                signingConfig signingConfigs.release
+            }
         }
     }
 

@@ -1,0 +1,19 @@
+site_name: Rhine-Lore 文档
+site_description: 本地优先的中文写作工作室：正文、演化沙盘、TXT 书架与 AI 续写
+
+theme:
+  name: readthedocs
+  locale: zh_CN
+
+nav:
+  - 首页: index.md
+  - 架构:
+      - 资料库边界: architecture/RHINE_VAULT_BOUNDARY.md
+  - 实现笔记:
+      - 演化沙盘: implementation/EVOLUTION_SANDBOX.md
+      - 首个里程碑: implementation/FIRST_MILESTONE.md
+      - 文风一致: implementation/STYLE_ADOPTION.md
+  - 版本与发布:
+      - 发布管理: releases/index.md
+      - 更新日志: releases/changelog.md
+      - v0.1.0: releases/v0.1.0.md
