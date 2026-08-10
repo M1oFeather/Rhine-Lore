@@ -5,11 +5,13 @@ from __future__ import annotations
 import json
 import copy
 import os
+import re
 import socket
 import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -497,6 +499,230 @@ def _offline_ai_write(mode: str) -> str:
         "（离线模板·续写）请先在首页配置 AI 通道，即可在章末续写下一段。\n\n"
         "当前未配置 API Key，正文保持原样。"
     )
+
+
+def _agent_project_path(project_id: str) -> Path:
+    return EVOLUTION_STORE.directory / f"{sanitize_project_id(project_id)}.project.json"
+
+
+def _new_agent_project(name: str, genre: str, summary: str) -> dict[str, Any]:
+    project_id = f"project-{uuid.uuid4().hex[:10]}"
+    return {
+        "id": project_id,
+        "name": name.strip() or "新故事",
+        "genre": genre.strip() or "未分类",
+        "summary": summary.strip(),
+        "global_guidance": "",
+        "chapter_turns": 4,
+        "writing_style": "",
+        "polish_writing": True,
+        "style_example": "",
+        "style_notes": "",
+        "style_avoid": "",
+        "world": [],
+        "characters": [],
+        "map": {"nodes": [], "edges": []},
+        "chapters": [],
+        "chat": [],
+        "issues": [],
+    }
+
+
+def _load_agent_project(project_id: str) -> dict[str, Any]:
+    path = _agent_project_path(project_id)
+    if not path.is_file():
+        raise KeyError(f"项目不存在: {project_id}")
+    backup = json.loads(path.read_text(encoding="utf-8"))
+    project = backup.get("project") or {}
+    if not project:
+        raise KeyError("项目数据损坏")
+    return project
+
+
+def _save_agent_project(project: dict[str, Any]) -> dict[str, Any]:
+    project_id = str(project.get("id") or "").strip()
+    if not project_id:
+        raise ValueError("project id 不能为空")
+    path = _agent_project_path(project_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".json.tmp")
+    temporary.write_text(
+        json.dumps({"format": PROJECT_BACKUP_FORMAT, "project": project}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    os.replace(temporary, path)
+    return project
+
+
+def _run_agent_tool(tool: str, args: dict[str, Any]) -> dict[str, Any]:
+    if tool == "import_txt":
+        return {
+            "book": BOOK_STORE.import_txt(
+                name=str(args.get("name") or "未命名小说"),
+                text=str(args.get("text") or ""),
+                genre=str(args.get("genre") or ""),
+            )
+        }
+    if tool == "create_project":
+        project = _new_agent_project(
+            str(args.get("name") or ""),
+            str(args.get("genre") or ""),
+            str(args.get("summary") or ""),
+        )
+        _save_agent_project(project)
+        return {"project": project}
+    if tool == "append_chapter":
+        project = _load_agent_project(str(args.get("project_id") or ""))
+        chapters = project.setdefault("chapters", [])
+        chapters.append(
+            {
+                "id": f"ch-{uuid.uuid4().hex[:10]}",
+                "title": str(args.get("title") or f"第{len(chapters) + 1}章"),
+                "content": str(args.get("content") or ""),
+            }
+        )
+        _save_agent_project(project)
+        return {"project": project}
+    if tool == "add_character":
+        project = _load_agent_project(str(args.get("project_id") or ""))
+        characters = project.setdefault("characters", [])
+        characters.append(
+            {
+                "id": f"character-{uuid.uuid4().hex[:10]}",
+                "name": str(args.get("name") or "未命名角色"),
+                "identity": str(args.get("identity") or ""),
+                "role": str(args.get("role") or "配角"),
+                "age": str(args.get("age") or ""),
+                "stance": str(args.get("stance") or ""),
+                "drive": str(args.get("drive") or ""),
+                "fear": str(args.get("fear") or ""),
+                "traits": str(args.get("traits") or ""),
+                "abilities": str(args.get("abilities") or ""),
+                "weakness": str(args.get("weakness") or ""),
+                "secret": str(args.get("secret") or ""),
+                "speech": str(args.get("speech") or ""),
+                "appearance": str(args.get("appearance") or ""),
+                "background": str(args.get("background") or ""),
+                "relationships": [],
+                "status": "正常",
+                "notes": "",
+            }
+        )
+        _save_agent_project(project)
+        return {"project": project}
+    if tool == "add_world_card":
+        project = _load_agent_project(str(args.get("project_id") or ""))
+        world = project.setdefault("world", [])
+        world.append(
+            {
+                "id": f"world-{uuid.uuid4().hex[:10]}",
+                "name": str(args.get("name") or "新设定"),
+                "type": str(args.get("type") or "地点"),
+                "summary": str(args.get("summary") or ""),
+                "details": str(args.get("details") or ""),
+                "significance": str(args.get("significance") or ""),
+                "tags": str(args.get("tags") or ""),
+            }
+        )
+        _save_agent_project(project)
+        return {"project": project}
+    if tool == "save_knowledge":
+        proposal = _embedded_vault().create_proposal(
+            "story-workspace",
+            str(args.get("title") or "AI 创作资料"),
+            "Note",
+            str(args.get("content") or ""),
+            "experimental",
+            [str(item) for item in (args.get("tags") or []) if str(item).strip()],
+        )
+        return {"proposal": proposal}
+    if tool == "append_book_chapter":
+        book = BOOK_STORE.append_chapter(
+            str(args.get("book_id") or ""),
+            str(args.get("title") or ""),
+            str(args.get("content") or ""),
+        )
+        return {"book": book}
+    if tool == "list_books":
+        return {"books": BOOK_STORE.list_books()}
+    if tool == "load_project":
+        return {"project": _load_agent_project(str(args.get("project_id") or ""))}
+    raise ValueError(f"未知工具: {tool}")
+
+
+def _agent_system_prompt(attachments: list[dict[str, Any]]) -> str:
+    tools = (
+        "可用工具（需要操作时，单独一行输出 JSON：{\"tool\":\"工具名\",\"args\":{...}}）：\n"
+        "- import_txt：参数 name, genre, text —— 把文本导入为 TXT 书（书架）\n"
+        "- create_project：参数 name, genre, summary —— 新建故事项目\n"
+        "- append_chapter：参数 project_id, title, content —— 给故事项目追加章节\n"
+        "- add_character：参数 project_id, name, role, drive, fear, stance, identity, traits, background, secret\n"
+        "- add_world_card：参数 project_id, name, type, summary, details, tags\n"
+        "- save_knowledge：参数 title, content, tags —— 保存为资料草稿\n"
+        "- append_book_chapter：参数 book_id, title, content —— 给 TXT 书追加章节\n"
+        "- list_books：无参数 —— 列出书架\n"
+        "- load_project：参数 project_id —— 读取故事项目\n"
+    )
+    attach_block = ""
+    if attachments:
+        lines: list[str] = []
+        for attachment in attachments[:5]:
+            kind = str(attachment.get("kind") or "txt")
+            name = str(attachment.get("name") or "附件")
+            text = str(attachment.get("text") or "")
+            if kind == "project":
+                try:
+                    project = json.loads(text)
+                    preview = json.dumps(
+                        {key: project.get(key) for key in ("id", "name", "genre", "summary")},
+                        ensure_ascii=False,
+                    )
+                except (ValueError, TypeError):
+                    preview = text[:300]
+            else:
+                preview = text[:600]
+            lines.append(f"- {name}（{kind}）：{preview}")
+        attach_block = "\n\n用户附件：\n" + "\n".join(lines)
+    return (
+        "你是 Rhine-Lore 的创作助手，可以读写本地工作区（故事项目、TXT 书架、知识库）。"
+        "规则：普通创作对话直接回复正文或建议，不要调用工具；"
+        "当用户要求导入、新建项目、追加章节、添加角色/设定、保存资料、操作书架时，"
+        "调用对应工具；工具执行结果会作为新消息返回，请基于结果给出最终中文回复，"
+        "并简要说明你执行了什么操作。\n\n"
+        + tools
+        + attach_block
+    )
+
+
+def _extract_agent_tool_call(text: str) -> dict[str, Any] | None:
+    match = re.search(r"\{\s*\"tool\"\s*:", text)
+    if not match:
+        return None
+    start = match.start()
+    depth = 0
+    end = -1
+    for index in range(start, len(text)):
+        char = text[index]
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                end = index
+                break
+    if end < 0:
+        return None
+    try:
+        data = json.loads(text[start : end + 1])
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    tool = str(data.get("tool") or "").strip()
+    if not tool:
+        return None
+    args = data.get("args")
+    return {"tool": tool, "args": args if isinstance(args, dict) else {}}
 
 
 def _resolve_llm(payload_llm: dict[str, Any] | None = None) -> dict[str, str]:
@@ -1187,8 +1413,48 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
                     }
                     for item in raw_messages
                 ]
+                raw_attachments = payload.get("attachments")
+                attachments = raw_attachments if isinstance(raw_attachments, list) else []
+                working: list[dict[str, str]] = [
+                    {"role": "system", "content": _agent_system_prompt(attachments)},
+                    *messages,
+                ]
+                actions: list[dict[str, Any]] = []
+                final_text = ""
                 try:
-                    text = _chat_with_vault(messages, llm)
+                    for step in range(5):
+                        text = _chat_with_vault(working, llm)
+                        call = _extract_agent_tool_call(text)
+                        if call is None:
+                            final_text = text
+                            break
+                        result_payload: dict[str, Any] | None = None
+                        try:
+                            result = _run_agent_tool(call["tool"], call["args"])
+                            result_payload = result
+                            result_text = json.dumps(result, ensure_ascii=False)[:1200]
+                            summary = f"工具 {call['tool']} 执行成功：{result_text}"
+                        except Exception as exc:  # noqa: BLE001 - tool errors go back to the model
+                            result_payload = {"error": str(exc)}
+                            summary = f"工具 {call['tool']} 执行失败：{exc}"
+                        actions.append(
+                            {
+                                "tool": call["tool"],
+                                "args": call["args"],
+                                "result": result_payload,
+                            }
+                        )
+                        working.append({"role": "assistant", "content": text})
+                        working.append({"role": "user", "content": summary})
+                        if step >= 3:
+                            working.append(
+                                {
+                                    "role": "user",
+                                    "content": "请基于以上工具结果直接输出最终中文回复，不要再调用工具。",
+                                }
+                            )
+                    if not final_text:
+                        final_text = _chat_with_vault(working, llm)
                 except HTTPError as exc:
                     detail = exc.read().decode("utf-8", errors="replace")[-300:]
                     self._send_json(502, {"error": f"AI 请求失败：{detail or exc}"})
@@ -1196,7 +1462,15 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
                 except (URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError) as exc:
                     self._send_json(502, {"error": f"AI 请求失败：{exc}"})
                     return
-                self._send_json(200, {"answer": text, "model": llm["model"], "provider": "openai-compatible"})
+                self._send_json(
+                    200,
+                    {
+                        "answer": final_text,
+                        "model": llm["model"],
+                        "provider": "openai-compatible",
+                        "actions": actions,
+                    },
+                )
                 return
             if self.command == "POST" and parsed_request.path == "/lore-api/evolution/start":
                 payload = self._read_json_body()

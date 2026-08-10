@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from "vue";
 
 import {
   type ApiRecord,
+  type AgentToolAction,
   type BookAnalysis,
   type BookChapter,
   type BookChapterMeta,
@@ -203,6 +204,8 @@ const selectedKnowledgeIds = ref<string[]>([]);
 const proposals = ref<ApiRecord[]>([]);
 const stagingEntries = ref<ApiRecord[]>([]);
 const chatInput = ref("");
+const chatAttachment = ref<{name: string; kind: "txt" | "project" | "knowledge"; text: string} | null>(null);
+const chatAttachInput = ref<HTMLInputElement | null>(null);
 const chatMode = ref<"chat" | "adjust">("chat");
 const adjustInput = ref("");
 const revisionBusy = ref(false);
@@ -1562,18 +1565,22 @@ async function sendCreativeMessage(): Promise<void> {
   const prompt = buildCreativePrompt(text);
   const fallback = localCreativeDraft(text);
   const styleCard = buildStyleCard();
+  const attachments = chatAttachment.value ? [chatAttachment.value] : [];
   const result = await perform("对话创作", () => {
     if (llmConfigured.value) {
-      return llmServerChat([
-        {
-          role: "system",
-          content:
-            "你是 Rhine-Lore 的创作助手：基于用户给出的世界观、角色与章节续写或讨论剧情，不要编造未提供的设定。" +
-            (styleCard ? `\n风格基准（必须严格遵守）：\n${styleCard}` : "") +
-            WRITING_QUALITY_GUIDE,
-        },
-        {role: "user", content: prompt},
-      ]);
+      return llmServerChat(
+        [
+          {
+            role: "system",
+            content:
+              "你是 Rhine-Lore 的创作助手：基于用户给出的世界观、角色与章节续写或讨论剧情，不要编造未提供的设定。" +
+              (styleCard ? `\n风格基准（必须严格遵守）：\n${styleCard}` : "") +
+              WRITING_QUALITY_GUIDE,
+          },
+          {role: "user", content: prompt},
+        ],
+        attachments,
+      );
     }
     return fakeCreativeAnswer({
       query: prompt,
@@ -1605,6 +1612,84 @@ async function sendCreativeMessage(): Promise<void> {
     }
   }
   appendChat("assistant", reply);
+  if (result?.actions && result.actions.length > 0) {
+    const last = activeProject.value.chat[activeProject.value.chat.length - 1];
+    if (last) {
+      last.actions = result.actions;
+    }
+    await applyAgentActions(result.actions);
+  }
+  chatAttachment.value = null;
+  saveProjects();
+}
+
+function handleChatAttach(event: Event): void {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file) {
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = async () => {
+    const text = String(reader.result ?? "");
+    if (text.length > 500000) {
+      runState.value = {error: "附件过大（超过 500KB），请拆分后重试"};
+      return;
+    }
+    const kind = /\.json$/i.test(file.name)
+      ? ("project" as const)
+      : /\.txt$/i.test(file.name)
+        ? ("txt" as const)
+        : ("knowledge" as const);
+    chatAttachment.value = {name: file.name, kind, text};
+    markSaved(`已附加 ${file.name}，发送后 AI 可以读取并执行导入等操作`);
+  };
+  reader.readAsText(file, "utf-8");
+  input.value = "";
+}
+
+function removeChatAttachment(): void {
+  chatAttachment.value = null;
+}
+
+function upsertProject(project: StoryProject): void {
+  const normalized = normalizeProject(project);
+  const index = projects.value.findIndex((item) => item.id === normalized.id);
+  if (index >= 0) {
+    projects.value[index] = normalized;
+  } else {
+    projects.value.push(normalized);
+  }
+  if (!activeProjectId.value) {
+    activeProjectId.value = normalized.id;
+  }
+  saveProjects();
+}
+
+async function applyAgentActions(actions: AgentToolAction[]): Promise<void> {
+  let changed = false;
+  for (const action of actions) {
+    const result = action.result;
+    if (result && typeof result.project === "object" && result.project) {
+      upsertProject(result.project as StoryProject);
+      changed = true;
+    }
+    if (
+      action.tool === "import_txt" ||
+      action.tool === "append_book_chapter" ||
+      action.tool === "list_books"
+    ) {
+      await loadShelfBooks();
+      changed = true;
+    }
+    if (action.tool === "save_knowledge") {
+      await refreshReview();
+      changed = true;
+    }
+  }
+  if (changed) {
+    markSaved("AI 已执行操作并同步到本地");
+  }
 }
 
 const pendingIssueCount = computed(() => {
@@ -1813,6 +1898,21 @@ function clearProjectChat(): void {
 
 function usePromptStarter(text: string): void {
   chatInput.value = text;
+}
+
+function toolActionLabel(tool: string): string {
+  const labels: Record<string, string> = {
+    import_txt: "导入 TXT",
+    create_project: "新建项目",
+    append_chapter: "追加章节",
+    add_character: "添加角色",
+    add_world_card: "添加设定",
+    save_knowledge: "保存资料",
+    append_book_chapter: "追加书章",
+    list_books: "查看书架",
+    load_project: "读取项目",
+  };
+  return labels[tool] || tool;
 }
 
 function recordId(record: ApiRecord): string {
@@ -3191,6 +3291,13 @@ onUnmounted(() => {
       accept=".txt,.text,text/plain"
       @change="handleShelfTxtImport"
     />
+    <input
+      ref="chatAttachInput"
+      class="sr-only"
+      type="file"
+      accept=".txt,.text,.json,text/plain,application/json"
+      @change="handleChatAttach"
+    />
     <aside class="sidebar" :class="{'mobile-more-open': mobileMoreOpen}">
       <div class="brand">
         <div class="brand-mark">RL</div>
@@ -4026,6 +4133,18 @@ onUnmounted(() => {
                     </el-space>
                   </div>
                   <p>{{ message.content }}</p>
+                  <div
+                    v-if="message.actions && message.actions.length > 0"
+                    class="chat-tool-actions"
+                  >
+                    <span
+                      v-for="(action, index) in message.actions"
+                      :key="index"
+                      class="chat-tool-chip"
+                    >
+                      ✓ {{ toolActionLabel(action.tool) }}
+                    </span>
+                  </div>
                 </article>
               </div>
               <div class="chat-mode-switch">
@@ -4035,16 +4154,31 @@ onUnmounted(() => {
                 </el-radio-group>
               </div>
               <div v-if="chatMode === 'chat'" class="chat-composer">
-                <el-input
-                  v-model="chatInput"
-                  type="textarea"
-                  :rows="4"
-                  placeholder="写下这一轮创作请求"
-                  @keydown.ctrl.enter.prevent="sendCreativeMessage"
-                />
-                <el-button type="primary" :loading="busyAction === '对话创作'" @click="sendCreativeMessage">
-                  发送
-                </el-button>
+                <div class="chat-composer-main">
+                  <div v-if="chatAttachment" class="chat-attachment-chip">
+                    <span>{{ chatAttachment.name }}</span>
+                    <button type="button" @click="removeChatAttachment">×</button>
+                  </div>
+                  <el-input
+                    v-model="chatInput"
+                    type="textarea"
+                    :rows="4"
+                    placeholder="写下这一轮创作请求，或要求我导入/建章/加角色（可先附加 TXT / 项目文件）"
+                    @keydown.ctrl.enter.prevent="sendCreativeMessage"
+                  />
+                </div>
+                <div class="chat-send-column">
+                  <el-button
+                    type="primary"
+                    :loading="busyAction === '对话创作'"
+                    @click="sendCreativeMessage"
+                  >
+                    发送
+                  </el-button>
+                  <el-button title="附加文件（TXT / 项目 JSON）" @click="chatAttachInput?.click()">
+                    📎
+                  </el-button>
+                </div>
               </div>
               <div v-else class="chat-composer adjust-composer">
                 <el-input

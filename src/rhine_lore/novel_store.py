@@ -315,6 +315,28 @@ class BookStore:
             self._save_index(book_id, rows)
             return self.get_chapter(book_id, chapter_id)
 
+    def append_chapter(self, book_id: str, title: str, content: str) -> dict[str, Any]:
+        with self._lock:
+            book = self._load_book(book_id)
+            rows = self._load_index(book_id)
+            chapter_id = _new_id("ch")
+            rows.append(
+                {
+                    "id": chapter_id,
+                    "title": title.strip()[:120] or f"第{len(rows) + 1}章",
+                    "order": len(rows) + 1,
+                    "char_count": len(content or ""),
+                    "created_at": _now(),
+                    "updated_at": _now(),
+                }
+            )
+            self._chapter_path(book_id, chapter_id).write_text(content or "", encoding="utf-8")
+            book.setdefault("summaries", {})[chapter_id] = _heuristic_summary(content or "")
+            self._recompute_totals(book, rows)
+            self._save_book(book)
+            self._save_index(book_id, rows)
+            return self.get_book(book_id)
+
     def chapter_summaries(self, book_id: str, before_order: int, limit: int = 3) -> list[dict[str, Any]]:
         with self._lock:
             book = self._load_book(book_id)

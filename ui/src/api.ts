@@ -105,11 +105,18 @@ export type Chapter = {
 
 export type CreativeRole = "user" | "assistant";
 
+export type AgentToolAction = {
+  tool: string;
+  args: Record<string, unknown>;
+  result?: ApiRecord | null;
+};
+
 export type CreativeMessage = {
   id: string;
   role: CreativeRole;
   content: string;
   created_at: string;
+  actions?: AgentToolAction[];
 };
 export type VaultRuntimeConfig = {
   vault_path: string;
@@ -595,8 +602,24 @@ export function llmServerPing(message = "你好"): Promise<ApiRecord> {
   return postJson("/lore-api/llm/ping", {message});
 }
 
-export function llmServerChat(messages: LlmChatMessage[]): Promise<ApiRecord> {
-  return postJson("/lore-api/llm/chat", {messages});
+export type ChatAttachment = {
+  name: string;
+  kind: "txt" | "project" | "knowledge";
+  text: string;
+};
+
+export type AiChatResult = {
+  answer: string;
+  model?: string;
+  provider?: string;
+  actions?: AgentToolAction[];
+};
+
+export function llmServerChat(
+  messages: LlmChatMessage[],
+  attachments: ChatAttachment[] = [],
+): Promise<AiChatResult> {
+  return postJson("/lore-api/llm/chat", {messages, attachments});
 }
 
 export type LlmChatMessage = {
