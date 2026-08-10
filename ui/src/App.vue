@@ -10,6 +10,7 @@ import {
   type EvolutionCastMember,
   type EvolutionState,
   type EvolutionView,
+  type LanInfo,
   type LlmChatMessage,
   type LoreItem,
   type ManuscriptIssue,
@@ -33,6 +34,7 @@ import {
   fakeCreativeAnswer,
   generateEvolutionProseApi,
   generateKnowledgeDocument,
+  getLanInfo,
   getEvolutionState,
   getVaultRuntimeStatus,
   getVaultWebStatus,
@@ -216,6 +218,7 @@ let projectBackupTimer: number | undefined;
 const diskBackups = ref<ProjectBackupRow[]>([]);
 const restoreDialogVisible = ref(false);
 const restoreBusy = ref("");
+const lanInfo = ref<LanInfo | null>(null);
 
 const promptStarters = [
   "帮我续写当前章节，保持悬念和节奏。",
@@ -406,6 +409,7 @@ onMounted(async () => {
   }, {collapseOutput: true});
   void runAiCheck();
   void loadDiskBackups();
+  void loadLanInfo();
 });
 
 function loadProjects(): StoryProject[] {
@@ -574,6 +578,14 @@ async function loadDiskBackups(): Promise<void> {
     diskBackups.value = result.backups ?? [];
   } catch {
     diskBackups.value = [];
+  }
+}
+
+async function loadLanInfo(): Promise<void> {
+  try {
+    lanInfo.value = await getLanInfo();
+  } catch {
+    lanInfo.value = null;
   }
 }
 
@@ -4370,6 +4382,9 @@ onUnmounted(() => {
                         <el-descriptions-item label="本地草稿">已保存在浏览器</el-descriptions-item>
                         <el-descriptions-item label="资料库">{{ selectedWorkspaceId }}</el-descriptions-item>
                         <el-descriptions-item label="状态">{{ notice }}</el-descriptions-item>
+                        <el-descriptions-item label="局域网访问">
+                          {{ lanInfo?.lan_urls?.[0] || "未检测到局域网地址" }}
+                        </el-descriptions-item>
                       </el-descriptions>
                     </el-card>
                   </el-col>

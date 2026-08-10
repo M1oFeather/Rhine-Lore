@@ -117,6 +117,10 @@ The console prints the exact LAN address on startup. If a phone cannot open
 it, allow Python through Windows Defender Firewall for private networks, or
 run locally only with `python main.py --host 127.0.0.1`.
 
+The app also shows the current LAN address in 设置 → 常用设置（“局域网访问”），
+由服务端 `/lore-api/lan` 实时返回；`start.bat` 显式以 `--host 0.0.0.0` 启动，
+保证每次都对局域网开放。
+
 On startup Rhine-Lore tries to bring up the default Rhine-Vault Core for its
 own workspace. Port `8765` is intentionally not used because common local
 tools (for example the Blender MCP host) bind it; Lore tries `8795`, then

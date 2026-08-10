@@ -621,6 +621,19 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
                     return
                 self._send_json(200, _evolution_payload(state, viewpoint_id=viewpoint_id))
                 return
+            if self.command == "GET" and parsed_request.path == "/lore-api/lan":
+                port = self.server.server_address[1] if self.server else 8786
+                addresses = _lan_addresses()
+                self._send_json(
+                    200,
+                    {
+                        "addresses": addresses,
+                        "port": port,
+                        "local_url": f"http://127.0.0.1:{port}/",
+                        "lan_urls": [f"http://{address}:{port}/" for address in addresses],
+                    },
+                )
+                return
             if self.command == "POST" and parsed_request.path == "/lore-api/evolution/start":
                 payload = self._read_json_body()
                 project_id = str(payload.get("project_id") or "").strip()

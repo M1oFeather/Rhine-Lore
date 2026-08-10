@@ -302,6 +302,13 @@ export type ProjectBackupRow = {
   updated_at: string;
 };
 
+export type LanInfo = {
+  addresses: string[];
+  port: number;
+  local_url: string;
+  lan_urls: string[];
+};
+
 export const workspaceIdKey = "rhine-lore-workspace-id";
 
 export let workspaceId = localStorage.getItem(workspaceIdKey) || "story-workspace";
@@ -539,6 +546,10 @@ export function listProjectBackups(): Promise<{backups: ProjectBackupRow[]}> {
 
 export function restoreProjectBackup(projectId: string): Promise<{project: StoryProject}> {
   return postJson("/lore-api/projects/restore", {project_id: projectId});
+}
+
+export function getLanInfo(): Promise<LanInfo> {
+  return getJson("/lore-api/lan");
 }
 
 export type LlmChatMessage = {

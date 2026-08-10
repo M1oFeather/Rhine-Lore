@@ -235,6 +235,13 @@ class EvolutionApiTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(payload["project"]["name"], "雾港来信")
 
+    def test_lan_info_endpoint(self) -> None:
+        status, payload = self._request("GET", "/lore-api/lan")
+        self.assertEqual(status, 200)
+        self.assertIsInstance(payload["addresses"], list)
+        self.assertTrue(payload["local_url"].startswith("http://127.0.0.1:"))
+        self.assertIsInstance(payload["lan_urls"], list)
+
     def test_chinese_project_id_roundtrip(self) -> None:
         self._start("我的故事")
         quoted = urllib.parse.quote("我的故事")
