@@ -151,11 +151,18 @@ const activity = ref<Activity>("studio");
 const sidebarCollapsed = ref(localStorage.getItem("rhine-lore-sidebar-collapsed") === "1");
 const mobileNavOpen = ref(false);
 const mobileMoreOpen = ref(false);
+const showAllProjects = ref(false);
 const novelTocVisible = ref(false);
 const novelSettingsVisible = ref(false);
 const readTocVisible = ref(false);
 const readSettingsVisible = ref(false);
 const mobilePrimaryIds = new Set<Activity>(["studio", "novel", "read", "shelf", "context", "settings"]);
+const mobilePrimaryActivities = computed(() =>
+  activities.filter((item) => mobilePrimaryIds.has(item.id)),
+);
+const mobileSecondaryActivities = computed(() =>
+  activities.filter((item) => !mobilePrimaryIds.has(item.id)),
+);
 const notice = ref("就绪");
 const busyAction = ref("");
 const runState = ref<Record<string, unknown> | null>(null);
@@ -1092,10 +1099,6 @@ function switchWorkMode(mode: WorkMode): void {
 
 function isPrimaryActivity(next: Activity): boolean {
   return primaryActivityIds.includes(next);
-}
-
-function isMobileSecondary(next: Activity): boolean {
-  return !mobilePrimaryIds.has(next);
 }
 
 function isStudioChildActivity(next: Activity): boolean {
@@ -3195,15 +3198,15 @@ onUnmounted(() => {
         <small>Story writing studio</small>
       </div>
       <nav class="sidebar-nav">
+        <div class="nav-group-label mobile-only">主要</div>
         <el-button
-          v-for="item in activities"
+          v-for="item in mobilePrimaryActivities"
           :key="item.id"
           class="nav-item"
           :class="{
             active: activity === item.id,
             'nav-item-secondary': !isPrimaryActivity(item.id),
             'mobile-parent-active': isStudioChildActivity(item.id),
-            'mobile-secondary-nav-item': isMobileSecondary(item.id),
           }"
           @click="openActivity(item.id); mobileNavOpen = false"
           :title="sidebarCollapsed ? item.label : ''"
@@ -3214,6 +3217,7 @@ onUnmounted(() => {
             <small>{{ item.description }}</small>
           </span>
         </el-button>
+        <div class="nav-group-label mobile-only">更多</div>
         <el-button class="nav-item mobile-more-toggle" @click="mobileMoreOpen = !mobileMoreOpen">
           <span class="nav-icon-dot"><GameIcon name="nodes" label="更多" /></span>
           <span class="nav-label">
@@ -3221,7 +3225,26 @@ onUnmounted(() => {
             <small>{{ mobileMoreOpen ? "显示次要功能" : "故事档案 / 角色 / 演化沙盘等" }}</small>
           </span>
         </el-button>
+        <el-button
+          v-for="item in mobileSecondaryActivities"
+          :key="item.id"
+          class="nav-item mobile-secondary-nav-item"
+          :class="{
+            active: activity === item.id,
+            'nav-item-secondary': !isPrimaryActivity(item.id),
+            'mobile-parent-active': isStudioChildActivity(item.id),
+          }"
+          @click="openActivity(item.id); mobileNavOpen = false"
+          :title="sidebarCollapsed ? item.label : ''"
+        >
+          <span class="nav-icon-dot"><GameIcon :name="item.icon" :label="item.label" /></span>
+          <span class="nav-label">
+            <strong>{{ item.label }}</strong>
+            <small>{{ item.description }}</small>
+          </span>
+        </el-button>
       </nav>
+      <div class="sidebar-footer mobile-only">Rhine-Lore v0.1.0 · 本地优先</div>
       <el-button class="collapse-button" title="折叠/展开侧边栏" aria-label="折叠/展开侧边栏" @click="toggleSidebar">
         {{ sidebarCollapsed ? "»" : "«" }}
       </el-button>
@@ -3327,6 +3350,29 @@ onUnmounted(() => {
               </el-space>
             </el-card>
 
+            <div class="home-quick-grid">
+              <button class="home-quick-tile" type="button" @click="startWriting">
+                <span class="home-quick-icon"><GameIcon name="book" label="正文" /></span>
+                <strong>正文</strong>
+                <small>{{ activeProject.chapters.length > 0 ? "继续写作" : "写第一章" }}</small>
+              </button>
+              <button class="home-quick-tile" type="button" @click="openActivity('read')">
+                <span class="home-quick-icon"><GameIcon name="book" label="小说阅读" /></span>
+                <strong>小说阅读</strong>
+                <small>追演化连载</small>
+              </button>
+              <button class="home-quick-tile" type="button" @click="openActivity('shelf')">
+                <span class="home-quick-icon"><GameIcon name="nodes" label="书架" /></span>
+                <strong>书架</strong>
+                <small>TXT 长篇小说</small>
+              </button>
+              <button class="home-quick-tile" type="button" @click="openActivity('context')">
+                <span class="home-quick-icon"><GameIcon name="search" label="资料库" /></span>
+                <strong>资料库</strong>
+                <small>草稿与检索</small>
+              </button>
+            </div>
+
             <section v-if="needsProjectGuidance" class="setup-guide">
               <div class="setup-guide-copy">
                 <span>从这里开始</span>
@@ -3366,10 +3412,11 @@ onUnmounted(() => {
                   </el-space>
                 </div>
               </template>
-              <div class="project-grid">
+              <div class="project-grid" :class="{'project-grid-collapsed': !showAllProjects}">
                 <button
-                  v-for="project in projects"
+                  v-for="(project, index) in projects"
                   :key="project.id"
+                  v-show="showAllProjects || index < 3"
                   type="button"
                   class="project-card"
                   :class="{active: activeProject.id === project.id}"
@@ -3389,6 +3436,11 @@ onUnmounted(() => {
                     <span>{{ projectLength(project) }} 字</span>
                   </span>
                 </button>
+              </div>
+              <div v-if="projects.length > 3" class="project-fold-toggle">
+                <el-button size="small" text @click="showAllProjects = !showAllProjects">
+                  {{ showAllProjects ? "收起" : `展开全部（${projects.length} 个故事）` }}
+                </el-button>
               </div>
             </el-card>
 
@@ -4297,7 +4349,12 @@ onUnmounted(() => {
               </div>
             </el-drawer>
 
-            <el-drawer v-model="novelSettingsVisible" title="阅读设置" size="82%">
+            <el-drawer
+              v-model="novelSettingsVisible"
+              title="阅读设置"
+              direction="btt"
+              size="70%"
+            >
               <div class="shelf-settings">
                 <label>字号</label>
                 <el-slider
@@ -5214,7 +5271,12 @@ onUnmounted(() => {
               </div>
             </el-drawer>
 
-            <el-drawer v-model="readSettingsVisible" title="阅读设置" size="82%">
+            <el-drawer
+              v-model="readSettingsVisible"
+              title="阅读设置"
+              direction="btt"
+              size="70%"
+            >
               <div class="shelf-settings">
                 <label>字号</label>
                 <el-slider
@@ -5458,7 +5520,12 @@ onUnmounted(() => {
                 </div>
               </el-drawer>
 
-              <el-drawer v-model="shelfSettingsVisible" title="阅读设置" size="82%">
+              <el-drawer
+                v-model="shelfSettingsVisible"
+                title="阅读设置"
+                direction="btt"
+                size="70%"
+              >
                 <div class="shelf-settings">
                   <label>字号</label>
                   <el-slider

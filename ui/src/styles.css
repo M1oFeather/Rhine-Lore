@@ -4187,3 +4187,121 @@ body {
   }
 }
 
+/* Modern app redesign */
+.mobile-only {
+  display: none;
+}
+
+.nav-group-label {
+  padding: 10px 12px 4px;
+  color: #7f8b99;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.sidebar-footer {
+  margin-top: auto;
+  padding: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  color: #7f8b99;
+  font-size: 11px;
+  text-align: center;
+}
+
+.home-quick-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.home-quick-tile {
+  display: grid;
+  justify-items: start;
+  gap: 4px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: #ffffff;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.05);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition: transform 150ms ease, border-color 150ms ease;
+}
+
+.home-quick-tile:active {
+  transform: scale(0.97);
+}
+
+.home-quick-icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 12px;
+  background: var(--blue-soft);
+  color: var(--blue);
+}
+
+.home-quick-tile strong {
+  font-size: 14px;
+}
+
+.home-quick-tile small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.project-fold-toggle {
+  display: flex;
+  justify-content: center;
+  margin-top: 10px;
+}
+
+@media (max-width: 720px) {
+  .mobile-only {
+    display: block;
+  }
+
+  .el-card {
+    border-radius: 16px;
+  }
+
+  .home-quick-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .home-hero-actions .el-button:nth-child(n + 2) {
+    display: none;
+  }
+
+  .workbench-continuity,
+  .knowledge-home-strip,
+  .ai-channel-strip {
+    display: none;
+  }
+
+  .guide-grid {
+    display: flex;
+    gap: 10px;
+    overflow-x: auto;
+    padding-bottom: 6px;
+    scrollbar-width: none;
+  }
+
+  .guide-grid::-webkit-scrollbar {
+    display: none;
+  }
+
+  .guide-card {
+    flex: 0 0 min(210px, 58vw);
+  }
+
+  .setup-steps {
+    overflow-x: auto;
+  }
+}
+
