@@ -18,6 +18,7 @@ if str(SRC) not in sys.path:
 
 import rhine_lore.server as server  # noqa: E402
 from rhine_lore.engine import EvolutionStore  # noqa: E402
+from rhine_lore.engine import start_run  # noqa: E402
 
 
 CHARACTERS = [
@@ -282,6 +283,21 @@ class EvolutionApiTests(unittest.TestCase):
         status, payload = self._request("POST", "/lore-api/llm/ping", {"message": "hi"})
         self.assertEqual(status, 400)
         self.assertIn("API Key", payload["error"])
+
+    def test_prune_ai_prose_keeps_chapter_keys(self) -> None:
+        state = start_run("p1", "雾港来信", "悬疑", CHARACTERS, WORLD, seed=1)
+        state.turn = 22
+        state.ai_prose = {
+            "1:hero": "old",
+            "9:hero": "new",
+            "chapter:9:hero": "chapter-prose",
+            "30:hero": "far",
+        }
+        server._prune_ai_prose(state)
+        self.assertNotIn("1:hero", state.ai_prose)
+        self.assertIn("9:hero", state.ai_prose)
+        self.assertIn("chapter:9:hero", state.ai_prose)
+        self.assertIn("30:hero", state.ai_prose)
 
     def test_chinese_project_id_roundtrip(self) -> None:
         self._start("我的故事")

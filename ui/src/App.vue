@@ -195,6 +195,7 @@ const evolutionChatBusy = ref(false);
 const evolutionCharacterDialogVisible = ref(false);
 const evolutionNewCharacter = ref({name: "", role: "配角", drive: "", secret: ""});
 const ignoredCharacterPromptProjects = ref<string[]>([]);
+const evolutionTimelineLimit = ref(30);
 const characterEditorMode = ref<"simple" | "full">(
   localStorage.getItem("rhine-lore-character-mode") === "full" ? "full" : "simple",
 );
@@ -1992,6 +1993,14 @@ const evolutionHistory = computed(() => {
   return [...events].reverse();
 });
 
+const visibleEvolutionHistory = computed(() => {
+  return evolutionHistory.value.slice(0, evolutionTimelineLimit.value);
+});
+
+function loadMoreEvolutionEvents(): void {
+  evolutionTimelineLimit.value += 30;
+}
+
 const evolutionThreads = computed(() => evolutionState.value?.threads ?? []);
 const evolutionCast = computed(() => evolutionState.value?.cast ?? []);
 const evolutionPendingBranch = computed(() => evolutionState.value?.pending_branch ?? null);
@@ -2556,6 +2565,12 @@ const evolutionNovelChapters = computed(() => {
     }
     group.endTurn = part.turn;
     group.paragraphs.push(...part.paragraphs);
+  }
+  for (const group of groups) {
+    const chapterText = state.ai_prose?.[`chapter:${group.startTurn}:${viewpointId}`];
+    if (chapterText) {
+      group.paragraphs = [chapterText];
+    }
   }
   return groups;
 });
@@ -4052,7 +4067,7 @@ onUnmounted(() => {
                   <div v-if="evolutionHistory.length === 0" class="product-empty-state compact">
                     还没有事件，按“推进一回合”开始。
                   </div>
-                  <div v-for="event in evolutionHistory" :key="event.id" class="evolution-event">
+                  <div v-for="event in visibleEvolutionHistory" :key="event.id" class="evolution-event">
                     <div class="evolution-event-head">
                       <span class="evolution-kind" :class="`kind-${event.kind}`">{{ event.kind }}</span>
                       <strong>{{ event.title }}</strong>
@@ -4072,6 +4087,14 @@ onUnmounted(() => {
                       </span>
                     </div>
                   </div>
+                  <el-button
+                    v-if="evolutionHistory.length > evolutionTimelineLimit"
+                    size="small"
+                    class="load-more-events"
+                    @click="loadMoreEvolutionEvents"
+                  >
+                    加载更早事件（{{ evolutionHistory.length - evolutionTimelineLimit }} 条）
+                  </el-button>
                 </el-card>
 
                 <div class="evolution-side-stack">

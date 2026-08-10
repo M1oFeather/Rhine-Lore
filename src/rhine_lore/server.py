@@ -522,12 +522,49 @@ def _store_turn_prose(
     )
     prose_key = f"{latest_turn}:{viewpoint_id or (state.cast[0].id if state.cast else '')}"
     state.ai_prose[prose_key] = text
+    _prune_ai_prose(state)
+    return True
+
+
+def _prune_ai_prose(state: EvolutionState) -> None:
     min_turn = max(1, state.turn - 20)
-    state.ai_prose = {
-        key: value
-        for key, value in state.ai_prose.items()
-        if int(key.split(":")[0]) >= min_turn
-    }
+    kept: dict[str, str] = {}
+    for key, value in state.ai_prose.items():
+        parts = key.split(":")
+        if not parts or not parts[0]:
+            continue
+        if parts[0].isdigit():
+            if int(parts[0]) >= min_turn:
+                kept[key] = value
+        elif parts[0] == "chapter" and len(parts) >= 2 and parts[1].isdigit():
+            if int(parts[1]) >= min_turn:
+                kept[key] = value
+    state.ai_prose = kept
+
+
+def _store_chapter_prose(
+    state: EvolutionState,
+    start_turn: int,
+    end_turn: int,
+    viewpoint_id: str,
+    llm: dict[str, Any],
+    global_guidance: str = "",
+    variation: str = "",
+) -> bool:
+    api_key = str(llm.get("api_key") or "").strip()
+    if not api_key:
+        return False
+    snapshot = _chapter_snapshot(state, end_turn)
+    messages = build_ai_prose_prompt(
+        snapshot,
+        viewpoint_id,
+        global_guidance=global_guidance,
+        variation=variation,
+    )
+    text = _chat_with_vault(messages, llm)
+    key = f"chapter:{start_turn}:{viewpoint_id or (state.cast[0].id if state.cast else '')}"
+    state.ai_prose[key] = text
+    _prune_ai_prose(state)
     return True
 
 
@@ -836,17 +873,25 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
                 advanced = 0
                 iterations = 0
                 result: TurnResult | None = None
+                start_turn = state.turn + 1
                 while advanced < turns and not state.ending and iterations < 40:
                     state, result = advance(state, choice_id="fate")
                     iterations += 1
                     if result.advanced:
                         advanced += 1
-                        if api_key:
-                            try:
-                                _store_turn_prose(state, viewpoint_id, llm, global_guidance)
-                            except (HTTPError, URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError):
-                                # 单回合扩写失败不阻塞整章
-                                pass
+                if api_key:
+                    try:
+                        _store_chapter_prose(
+                            state,
+                            start_turn,
+                            state.turn,
+                            viewpoint_id,
+                            llm,
+                            global_guidance,
+                        )
+                    except (HTTPError, URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError):
+                        # 整章扩写失败不阻塞章节生成
+                        pass
                 EVOLUTION_STORE.save(state)
                 self._send_json(200, _evolution_payload(state, result, viewpoint_id))
                 return
@@ -881,19 +926,15 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
                     "换一种写法重写整章正文，保持人物语气与时间连续性。"
                 )
                 try:
-                    for turn in chapter_turns:
-                        snapshot = _chapter_snapshot(state, turn)
-                        _store_turn_prose(
-                            snapshot,
-                            viewpoint_id,
-                            llm,
-                            global_guidance,
-                            variation,
-                            turn_override=turn,
-                        )
-                        prose_key = f"{turn}:{viewpoint_id or (state.cast[0].id if state.cast else '')}"
-                        if prose_key in snapshot.ai_prose:
-                            state.ai_prose[prose_key] = snapshot.ai_prose[prose_key]
+                    _store_chapter_prose(
+                        state,
+                        start_turn,
+                        end_turn,
+                        viewpoint_id,
+                        llm,
+                        global_guidance,
+                        variation,
+                    )
                 except HTTPError as exc:
                     detail = exc.read().decode("utf-8", errors="replace")[-300:]
                     self._send_json(502, {"error": f"AI 重写失败：{detail or exc}"})
@@ -901,12 +942,6 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
                 except (URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError) as exc:
                     self._send_json(502, {"error": f"AI 重写失败：{exc}"})
                     return
-                min_turn = max(1, state.turn - 20)
-                state.ai_prose = {
-                    key: value
-                    for key, value in state.ai_prose.items()
-                    if int(key.split(":")[0]) >= min_turn
-                }
                 EVOLUTION_STORE.save(state)
                 self._send_json(200, _evolution_payload(state, viewpoint_id=viewpoint_id))
                 return

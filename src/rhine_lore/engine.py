@@ -1277,7 +1277,9 @@ def build_ai_prose_prompt(
             (
                 (int(key.split(":")[0]), text)
                 for key, text in state.ai_prose.items()
-                if ":" in key and key.endswith(f":{resolved_viewpoint_id}")
+                if ":" in key
+                and key.split(":")[0].isdigit()
+                and key.endswith(f":{resolved_viewpoint_id}")
             ),
             key=lambda item: item[0],
         )[-2:]
