@@ -19,7 +19,9 @@ def start_server(data_dir, web_root, port=8796):
 
     def run():
         try:
-            serve(host="127.0.0.1", port=int(port), web_root=web_path)
+            # Bind all interfaces so the same instance can also be opened as
+            # the web version from other devices on the LAN (data stays in sync).
+            serve(host="0.0.0.0", port=int(port), web_root=web_path)
         except Exception:
             import traceback
 

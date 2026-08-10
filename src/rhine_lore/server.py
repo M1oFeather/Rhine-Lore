@@ -38,7 +38,7 @@ from rhine_lore.engine import (
     turn_result_to_dict,
     viewpoint_options,
 )
-from rhine_lore.novel_store import BookStore
+from rhine_lore.novel_store import BookStore, _heuristic_summary
 
 
 ALLOWED_PROXY_HOSTS = {"127.0.0.1", "localhost", "::1"}
@@ -1081,6 +1081,48 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
                     return
                 self._send_json(200, {"text": text, "offline": False})
                 return
+            if self.command == "POST" and parsed_request.path.endswith("/analyze") and "/lore-api/books/" in parsed_request.path:
+                book_id = parsed_request.path[len("/lore-api/books/") : -len("/analyze")].strip("/")
+                payload = self._read_json_body()
+                llm = _resolve_llm(payload.get("llm"))
+                if llm.get("api_key") and llm.get("base_url") and llm.get("model"):
+                    messages = BOOK_STORE.build_analyze_messages(book_id)
+                    try:
+                        text = _chat_with_vault(messages, llm)
+                        analysis = BOOK_STORE.store_analysis(book_id, text)
+                        self._send_json(200, {"analysis": analysis, "offline": False})
+                    except Exception as exc:  # noqa: BLE001 - surface AI errors
+                        self._send_json(502, {"error": f"AI 分析失败：{exc}"})
+                else:
+                    analysis = BOOK_STORE.book_analysis(book_id)
+                    self._send_json(200, {"analysis": analysis, "offline": True})
+                return
+            if (
+                self.command == "POST"
+                and parsed_request.path.endswith("/summary")
+                and "/lore-api/books/" in parsed_request.path
+                and "/chapters/" in parsed_request.path
+            ):
+                parts = parsed_request.path[len("/lore-api/books/") : -len("/summary")].split("/")
+                if len(parts) == 3 and parts[1] == "chapters":
+                    book_id, _, chapter_id = parts
+                    payload = self._read_json_body()
+                    llm = _resolve_llm(payload.get("llm"))
+                    if llm.get("api_key") and llm.get("base_url") and llm.get("model"):
+                        messages = BOOK_STORE.build_summary_messages(book_id, chapter_id)
+                        try:
+                            text = _chat_with_vault(messages, llm)
+                            summary = BOOK_STORE.store_chapter_summary(book_id, chapter_id, text)
+                            self._send_json(200, {"summary": summary, "offline": False})
+                        except Exception as exc:  # noqa: BLE001 - surface AI errors
+                            self._send_json(502, {"error": f"AI 摘要失败：{exc}"})
+                    else:
+                        chapter = BOOK_STORE.get_chapter(book_id, chapter_id)
+                        self._send_json(
+                            200,
+                            {"summary": _heuristic_summary(chapter["content"]), "offline": True},
+                        )
+                    return
             if self.command == "GET" and parsed_request.path.startswith("/lore-api/books/"):
                 book_id = parsed_request.path[len("/lore-api/books/") :].strip("/")
                 if book_id:

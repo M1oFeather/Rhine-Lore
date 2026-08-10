@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from "vue";
 
 import {
   type ApiRecord,
+  type BookAnalysis,
   type BookChapter,
   type BookChapterMeta,
   type BookDetail,
@@ -32,6 +33,7 @@ import {
   addEvolutionCharacter,
   approveStaging,
   aiWriteBook,
+  analyzeBook,
   backupProject,
   buildContextBundle,
   connectVaultRuntime,
@@ -208,6 +210,8 @@ const shelfGuidance = ref("");
 const shelfAiMode = ref<"continue" | "rewrite" | "expand">("continue");
 const shelfAiResult = ref("");
 const shelfAiBusy = ref(false);
+const shelfAnalysis = ref<BookAnalysis | null>(null);
+const shelfAnalyzeBusy = ref(false);
 const shelfSaving = ref(false);
 const shelfImportInput = ref<HTMLInputElement | null>(null);
 const settingsTab = ref("basic");
@@ -797,6 +801,7 @@ async function openShelfBook(bookId: string): Promise<void> {
   shelfChapter.value = null;
   shelfChapterIndex.value = -1;
   shelfAiResult.value = "";
+  shelfAnalysis.value = result.book.analysis ?? null;
   const saved = localStorage.getItem(`rhine-shelf-pos-${bookId}`);
   const targetId =
     saved && result.book.chapters.some((item) => item.id === saved)
@@ -881,6 +886,26 @@ async function runShelfAiWrite(): Promise<void> {
     runState.value = {error: error instanceof Error ? error.message : String(error)};
   } finally {
     shelfAiBusy.value = false;
+  }
+}
+
+async function runShelfAnalysis(): Promise<void> {
+  if (!shelfBookId.value || shelfAnalyzeBusy.value) {
+    return;
+  }
+  shelfAnalyzeBusy.value = true;
+  try {
+    const result = await analyzeBook(shelfBookId.value);
+    shelfAnalysis.value = result.analysis;
+    markSaved(
+      result.offline
+        ? "离线分析完成（高频角色提取，配置 AI 后可获得完整档案）"
+        : "全书分析完成：角色 / 设定 / 事实 / 伏笔已建立",
+    );
+  } catch (error) {
+    runState.value = {error: error instanceof Error ? error.message : String(error)};
+  } finally {
+    shelfAnalyzeBusy.value = false;
   }
 }
 
@@ -5098,12 +5123,70 @@ onUnmounted(() => {
                     <el-button type="primary" size="small" :loading="shelfAiBusy" @click="runShelfAiWrite">
                       生成
                     </el-button>
+                    <el-button size="small" :loading="shelfAnalyzeBusy" @click="runShelfAnalysis">
+                      分析全书
+                    </el-button>
                   </div>
                   <el-input
                     v-model="shelfGuidance"
                     placeholder="引导 AI，例如：让主角发现旧码头火光，语气保持沉静"
                     clearable
                   />
+                  <div v-if="shelfAnalysis" class="shelf-analysis">
+                    <div class="shelf-analysis-head">
+                      <strong>全书档案</strong>
+                      <small v-if="shelfAnalysis.offline">离线提取 · 配置 AI 后可升级</small>
+                      <span v-else>AI 分析</span>
+                      <span>
+                        {{ shelfAnalysis.characters.length }} 角色 ·
+                        {{ shelfAnalysis.settings.length }} 设定 ·
+                        {{ shelfAnalysis.key_facts.length }} 事实 ·
+                        {{ shelfAnalysis.unresolved_threads.length }} 伏笔
+                      </span>
+                    </div>
+                    <template v-if="shelfAnalysis.characters.length">
+                      <label>角色</label>
+                      <div class="shelf-tags">
+                        <span
+                          v-for="item in shelfAnalysis.characters.slice(0, 16)"
+                          :key="item.name"
+                          class="shelf-tag"
+                          :title="`${item.role} · ${item.notes}`"
+                        >
+                          {{ item.name }}
+                        </span>
+                      </div>
+                    </template>
+                    <template v-if="shelfAnalysis.settings.length">
+                      <label>设定</label>
+                      <div class="shelf-tags">
+                        <span
+                          v-for="item in shelfAnalysis.settings.slice(0, 10)"
+                          :key="item.name"
+                          class="shelf-tag shelf-tag-blue"
+                          :title="`${item.type} · ${item.notes}`"
+                        >
+                          {{ item.name }}
+                        </span>
+                      </div>
+                    </template>
+                    <template v-if="shelfAnalysis.key_facts.length">
+                      <label>关键事实</label>
+                      <ul>
+                        <li v-for="(fact, index) in shelfAnalysis.key_facts.slice(0, 6)" :key="index">
+                          {{ fact }}
+                        </li>
+                      </ul>
+                    </template>
+                    <template v-if="shelfAnalysis.unresolved_threads.length">
+                      <label>待回收伏笔</label>
+                      <ul>
+                        <li v-for="(thread, index) in shelfAnalysis.unresolved_threads.slice(0, 6)" :key="index">
+                          {{ thread }}
+                        </li>
+                      </ul>
+                    </template>
+                  </div>
                   <template v-if="shelfAiResult">
                     <el-input
                       v-model="shelfAiResult"

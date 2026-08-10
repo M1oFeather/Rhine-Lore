@@ -3960,6 +3960,64 @@ body {
   color: #5b6b7c;
 }
 
+.shelf-analysis {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid #d5dce5;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.shelf-analysis-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 12px;
+}
+
+.shelf-analysis-head strong {
+  color: #16324f;
+}
+
+.shelf-analysis-head small,
+.shelf-analysis-head span {
+  color: #5b6b7c;
+  font-size: 12px;
+}
+
+.shelf-analysis label {
+  color: #5b6b7c;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.shelf-analysis ul {
+  margin: 0;
+  padding-left: 18px;
+  color: #33475c;
+  line-height: 1.7;
+}
+
+.shelf-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.shelf-tag {
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: #e8f0fa;
+  color: #2b4a6f;
+  font-size: 12px;
+}
+
+.shelf-tag-blue {
+  background: #e0f2e9;
+  color: #276749;
+}
+
 .shelf-toc-list {
   display: grid;
   gap: 6px;

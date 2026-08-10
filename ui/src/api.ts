@@ -641,6 +641,7 @@ export type BookChapterMeta = {
 
 export type BookDetail = BookMeta & {
   chapters: BookChapterMeta[];
+  analysis?: BookAnalysis | null;
 };
 
 export type BookChapter = {
@@ -654,6 +655,29 @@ export type BookChapter = {
 export type AiWriteResult = {
   text: string;
   offline: boolean;
+};
+
+export type BookAnalysisCharacter = {
+  name: string;
+  aliases: string[];
+  role: string;
+  first_chapter: number;
+  notes: string;
+};
+
+export type BookAnalysisSetting = {
+  name: string;
+  type: string;
+  notes: string;
+};
+
+export type BookAnalysis = {
+  characters: BookAnalysisCharacter[];
+  settings: BookAnalysisSetting[];
+  key_facts: string[];
+  unresolved_threads: string[];
+  offline?: boolean;
+  updated_at?: string;
 };
 
 export function listBooks(): Promise<{books: BookMeta[]}> {
@@ -709,5 +733,9 @@ export function aiWriteBook(body: {
   text?: string;
 }): Promise<AiWriteResult> {
   return postJson(`/lore-api/books/${encodeURIComponent(body.book_id)}/ai/write`, body);
+}
+
+export function analyzeBook(bookId: string): Promise<{analysis: BookAnalysis; offline: boolean}> {
+  return postJson(`/lore-api/books/${encodeURIComponent(bookId)}/analyze`, {});
 }
 

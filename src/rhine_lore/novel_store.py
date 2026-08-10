@@ -36,12 +36,20 @@ def _safe_id(value: str) -> str:
 
 _CHAPTER_HEADER = re.compile(
     r"^\s*(?:"
-    r"第\s*[0-9一二三四五六七八九十百千万零〇两]+\s*[章回节卷部].*"
+    r"第\s*[0-9〇零一二三四五六七八九十百千万两]+\s*[章回节卷部].*"
     r"|(?:Chapter|CHAPTER|CHAP)\s+\d+.*"
-    r"|序章.*|楔子.*|引子.*|序幕.*"
-    r"|尾声.*|后记.*|番外.*|终章.*|大结局.*"
+    r"|(?:卷一|卷首|序章|楔子|引子|序幕|前言|尾声|后记|番外|终章|大结局).*"
     r")\s*$"
 )
+
+_NAMED_ACTION = re.compile(r"([\u4e00-\u9fa5]{2,4})(?:说|道|问|喊|叫|笑|叹|答|想|看|走|来|去)")
+_ENGLISH_NAME = re.compile(r"\b[A-Z][a-z]{2,}\b")
+_STOPWORDS = {
+    "我们", "他们", "她们", "你们", "自己", "这个", "那个", "什么", "没有",
+    "已经", "现在", "时候", "知道", "一个", "可以", "只是", "但是", "于是",
+    "因为", "所以", "还是", "就是", "不是", "如果", "虽然", "然后", "突然",
+    "忽然", "这时", "那时", "只见", "便是", "心中", "脸上", "眼里", "身上",
+}
 
 
 def split_txt_chapters(text: str, max_chunk_chars: int = 4200) -> list[dict[str, str]]:
@@ -252,6 +260,7 @@ class BookStore:
                 "chapter_count": int(book.get("chapter_count") or 0),
                 "total_chars": int(book.get("total_chars") or 0),
                 "updated_at": str(book.get("updated_at") or ""),
+                "analysis": book.get("analysis"),
                 "chapters": [
                     {
                         "id": str(row["id"]),
@@ -321,6 +330,152 @@ class BookStore:
                 for row in selected[-limit:]
             ]
 
+    # Long-novel understanding ---------------------------------------------
+
+    def book_analysis(self, book_id: str) -> dict[str, Any]:
+        """Return the stored analysis, or build a heuristic one on first use."""
+        with self._lock:
+            book = self._load_book(book_id)
+            analysis = book.get("analysis")
+            if isinstance(analysis, dict) and analysis.get("characters"):
+                return analysis
+            heuristic = self.heuristic_analysis(book_id)
+            book["analysis"] = heuristic
+            book["analysis"]["updated_at"] = _now()
+            self._save_book(book)
+            return heuristic
+
+    def heuristic_analysis(self, book_id: str) -> dict[str, Any]:
+        with self._lock:
+            rows = self._load_index(book_id)
+            counter: dict[str, int] = {}
+            first_seen: dict[str, int] = {}
+            for row in rows:
+                path = self._chapter_path(book_id, row["id"])
+                if not path.is_file():
+                    continue
+                content = path.read_text(encoding="utf-8", errors="ignore")
+                order = int(row.get("order") or 0)
+                for match in _NAMED_ACTION.finditer(content):
+                    name = match.group(1)
+                    if name in _STOPWORDS:
+                        continue
+                    counter[name] = counter.get(name, 0) + 1
+                    first_seen.setdefault(name, order)
+                for match in _ENGLISH_NAME.finditer(content):
+                    name = match.group(0)
+                    counter[name] = counter.get(name, 0) + 1
+                    first_seen.setdefault(name, order)
+            characters = [
+                {
+                    "name": name,
+                    "aliases": [],
+                    "role": "（待补充）",
+                    "first_chapter": first_seen.get(name, 0),
+                    "notes": f"离线提取，全书记录出现 {count} 次",
+                }
+                for name, count in sorted(counter.items(), key=lambda item: item[1], reverse=True)
+                if count >= 3
+            ][:40]
+            return {
+                "characters": characters,
+                "settings": [],
+                "key_facts": [],
+                "unresolved_threads": [],
+                "offline": True,
+            }
+
+    def build_analyze_messages(self, book_id: str) -> list[dict[str, str]]:
+        book = self._load_book(book_id)
+        rows = self._load_index(book_id)
+        summaries = book.get("summaries") or {}
+        summary_lines = [
+            f"第{row['order']}章《{row['title']}》：{summaries.get(row['id']) or '（无摘要）'}"
+            for row in rows[:60]
+        ]
+        system = "你是一位资深小说编辑，负责为长篇作品建立稳定的创作档案。"
+        user = (
+            f"书名：《{book.get('name') or '未命名'}》\n"
+            f"类型：{book.get('genre') or '未分类'}\n"
+            f"简介：{book.get('summary') or '无'}\n\n"
+            f"章节摘要（共 {len(rows)} 章，列出前 60 章）：\n"
+            + "\n".join(summary_lines)
+            + "\n\n请输出 JSON（不要代码块标记）：\n"
+            '{"characters":[{"name":"角色名","aliases":["别名"],"role":"主角/配角/反派/重要角色","first_chapter":1,"notes":"身份与当前状态"}],'
+            '"settings":[{"name":"地点/组织/关键物品","type":"地点/组织/物品","notes":"说明"}],'
+            '"key_facts":["已确认的设定与事实"],'
+            '"unresolved_threads":["尚未回收的伏笔或悬念"]}'
+        )
+        return [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ]
+
+    def store_analysis(self, book_id: str, text: str) -> dict[str, Any]:
+        raw = _extract_json_object(text)
+        analysis: dict[str, Any] = {
+            "characters": [],
+            "settings": [],
+            "key_facts": [],
+            "unresolved_threads": [],
+            "offline": False,
+            "updated_at": _now(),
+        }
+        if isinstance(raw, dict):
+            analysis["characters"] = [
+                {
+                    "name": str(item.get("name") or "").strip() or "未命名",
+                    "aliases": [str(alias).strip() for alias in (item.get("aliases") or []) if str(alias).strip()],
+                    "role": str(item.get("role") or "角色").strip(),
+                    "first_chapter": int(item.get("first_chapter") or 0),
+                    "notes": str(item.get("notes") or "").strip(),
+                }
+                for item in (raw.get("characters") or [])
+                if isinstance(item, dict)
+            ]
+            analysis["settings"] = [
+                {
+                    "name": str(item.get("name") or "").strip() or "未命名",
+                    "type": str(item.get("type") or "地点").strip(),
+                    "notes": str(item.get("notes") or "").strip(),
+                }
+                for item in (raw.get("settings") or [])
+                if isinstance(item, dict)
+            ]
+            analysis["key_facts"] = [str(item).strip() for item in (raw.get("key_facts") or []) if str(item).strip()]
+            analysis["unresolved_threads"] = [
+                str(item).strip() for item in (raw.get("unresolved_threads") or []) if str(item).strip()
+            ]
+        with self._lock:
+            book = self._load_book(book_id)
+            book["analysis"] = analysis
+            self._save_book(book)
+            return analysis
+
+    def build_summary_messages(self, book_id: str, chapter_id: str) -> list[dict[str, str]]:
+        chapter = self.get_chapter(book_id, chapter_id)
+        book = self._load_book(book_id)
+        system = "你是一位小说编辑，负责为长篇作品维护章节摘要。"
+        user = (
+            f"书名：《{book.get('name') or '未命名'}》\n"
+            f"章节：第 {chapter['order']} 章《{chapter['title']}》\n\n"
+            f"正文：\n{chapter['content'][:6000]}\n\n"
+            "请用 150 字以内概括本章：发生的关键事件、登场或变化的人物、"
+            "新增的设定/物品/伏笔。只输出摘要正文，不要解释。"
+        )
+        return [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ]
+
+    def store_chapter_summary(self, book_id: str, chapter_id: str, text: str) -> str:
+        summary = text.strip() or _heuristic_summary("")
+        with self._lock:
+            book = self._load_book(book_id)
+            book.setdefault("summaries", {})[chapter_id] = summary
+            self._save_book(book)
+            return summary
+
     # AI context -----------------------------------------------------------
 
     def build_ai_write_messages(
@@ -339,11 +494,25 @@ class BookStore:
         """
         book = self._load_book(book_id)
         chapter = self.get_chapter(book_id, chapter_id)
-        previous = self.chapter_summaries(book_id, int(chapter["order"]), limit=3)
+        previous = self.chapter_summaries(book_id, int(chapter["order"]), limit=5)
         prior_text = "\n".join(
             f"第{int(item['order'])}章《{item['title']}》摘要：{item['summary']}"
             for item in previous
         ) or "（这是全书第一章，没有前文摘要。）"
+        analysis = self.book_analysis(book_id)
+        character_lines = "\n".join(
+            f"- {item['name']}（{item.get('role') or '角色'}，首现第{item.get('first_chapter') or '?'}章）："
+            f"{item.get('notes') or ''}"
+            for item in (analysis.get("characters") or [])[:24]
+        ) or "（暂无角色索引）"
+        setting_lines = "\n".join(
+            f"- {item['name']}（{item.get('type') or '地点'}）：{item.get('notes') or ''}"
+            for item in (analysis.get("settings") or [])[:16]
+        ) or "（暂无设定索引）"
+        fact_lines = "\n".join(f"- {item}" for item in (analysis.get("key_facts") or [])[:16]) or "（暂无）"
+        thread_lines = (
+            "\n".join(f"- {item}" for item in (analysis.get("unresolved_threads") or [])[:16]) or "（暂无）"
+        )
 
         mode_name = {"continue": "续写", "rewrite": "改写", "expand": "扩写"}.get(mode, "续写")
         guidance_line = f"用户引导：{guidance.strip()}" if guidance.strip() else "用户引导：无，按故事自然走向。"
@@ -373,12 +542,18 @@ class BookStore:
             "1) 严格忠于前文设定、人物性格、说话方式和时间线；"
             "2) 长短句交替，控制节奏，段落留白；"
             "3) 避免AI腔（慎用“仿佛、不禁、然而、不禁让人”等套话）；"
-            "4) 不发明与已知信息冲突的情节。"
+            "4) 不发明与已知信息冲突的情节，不改变已确认事实；"
+            "5) 尊重角色索引与待回收伏笔，续写时可以推进伏笔但不能凭空推翻设定；"
+            "6) 与全书文风保持一致。"
         )
         user = (
             f"书名：《{book.get('name') or '未命名'}》\n"
             f"类型：{book.get('genre') or '未分类'}\n"
             f"全书简介：{book.get('summary') or '无'}\n\n"
+            f"角色索引：\n{character_lines}\n\n"
+            f"设定索引：\n{setting_lines}\n\n"
+            f"已确认事实：\n{fact_lines}\n\n"
+            f"待回收伏笔：\n{thread_lines}\n\n"
             f"前文摘要：\n{prior_text}\n\n"
             f"{guidance_line}\n\n"
             f"{instruction}\n\n"
@@ -395,3 +570,23 @@ def _heuristic_summary(content: str, limit: int = 200) -> str:
     if not text:
         return "（无内容）"
     return text[:limit] + ("……" if len(text) > limit else "")
+
+
+def _extract_json_object(text: str) -> dict[str, Any] | None:
+    cleaned = (text or "").strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```[a-zA-Z]*\s*", "", cleaned)
+        cleaned = re.sub(r"\s*```$", "", cleaned)
+    try:
+        data = json.loads(cleaned)
+        return data if isinstance(data, dict) else None
+    except (ValueError, TypeError):
+        pass
+    match = re.search(r"\{.*\}", cleaned, re.DOTALL)
+    if match:
+        try:
+            data = json.loads(match.group(0))
+            return data if isinstance(data, dict) else None
+        except (ValueError, TypeError):
+            return None
+    return None
