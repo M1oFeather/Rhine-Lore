@@ -64,7 +64,7 @@ import {
 import GameIcon from "./components/GameIcon.vue";
 import type { GameIconName } from "./icons/gameIconPack";
 
-type Activity = "studio" | "story" | "world" | "characters" | "chat" | "novel" | "context" | "evolution" | "map" | "settings";
+type Activity = "studio" | "story" | "world" | "characters" | "chat" | "novel" | "context" | "evolution" | "read" | "map" | "settings";
 type WorkMode = "write" | "advanced";
 type BackendStatus = "checking" | "online" | "offline";
 type CreateDestination = "novel" | "chat";
@@ -128,12 +128,13 @@ const activities: {id: Activity; label: string; icon: GameIconName; description:
   {id: "novel", label: "正文", icon: "book", description: "阅读和编辑章节"},
   {id: "context", label: "资料库", icon: "search", description: "查找设定和参考资料"},
   {id: "evolution", label: "演化", icon: "nodes", description: "沙盘观演与有限视角小说"},
+  {id: "read", label: "小说阅读", icon: "book", description: "像追更一样读演化正文"},
   {id: "map", label: "地图", icon: "nodes", description: "故事空间与地点连接"},
   {id: "settings", label: "设置", icon: "settings", description: "连接、高级和维护"},
 ];
 
 const activity = ref<Activity>("studio");
-const sidebarCollapsed = ref(false);
+const sidebarCollapsed = ref(localStorage.getItem("rhine-lore-sidebar-collapsed") === "1");
 const notice = ref("就绪");
 const busyAction = ref("");
 const runState = ref<Record<string, unknown> | null>(null);
@@ -688,12 +689,24 @@ async function openActivity(next: Activity): Promise<void> {
   if (next === "evolution") {
     await loadEvolutionView();
   }
+  if (next === "read") {
+    await loadEvolutionView();
+    if (evolutionNovelChapters.value.length > 0) {
+      evolutionChapterIndex.value = evolutionNovelChapters.value.length - 1;
+    }
+    requestAnimationFrame(() => window.scrollTo({top: 0, behavior: "auto"}));
+  }
   if (next === "context") {
     await Promise.allSettled([refreshNodes(), refreshReview()]);
   }
   if (next === "settings") {
     await Promise.allSettled([refreshWorkspaces(), refreshReview()]);
   }
+}
+
+function toggleSidebar(): void {
+  sidebarCollapsed.value = !sidebarCollapsed.value;
+  localStorage.setItem("rhine-lore-sidebar-collapsed", sidebarCollapsed.value ? "1" : "0");
 }
 
 async function openKnowledgeIntake(): Promise<void> {
@@ -2683,6 +2696,12 @@ function openEvolutionAdjacentChapter(direction: -1 | 1): void {
     return;
   }
   evolutionChapterIndex.value = next;
+  window.scrollTo({top: 0, behavior: "smooth"});
+}
+
+function selectReadingChapter(index: number): void {
+  evolutionChapterIndex.value = index;
+  window.scrollTo({top: 0, behavior: "smooth"});
 }
 
 function setChapterTurns(turns: number): void {
@@ -2884,6 +2903,7 @@ onUnmounted(() => {
             'mobile-parent-active': isStudioChildActivity(item.id),
           }"
           @click="openActivity(item.id)"
+          :title="sidebarCollapsed ? item.label : ''"
         >
           <span class="nav-icon-dot"><GameIcon :name="item.icon" :label="item.label" /></span>
           <span class="nav-label">
@@ -2892,8 +2912,8 @@ onUnmounted(() => {
           </span>
         </el-button>
       </nav>
-      <el-button class="collapse-button" @click="sidebarCollapsed = !sidebarCollapsed">
-        {{ sidebarCollapsed ? ">" : "<" }}
+      <el-button class="collapse-button" title="折叠/展开侧边栏" aria-label="折叠/展开侧边栏" @click="toggleSidebar">
+        {{ sidebarCollapsed ? "»" : "«" }}
       </el-button>
     </aside>
 
@@ -4549,7 +4569,164 @@ onUnmounted(() => {
             </template>
           </section>
 
-          <section v-else class="activity-panel">
+          <section v-else-if="activity === 'read'" class="activity-panel reading-panel">
+            <el-card v-if="!evolutionState" shadow="never" class="reading-empty-card">
+              <template #header>
+                <div class="card-header">
+                  <span>小说阅读</span>
+                  <small>由演化沙盘驱动的连载阅读</small>
+                </div>
+              </template>
+              <div class="reading-empty">
+                <strong>还没有演化存档</strong>
+                <p>先去「演化沙盘」建立故事并推进几回合，这里就会像连载小说一样逐章呈现。</p>
+                <el-button type="primary" @click="openActivity('evolution')">去演化沙盘</el-button>
+              </div>
+            </el-card>
+
+            <template v-else>
+              <div class="reading-toolbar">
+                <div class="reading-toolbar-title">
+                  <span class="section-icon"><GameIcon name="book" /></span>
+                  <div>
+                    <strong>演化小说</strong>
+                    <small>{{ evolutionView?.novel.viewpoint_name || "主角" }} 的视角</small>
+                  </div>
+                </div>
+                <div class="reading-toolbar-controls">
+                  <el-select
+                    v-model="evolutionViewpoint"
+                    size="small"
+                    class="reading-viewpoint"
+                    @change="switchEvolutionViewpoint"
+                  >
+                    <el-option
+                      v-for="viewpoint in evolutionView?.viewpoints ?? []"
+                      :key="viewpoint.id"
+                      :label="`${viewpoint.name} 的视角`"
+                      :value="viewpoint.id"
+                    />
+                  </el-select>
+                  <el-select
+                    v-model="activeProject.chapter_turns"
+                    size="small"
+                    class="reading-chapter-size"
+                    @change="setChapterTurns"
+                  >
+                    <el-option
+                      v-for="size in chapterTurnsOptions"
+                      :key="size"
+                      :label="`单章 ${size} 回合`"
+                      :value="size"
+                    />
+                  </el-select>
+                  <el-input-number v-model="readerFontSize" :min="15" :max="26" size="small" title="字号" />
+                  <el-button size="small" @click="openActivity('evolution')">演化沙盘</el-button>
+                  <el-button size="small" type="primary" @click="acceptEvolutionIntoChapter">
+                    接收进正文
+                  </el-button>
+                </div>
+              </div>
+
+              <p class="limited-perspective-note">
+                你只能看到 {{ evolutionView?.novel.viewpoint_name || '主角' }} 亲眼所见或亲身经历的事。
+                沙盘里还有 <strong>{{ evolutionView?.novel.hidden_events ?? 0 }}</strong> 件未被看见的事件。
+              </p>
+
+              <template v-if="evolutionNovelChapters.length > 0">
+                <div class="evolution-chapter-strip">
+                  <button
+                    v-for="chapter in evolutionNovelChapters"
+                    :key="chapter.index"
+                    type="button"
+                    class="evolution-chapter-chip"
+                    :class="{active: evolutionActiveChapter?.index === chapter.index}"
+                    @click="selectReadingChapter(chapter.index)"
+                  >
+                    {{ chapter.title }}
+                    <small>
+                      {{
+                        chapter.startTurn === chapter.endTurn
+                          ? `第${chapter.startTurn}回合`
+                          : `第${chapter.startTurn}–${chapter.endTurn}回合`
+                      }}
+                    </small>
+                  </button>
+                </div>
+
+                <div class="reading-stage">
+                  <article class="evolution-chapter-reader reading-main" :style="{fontSize: `${readerFontSize}px`}">
+                    <h2>{{ evolutionActiveChapter.title }}</h2>
+                    <p class="evolution-chapter-meta">
+                      {{
+                        evolutionActiveChapter.startTurn === evolutionActiveChapter.endTurn
+                          ? `第 ${evolutionActiveChapter.startTurn} 回合`
+                          : `第 ${evolutionActiveChapter.startTurn}–${evolutionActiveChapter.endTurn} 回合`
+                      }}
+                      · {{ evolutionActiveChapter.actName }}
+                    </p>
+                    <p v-for="(paragraph, index) in evolutionActiveChapter.paragraphs" :key="index">
+                      {{ paragraph }}
+                    </p>
+                    <div
+                      v-if="evolutionActiveChapter.index === evolutionNovelChapters.length - 1 && evolutionState.ending"
+                      class="novel-ending-block"
+                    >
+                      <strong>尾声</strong>
+                      <p>{{ evolutionState.ending }}</p>
+                    </div>
+                    <div class="evolution-chapter-nav">
+                      <el-button
+                        size="small"
+                        :disabled="evolutionChapterIndex <= 0"
+                        @click="openEvolutionAdjacentChapter(-1)"
+                      >
+                        上一章
+                      </el-button>
+                      <el-button
+                        size="small"
+                        :disabled="evolutionChapterIndex >= evolutionNovelChapters.length - 1"
+                        @click="openEvolutionAdjacentChapter(1)"
+                      >
+                        下一章
+                      </el-button>
+                    </div>
+                    <div class="regenerate-chapter-bar">
+                      <el-button
+                        size="small"
+                        :loading="chapterBusy"
+                        :disabled="!llmConfigured"
+                        @click="regenerateCurrentChapter"
+                      >
+                        重新生成本章
+                      </el-button>
+                      <small v-if="!llmConfigured">需要 AI 通道</small>
+                    </div>
+                    <div
+                      v-if="evolutionActiveChapter.index === evolutionNovelChapters.length - 1"
+                      class="next-chapter-panel"
+                    >
+                      <div class="next-chapter-copy">
+                        <strong>生成下一章</strong>
+                        <small>读完本章后点击生成；可以给下一章一个方向，留空则由故事自己延续。</small>
+                      </div>
+                      <el-input
+                        v-model="chapterGuidanceInput"
+                        placeholder="引导下一章，例如：让林薇在旧码头发现火光"
+                        clearable
+                      />
+                      <el-button type="primary" :loading="chapterBusy" @click="generateNextChapter">
+                        生成下一章
+                      </el-button>
+                    </div>
+                  </article>
+                </div>
+              </template>
+              <p v-else class="empty-paragraph reading-empty-hint">还没有可读的章节，先推进一回合。</p>
+            </template>
+          </section>
+
+          <section v-else-if="activity === 'settings'" class="activity-panel">
             <el-tabs v-model="settingsTab" class="settings-tabs">
               <el-tab-pane label="常用设置" name="basic">
                 <el-row :gutter="14">
