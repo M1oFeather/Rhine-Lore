@@ -20,5 +20,5 @@ android/app/build/
 android/local.properties
 android/app/src/main/assets/
 android/keystore.properties
-dist/
+/dist/
 site/
