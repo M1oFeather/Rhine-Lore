@@ -134,17 +134,17 @@ const WRITING_QUALITY_GUIDE =
   "7) 与已知设定、人物声音、时间线严格一致，不发明未发生的情节。";
 
 const activities: {id: Activity; label: string; icon: GameIconName; description: string}[] = [
-  {id: "studio", label: "工作台", icon: "book", description: "选择故事和开始写作"},
-  {id: "story", label: "故事档案", icon: "book", description: "名称、类型和概要"},
-  {id: "world", label: "世界观", icon: "nodes", description: "规则、地点和历史"},
-  {id: "characters", label: "角色", icon: "nodes", description: "人物、动机和关系"},
-  {id: "chat", label: "对话创作", icon: "nodes", description: "聊剧情，生成草稿"},
-  {id: "novel", label: "正文", icon: "book", description: "阅读和编辑章节"},
-  {id: "context", label: "资料库", icon: "search", description: "查找设定和参考资料"},
-  {id: "evolution", label: "演化", icon: "nodes", description: "沙盘观演与有限视角小说"},
-  {id: "read", label: "小说阅读", icon: "book", description: "像追更一样读演化正文"},
-  {id: "shelf", label: "书架", icon: "book", description: "导入并阅读 TXT 长篇小说"},
-  {id: "map", label: "地图", icon: "nodes", description: "故事空间与地点连接"},
+  {id: "studio", label: "工作台", icon: "home", description: "选择故事和开始写作"},
+  {id: "story", label: "故事档案", icon: "file-text", description: "名称、类型和概要"},
+  {id: "world", label: "世界观", icon: "globe", description: "规则、地点和历史"},
+  {id: "characters", label: "角色", icon: "users", description: "人物、动机和关系"},
+  {id: "chat", label: "对话创作", icon: "message", description: "聊剧情，生成草稿"},
+  {id: "novel", label: "正文", icon: "pen", description: "阅读和编辑章节"},
+  {id: "context", label: "资料库", icon: "database", description: "查找设定和参考资料"},
+  {id: "evolution", label: "演化", icon: "sparkles", description: "沙盘观演与有限视角小说"},
+  {id: "read", label: "小说阅读", icon: "book-open", description: "像追更一样读演化正文"},
+  {id: "shelf", label: "书架", icon: "library", description: "导入并阅读 TXT 长篇小说"},
+  {id: "map", label: "地图", icon: "map", description: "故事空间与地点连接"},
   {id: "settings", label: "设置", icon: "settings", description: "连接、高级和维护"},
 ];
 
@@ -3299,18 +3299,9 @@ onUnmounted(() => {
       @change="handleChatAttach"
     />
     <aside class="sidebar" :class="{'mobile-more-open': mobileMoreOpen}">
-      <div class="sidebar-head">
-        <div class="brand">
-          <div class="brand-mark">RL</div>
-          <div class="brand-copy">
-            <strong>Rhine-Lore</strong>
-            <small>Story writing studio</small>
-          </div>
-        </div>
-        <button class="sidebar-close mobile-only" type="button" @click="mobileNavOpen = false">
-          ×
-        </button>
-      </div>
+      <button class="sidebar-close mobile-only" type="button" @click="mobileNavOpen = false">
+        ×
+      </button>
       <div class="sidebar-project">
         <el-select
           v-model="activeProjectId"
@@ -3348,7 +3339,7 @@ onUnmounted(() => {
         </el-button>
         <div class="nav-group-label mobile-only">更多</div>
         <el-button class="nav-item mobile-more-toggle" @click="mobileMoreOpen = !mobileMoreOpen">
-          <span class="nav-icon-dot"><GameIcon name="nodes" label="更多" /></span>
+          <span class="nav-icon-dot"><GameIcon name="more" label="更多" /></span>
           <span class="nav-label">
             <strong>{{ mobileMoreOpen ? "收起" : "更多功能" }}</strong>
             <small>{{ mobileMoreOpen ? "显示次要功能" : "故事档案 / 角色 / 演化沙盘等" }}</small>
@@ -3378,7 +3369,10 @@ onUnmounted(() => {
           <span class="status-dot" :class="backendStatusTone" />
           {{ backendStatusLabel }}
         </span>
-        <span>v0.1.0</span>
+        <span class="sidebar-footer-meta">
+          <i class="sidebar-footer-brand">RL</i>
+          v0.1.0
+        </span>
       </div>
       <el-button class="collapse-button" title="折叠/展开侧边栏" aria-label="折叠/展开侧边栏" @click="toggleSidebar">
         {{ sidebarCollapsed ? "»" : "«" }}
@@ -3439,22 +3433,22 @@ onUnmounted(() => {
 
             <div class="home-quick-grid">
               <button class="home-quick-tile" type="button" @click="startWriting">
-                <span class="home-quick-icon"><GameIcon name="book" label="正文" /></span>
+                <span class="home-quick-icon"><GameIcon name="pen" label="正文" /></span>
                 <strong>正文</strong>
                 <small>{{ activeProject.chapters.length > 0 ? "继续写作" : "写第一章" }}</small>
               </button>
               <button class="home-quick-tile" type="button" @click="openActivity('read')">
-                <span class="home-quick-icon"><GameIcon name="book" label="小说阅读" /></span>
+                <span class="home-quick-icon"><GameIcon name="book-open" label="小说阅读" /></span>
                 <strong>小说阅读</strong>
                 <small>追演化连载</small>
               </button>
               <button class="home-quick-tile" type="button" @click="openActivity('shelf')">
-                <span class="home-quick-icon"><GameIcon name="nodes" label="书架" /></span>
+                <span class="home-quick-icon"><GameIcon name="library" label="书架" /></span>
                 <strong>书架</strong>
                 <small>TXT 长篇小说</small>
               </button>
               <button class="home-quick-tile" type="button" @click="openActivity('context')">
-                <span class="home-quick-icon"><GameIcon name="search" label="资料库" /></span>
+                <span class="home-quick-icon"><GameIcon name="database" label="资料库" /></span>
                 <strong>资料库</strong>
                 <small>草稿与检索</small>
               </button>

@@ -1,16 +1,85 @@
-import book from "../assets/icons/book.svg?url";
-import nodes from "../assets/icons/nodes.svg?url";
-import review from "../assets/icons/review.svg?url";
-import search from "../assets/icons/search.svg?url";
-import settings from "../assets/icons/settings.svg?url";
+export type GameIconDef = {
+  paths?: string[];
+  circles?: {cx: number; cy: number; r: number}[];
+};
 
-export const gameIconUrls = {
-  book,
-  nodes,
-  review,
-  search,
-  settings,
-} as const;
+export const gameIcons: Record<string, GameIconDef> = {
+  home: {
+    paths: ["M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z", "M9 22V12h6v10"],
+  },
+  pen: {
+    paths: ["M12 20h9", "M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"],
+  },
+  "book-open": {
+    paths: [
+      "M2 4h6a4 4 0 0 1 4 4v12a3 3 0 0 0-3-3H2z",
+      "M22 4h-6a4 4 0 0 0-4 4v12a3 3 0 0 1 3-3h7z",
+    ],
+  },
+  library: {
+    paths: ["m16 6 4 14", "M12 6v14", "M8 8v12", "M4 4v16"],
+  },
+  database: {
+    paths: [
+      "M21 5c0 1.66-4 3-9 3s-9-1.34-9-3 4-3 9-3 9 1.34 9 3z",
+      "M21 12c0 1.66-4 3-9 3s-9-1.34-9-3",
+      "M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5",
+    ],
+  },
+  sparkles: {
+    paths: [
+      "M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z",
+      "M20 3v4",
+      "M22 5h-4",
+      "M4 17v2",
+      "M5 18H3",
+    ],
+  },
+  "file-text": {
+    paths: [
+      "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z",
+      "M14 2v6h6",
+      "M16 13H8",
+      "M16 17H8",
+      "M10 9H8",
+    ],
+  },
+  globe: {
+    paths: [
+      "M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z",
+      "M2 12h20",
+    ],
+    circles: [{cx: 12, cy: 12, r: 10}],
+  },
+  users: {
+    paths: [
+      "M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2",
+      "M23 21v-2a4 4 0 0 0-3-3.87",
+      "M16 3.13a4 4 0 0 1 0 7.75",
+    ],
+    circles: [{cx: 9, cy: 7, r: 4}],
+  },
+  message: {
+    paths: ["M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"],
+  },
+  map: {
+    paths: ["M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2z", "M9 4v14", "M15 6v14"],
+  },
+  settings: {
+    paths: [
+      "M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z",
+    ],
+    circles: [{cx: 12, cy: 12, r: 3}],
+  },
+  more: {
+    circles: [
+      {cx: 5, cy: 12, r: 1.5},
+      {cx: 12, cy: 12, r: 1.5},
+      {cx: 19, cy: 12, r: 1.5},
+    ],
+  },
+};
 
-export type GameIconName = keyof typeof gameIconUrls;
+export type GameIconName = keyof typeof gameIcons;
 
+export const gameIconNames = Object.keys(gameIcons) as GameIconName[];
