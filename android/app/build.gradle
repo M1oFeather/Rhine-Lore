@@ -13,6 +13,10 @@ android {
         targetSdk 34
         versionCode 1
         versionName "0.1.0"
+        ndk {
+            // arm64-v8a 覆盖绝大多数真机；x86_64 便于模拟器调试
+            abiFilters "arm64-v8a", "x86_64"
+        }
     }
 
     sourceSets {
@@ -34,7 +38,10 @@ android {
 }
 
 chaquopy {
-    defaultPythonVersion "3.11"
+    defaultConfig {
+        version = "3.11"
+        buildPython "C:/Users/BaiOS/AppData/Local/Programs/Python/Python311/python.exe"
+    }
 }
 
 tasks.register('copyWebAssets', Copy) {

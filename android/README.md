@@ -22,24 +22,31 @@ Android App
    - 数据目录由 RHINE_LORE_DATA_DIR 指向 filesDir/data
 ```
 
-## 构建（需要 Android Studio 或 Android SDK）
+## 构建（本机环境已全部迁到 D 盘）
 
-1. 安装 [Android Studio](https://developer.android.com/studio)（自带 SDK），
-   或安装 Android SDK 并设置 `ANDROID_HOME`。
-2. 打开本项目目录 `android/`（Android Studio 会自动同步 Gradle 与 Chaquopy）。
-3. 首次构建会下载 Gradle、Android 依赖和 Chaquopy Python 运行时（需网络）。
-4. 构建 APK：菜单 Build -> Build Bundle(s) / APK(s) -> Build APK(s)，
-   或命令行：
+本机 Android 构建环境位于 D 盘：
+
+- Android SDK：`D:\Android\Sdk`（platform-tools、android-34、build-tools 34.0.0）
+- Gradle 8.7：`D:\Gradle\gradle-8.7`
+- Gradle 缓存：`D:\GradleHome\.gradle`（`GRADLE_USER_HOME=D:\GradleHome`）
+- Python 3.11：Chaquopy 构建用
+  `C:/Users/BaiOS/AppData/Local/Programs/Python/Python311/python.exe`
+  （见 `app/build.gradle` 的 `chaquopy.defaultConfig.buildPython`）
+
+命令行构建（PowerShell）：
 
 ```powershell
-cd android
-.\gradlew.bat assembleDebug
+$env:ANDROID_HOME = "D:\Android\Sdk"
+$env:ANDROID_SDK_ROOT = "D:\Android\Sdk"
+$env:GRADLE_USER_HOME = "D:\GradleHome"
+cd E:\Project\Python\Rhine-Lore\android
+.\gradlew.bat assembleDebug --no-daemon
 ```
 
 产物：`android/app/build/outputs/apk/debug/app-debug.apk`
 
-> `gradle-wrapper.jar` 已随仓库提供；`ui/dist` 会在构建时由
-> `copyWebAssets` 任务自动拷贝进 APK 资源，无需手动处理。
+> `ui/dist` 会在构建时由 `copyWebAssets` 任务自动拷贝进 APK 资源，无需手动
+> 处理；本机已验证可产出约 35 MB 的 debug APK（arm64-v8a + x86_64）。
 
 ## 已知边界（内嵌版）
 
@@ -48,6 +55,5 @@ cd android
 - 首次进入需在首页配置 AI 通道（DeepSeek/OpenAI 兼容），密钥保存在 App 内。
 - 本版绑定 `127.0.0.1:8796`，仅 App 自身可访问；如需手机对外提供服务，
   把 `rhine_lore_launcher.py` 的 host 改为 `0.0.0.0` 并加防火墙放行。
-- 当前工程为“后端已本地验证、APK 构建待你机器验证”状态：引擎、存储、直连
-  模型在 PC 上以内嵌模式跑通，Android 侧需在装有 SDK 的机器上构建后再做真机
-  验收。
+- 当前状态：引擎、存储、直连模型在 PC 内嵌模式已跑通，APK 已在本机构建
+  成功（内容含 Python 引擎与 Web 前端），真机安装验收仍待进行。
