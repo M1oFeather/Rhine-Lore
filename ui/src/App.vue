@@ -3299,10 +3299,32 @@ onUnmounted(() => {
       @change="handleChatAttach"
     />
     <aside class="sidebar" :class="{'mobile-more-open': mobileMoreOpen}">
-      <div class="brand">
-        <div class="brand-mark">RL</div>
-        <strong>Rhine-Lore</strong>
-        <small>Story writing studio</small>
+      <div class="sidebar-head">
+        <div class="brand">
+          <div class="brand-mark">RL</div>
+          <div class="brand-copy">
+            <strong>Rhine-Lore</strong>
+            <small>Story writing studio</small>
+          </div>
+        </div>
+        <button class="sidebar-close mobile-only" type="button" @click="mobileNavOpen = false">
+          ×
+        </button>
+      </div>
+      <div class="sidebar-project">
+        <el-select
+          v-model="activeProjectId"
+          class="project-select"
+          size="small"
+          @change="handleProjectChange"
+        >
+          <el-option
+            v-for="project in projects"
+            :key="project.id"
+            :label="project.name"
+            :value="project.id"
+          />
+        </el-select>
       </div>
       <nav class="sidebar-nav">
         <div class="nav-group-label mobile-only">主要</div>
@@ -3351,7 +3373,13 @@ onUnmounted(() => {
           </span>
         </el-button>
       </nav>
-      <div class="sidebar-footer mobile-only">Rhine-Lore v0.1.0 · 本地优先</div>
+      <div class="sidebar-footer">
+        <span class="sidebar-footer-status">
+          <span class="status-dot" :class="backendStatusTone" />
+          {{ backendStatusLabel }}
+        </span>
+        <span>v0.1.0</span>
+      </div>
       <el-button class="collapse-button" title="折叠/展开侧边栏" aria-label="折叠/展开侧边栏" @click="toggleSidebar">
         {{ sidebarCollapsed ? "»" : "«" }}
       </el-button>
@@ -3379,58 +3407,10 @@ onUnmounted(() => {
           </div>
         </div>
         <div class="workspace-topbar-actions">
-          <span v-if="lastSavedAt" class="save-status">已自动保存 {{ lastSavedAt }}</span>
-          <el-select v-model="activeProjectId" class="project-select" @change="handleProjectChange">
-            <el-option
-              v-for="project in projects"
-              :key="project.id"
-              :label="project.name"
-              :value="project.id"
-            />
-          </el-select>
-          <el-radio-group v-model="workMode" size="small" class="mode-switch" @change="switchWorkMode">
-            <el-radio-button value="write">写作</el-radio-button>
-            <el-radio-button value="advanced">高级</el-radio-button>
-          </el-radio-group>
-          <button class="backend-chip" :class="backendStatusTone" type="button" @click="testBackend">
-            <span class="status-dot" />
-            <span>{{ backendStatusLabel }}</span>
-          </button>
           <button class="backend-chip ai-status-chip" :class="aiStatusTone" type="button" @click="toggleAiPanel">
             <span class="status-dot" />
             <span>AI：{{ aiStatusLabel }}</span>
           </button>
-        </div>
-        <div v-if="aiPanelOpen" class="ai-status-panel">
-          <div class="ai-status-row" :class="aiStatusTone">
-            <strong>AI 生成通道 · {{ aiStatusLabel }}</strong>
-            <span>{{ aiStatusDetail || "点击「测试连接」检查通道状态" }}</span>
-          </div>
-          <div class="ai-status-fields">
-            <el-select v-model="llmPreset" size="small" @change="applyLlmProvider">
-              <el-option label="DeepSeek" value="deepseek" />
-              <el-option label="OpenAI" value="openai" />
-              <el-option label="自定义" value="custom" />
-            </el-select>
-            <el-input v-model="llmBaseUrl" size="small" placeholder="API 地址" />
-            <el-input v-model="llmModel" size="small" placeholder="模型" />
-            <el-input
-              v-model="llmApiKey"
-              type="password"
-              show-password
-              size="small"
-              placeholder="已配置则留空保持不变"
-            />
-          </div>
-          <div class="ai-status-actions">
-            <el-button size="small" :loading="aiStatus === 'checking'" @click="runAiCheck">
-              测试连接
-            </el-button>
-            <el-button size="small" type="primary" @click="saveLlmConfig">保存并检查</el-button>
-            <el-button size="small" @click="openDeepSeekKeyAssistant">DeepSeek 登录取 Key</el-button>
-            <el-button size="small" @click="pasteDeepSeekKey">从剪贴板读取</el-button>
-            <small>配置后对话创作与演化正文都走此通道；未配置时使用离线模板。</small>
-          </div>
         </div>
       </header>
 
@@ -6066,6 +6046,46 @@ onUnmounted(() => {
         </el-button>
       </div>
     </el-dialog>
+
+    <el-drawer
+      v-model="aiPanelOpen"
+      title="AI 生成通道"
+      direction="rtl"
+      size="min(380px, 88vw)"
+    >
+      <div class="ai-drawer-body">
+        <div class="ai-status-row" :class="aiStatusTone">
+          <strong>状态 · {{ aiStatusLabel }}</strong>
+          <span>{{ aiStatusDetail || "点击「测试连接」检查通道状态" }}</span>
+        </div>
+        <div class="ai-drawer-section">
+          <label>通道预设</label>
+          <el-select v-model="llmPreset" style="width: 100%" @change="applyLlmProvider">
+            <el-option label="DeepSeek" value="deepseek" />
+            <el-option label="OpenAI" value="openai" />
+            <el-option label="自定义" value="custom" />
+          </el-select>
+          <label>API 地址</label>
+          <el-input v-model="llmBaseUrl" placeholder="API 地址" />
+          <label>模型</label>
+          <el-input v-model="llmModel" placeholder="模型" />
+          <label>API Key</label>
+          <el-input
+            v-model="llmApiKey"
+            type="password"
+            show-password
+            placeholder="已配置则留空保持不变"
+          />
+        </div>
+        <div class="ai-status-actions">
+          <el-button :loading="aiStatus === 'checking'" @click="runAiCheck">测试连接</el-button>
+          <el-button type="primary" @click="saveLlmConfig">保存并检查</el-button>
+          <el-button @click="openDeepSeekKeyAssistant">DeepSeek 登录取 Key</el-button>
+          <el-button @click="pasteDeepSeekKey">从剪贴板读取</el-button>
+          <small>配置后对话创作与演化正文都走此通道；未配置时使用离线模板。</small>
+        </div>
+      </div>
+    </el-drawer>
   </div>
 </template>
 
