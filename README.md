@@ -274,6 +274,12 @@ npm run build
 python -m unittest discover -s tests
 ```
 
+## Android（全内嵌）
+
+`android/` 目录包含全内嵌安卓工程：Chaquopy 在 App 内运行演化引擎与本地服务，
+WebView 加载现有界面，数据与 AI 配置全部保存在手机本地，不依赖电脑。构建
+与已知边界见 [android/README.md](android/README.md)。
+
 ## Boundary
 
 Rhine-Lore does not import private Rhine-Vault Python modules, read the

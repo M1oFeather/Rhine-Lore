@@ -42,9 +42,10 @@ from rhine_lore.engine import (
 ALLOWED_PROXY_HOSTS = {"127.0.0.1", "localhost", "::1"}
 ALLOWED_METHODS = {"GET", "POST", "PATCH"}
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-PROJECTS_DIR = PROJECT_ROOT / "data" / "projects"
+DATA_ROOT = Path(os.environ.get("RHINE_LORE_DATA_DIR") or (PROJECT_ROOT / "data"))
+PROJECTS_DIR = DATA_ROOT / "projects"
 PROJECT_BACKUP_FORMAT = "rhine-lore-project-v1"
-LLM_CONFIG_PATH = PROJECT_ROOT / "data" / "llm-config.json"
+LLM_CONFIG_PATH = DATA_ROOT / "llm-config.json"
 DEFAULT_VAULT_HOST = "127.0.0.1"
 DEFAULT_VAULT_PORT = 8795
 DEFAULT_VAULT_PORT_CANDIDATES = (8795, 8796, 8797)
@@ -272,6 +273,8 @@ def _coerce_local_host(value: Any) -> str:
 
 
 def _vault_autostart_enabled() -> bool:
+    if os.environ.get("RHINE_LORE_EMBEDDED") == "1":
+        return False
     raw = os.environ.get("RHINE_LORE_DISABLE_VAULT_AUTOSTART", "").strip().lower()
     return raw not in {"1", "true", "yes", "on"}
 
@@ -474,6 +477,26 @@ def _resolve_llm(payload_llm: dict[str, Any] | None = None) -> dict[str, str]:
 
 def _chat_with_vault(messages: list[dict[str, str]], llm: dict[str, Any]) -> str:
     """Call the local Vault OpenAI-compatible chat endpoint and return text."""
+    if os.environ.get("RHINE_LORE_EMBEDDED") == "1":
+        base = str(llm.get("base_url") or "").rstrip("/")
+        if not base or not llm.get("model"):
+            raise ValueError("未配置 API 地址或模型")
+        payload = {"model": llm["model"], "messages": messages, "stream": False}
+        request = Request(
+            base + "/chat/completions",
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {llm['api_key']}",
+            },
+            method="POST",
+        )
+        with urlopen(request, timeout=60) as response:
+            data = json.loads(response.read().decode("utf-8"))
+        try:
+            return str(data["choices"][0]["message"]["content"])
+        except (KeyError, IndexError, TypeError) as exc:
+            raise ValueError(f"AI 返回格式异常：{data}") from exc
     vault_base = VAULT_MANAGER.status()["base_url"]
     target = _join_base_and_path(vault_base, "/api/llm/openai-compatible/chat")
     chat_body = {
