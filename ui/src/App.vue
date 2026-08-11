@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 
 import {
   type ApiRecord,
@@ -196,6 +196,8 @@ const selectedKnowledgeIds = ref<string[]>([]);
 const proposals = ref<ApiRecord[]>([]);
 const stagingEntries = ref<ApiRecord[]>([]);
 const chatInput = ref("");
+const chatThinking = ref(false);
+const chatThreadRef = ref<HTMLElement | null>(null);
 const chatAttachment = ref<{name: string; kind: "txt" | "project" | "knowledge"; text: string} | null>(null);
 const chatAttachInput = ref<HTMLInputElement | null>(null);
 const chatMode = ref<"chat" | "adjust">("chat");
@@ -1558,29 +1560,35 @@ async function sendCreativeMessage(): Promise<void> {
   const fallback = localCreativeDraft(text);
   const styleCard = buildStyleCard();
   const attachments = chatAttachment.value ? [chatAttachment.value] : [];
-  const result = await perform("对话创作", () => {
-    if (llmConfigured.value) {
-      return llmServerChat(
-        [
-          {
-            role: "system",
-            content:
-              "你是 Rhine-Lore 的创作助手：基于用户给出的世界观、角色与章节续写或讨论剧情，不要编造未提供的设定。" +
-              (styleCard ? `\n风格基准（必须严格遵守）：\n${styleCard}` : "") +
-              WRITING_QUALITY_GUIDE,
-          },
-          {role: "user", content: prompt},
-        ],
-        attachments,
-      );
-    }
-    return fakeCreativeAnswer({
-      query: prompt,
-      profile_id: profileId.value,
-      result_limit: resultLimit.value,
-      tags: ["lore"],
+  let result: any = null;
+  chatThinking.value = true;
+  try {
+    result = await perform("对话创作", () => {
+      if (llmConfigured.value) {
+        return llmServerChat(
+          [
+            {
+              role: "system",
+              content:
+                "你是 Rhine-Lore 的创作助手：基于用户给出的世界观、角色与章节续写或讨论剧情，不要编造未提供的设定。" +
+                (styleCard ? `\n风格基准（必须严格遵守）：\n${styleCard}` : "") +
+                WRITING_QUALITY_GUIDE,
+            },
+            {role: "user", content: prompt},
+          ],
+          attachments,
+        );
+      }
+      return fakeCreativeAnswer({
+        query: prompt,
+        profile_id: profileId.value,
+        result_limit: resultLimit.value,
+        tags: ["lore"],
+      });
     });
-  });
+  } finally {
+    chatThinking.value = false;
+  }
   let reply = result ? extractAssistantText(result, fallback) : fallback;
   if (reply && reply !== fallback && activeProject.value.polish_writing && llmConfigured.value) {
     notice.value = "正在润色…";
@@ -1643,6 +1651,47 @@ function handleChatAttach(event: Event): void {
 function removeChatAttachment(): void {
   chatAttachment.value = null;
 }
+
+function handleChatKeydown(event: KeyboardEvent): void {
+  if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+    event.preventDefault();
+    void sendCreativeMessage();
+  }
+}
+
+async function copyChatText(text: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(text);
+    markSaved("已复制到剪贴板");
+  } catch {
+    runState.value = {error: "复制失败，请手动选择复制"};
+  }
+}
+
+function chatTime(iso: string): string {
+  if (!iso) {
+    return "";
+  }
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+  return date.toLocaleTimeString("zh-CN", {hour: "2-digit", minute: "2-digit"});
+}
+
+async function scrollChatToBottom(): Promise<void> {
+  await nextTick();
+  const el = chatThreadRef.value;
+  if (el) {
+    el.scrollTop = el.scrollHeight;
+  }
+}
+
+watch(
+  () => activeProject.value.chat.length,
+  () => void scrollChatToBottom(),
+);
+watch(chatThinking, () => void scrollChatToBottom());
 
 function upsertProject(project: StoryProject): void {
   const normalized = normalizeProject(project);
@@ -4000,28 +4049,30 @@ onUnmounted(() => {
           </section>
 
           <section v-else-if="activity === 'chat'" class="activity-panel chat-panel">
-            <el-card shadow="never" class="chat-thread-card">
-              <template #header>
-                <div class="card-header">
-                  <span>和故事一起往前走</span>
-                  <el-space wrap>
-                    <el-button size="small" @click="saveChatAsKnowledge">保存为资料</el-button>
-                    <el-button size="small" @click="clearProjectChat">清空</el-button>
-                  </el-space>
+            <el-card shadow="never" class="chat-thread-card ai-chat-card">
+              <div class="ai-chat-header">
+                <div class="ai-chat-title">
+                  <span class="ai-chat-logo">RL</span>
+                  <div>
+                    <strong>AI 创作助手</strong>
+                    <small>{{ activeProject.name }} · {{ chatContextLabel }}</small>
+                  </div>
                 </div>
-              </template>
-              <div class="chat-brief">
-                <div>
-                  <strong>{{ activeProject.name }}</strong>
-                  <span>{{ chatContextLabel }}</span>
+                <div class="ai-chat-header-actions">
                   <span class="llm-channel-chip">{{ llmChannelLabel }}</span>
-                  <span v-if="pendingIssueCount > 0" class="pending-count-chip">待处理 {{ pendingIssueCount }}</span>
+                  <el-radio-group v-model="chatMode" size="small">
+                    <el-radio-button value="chat">对话</el-radio-button>
+                    <el-radio-button value="adjust">调整正文</el-radio-button>
+                  </el-radio-group>
+                  <el-button size="small" text @click="saveChatAsKnowledge">存为资料</el-button>
+                  <el-button size="small" text @click="clearProjectChat">清空</el-button>
                 </div>
-                <el-button class="mobile-reference-button" size="small" @click="activity = 'context'">
-                  选择资料
-                </el-button>
               </div>
-              <div v-if="selectedKnowledgeNodes.length > 0" class="selected-reference-strip">
+
+              <div
+                v-if="selectedKnowledgeNodes.length > 0 || pendingIssueCount > 0"
+                class="ai-chat-context"
+              >
                 <button
                   v-for="node in selectedKnowledgeNodes"
                   :key="recordId(node)"
@@ -4032,23 +4083,19 @@ onUnmounted(() => {
                   {{ recordTitle(node) }}
                   <span>x</span>
                 </button>
+                <span v-if="pendingIssueCount > 0" class="pending-count-chip">
+                  待处理 {{ pendingIssueCount }}
+                </span>
               </div>
-              <div v-if="saveNotice" class="save-notice">{{ saveNotice }}</div>
-              <div class="prompt-starters">
-                <el-button
-                  v-for="starter in promptStarters"
-                  :key="starter"
-                  size="small"
-                  @click="usePromptStarter(starter)"
-                >
-                  {{ starter }}
-                </el-button>
-              </div>
-              <div class="chat-thread">
-                <div v-if="activeProject.chat.length === 0" class="chat-welcome">
-                  <span>Rhine-Lore</span>
+
+              <div ref="chatThreadRef" class="chat-thread ai-chat-thread">
+                <div v-if="activeProject.chat.length === 0 && !chatThinking" class="chat-welcome">
+                  <span>AI 创作助手</span>
                   <strong>先说说你想写什么</strong>
-                  <p>可以只给一句模糊的想法，也可以让我续写当前章节、检查角色动机或整理设定。</p>
+                  <p>
+                    可以续写当前章节、讨论剧情、检查角色动机，也可以附加 TXT / 项目文件
+                    让我导入或整理。
+                  </p>
                 </div>
                 <article
                   v-for="message in activeProject.chat"
@@ -4056,86 +4103,113 @@ onUnmounted(() => {
                   class="chat-message"
                   :class="message.role"
                 >
-                  <div class="chat-message-head">
-                    <strong>{{ message.role === "user" ? "我" : "Rhine-Lore" }}</strong>
-                    <el-space wrap>
-                      <el-button size="small" @click="saveMessageAsKnowledge(message)">
+                  <span class="chat-avatar" :class="message.role">
+                    {{ message.role === "assistant" ? "RL" : "我" }}
+                  </span>
+                  <div class="chat-bubble">
+                    <div class="chat-message-head">
+                      <strong>{{ message.role === "assistant" ? "Rhine-Lore" : "我" }}</strong>
+                      <small>{{ chatTime(message.created_at) }}</small>
+                    </div>
+                    <p>{{ message.content }}</p>
+                    <div
+                      v-if="message.actions && message.actions.length > 0"
+                      class="chat-tool-actions"
+                    >
+                      <span
+                        v-for="(action, index) in message.actions"
+                        :key="index"
+                        class="chat-tool-chip"
+                      >
+                        ✓ {{ toolActionLabel(action.tool) }}
+                      </span>
+                    </div>
+                    <div class="chat-message-actions">
+                      <el-button size="small" text @click="copyChatText(message.content)">
+                        复制
+                      </el-button>
+                      <el-button size="small" text @click="saveMessageAsKnowledge(message)">
                         保存为资料
                       </el-button>
                       <el-button
                         v-if="message.role === 'assistant'"
                         size="small"
+                        text
                         @click="insertMessageIntoChapter(message)"
                       >
                         插入正文
                       </el-button>
-                    </el-space>
-                  </div>
-                  <p>{{ message.content }}</p>
-                  <div
-                    v-if="message.actions && message.actions.length > 0"
-                    class="chat-tool-actions"
-                  >
-                    <span
-                      v-for="(action, index) in message.actions"
-                      :key="index"
-                      class="chat-tool-chip"
-                    >
-                      ✓ {{ toolActionLabel(action.tool) }}
-                    </span>
+                    </div>
                   </div>
                 </article>
-              </div>
-              <div class="chat-mode-switch">
-                <el-radio-group v-model="chatMode" size="small">
-                  <el-radio-button value="chat">普通对话</el-radio-button>
-                  <el-radio-button value="adjust">调整正文</el-radio-button>
-                </el-radio-group>
-              </div>
-              <div v-if="chatMode === 'chat'" class="chat-composer">
-                <div class="chat-composer-main">
-                  <div v-if="chatAttachment" class="chat-attachment-chip">
-                    <span>{{ chatAttachment.name }}</span>
-                    <button type="button" @click="removeChatAttachment">×</button>
+                <div v-if="chatThinking" class="chat-message assistant">
+                  <span class="chat-avatar assistant">RL</span>
+                  <div class="chat-bubble chat-thinking">
+                    <span />
+                    <span />
+                    <span />
                   </div>
-                  <el-input
-                    v-model="chatInput"
-                    type="textarea"
-                    :rows="4"
-                    placeholder="写下这一轮创作请求，或要求我导入/建章/加角色（可先附加 TXT / 项目文件）"
-                    @keydown.ctrl.enter.prevent="sendCreativeMessage"
-                  />
                 </div>
-                <div class="chat-send-column">
+              </div>
+
+              <div class="ai-chat-composer">
+                <div v-if="chatMode === 'chat'" class="chat-composer ai-composer">
+                  <div class="chat-composer-main">
+                    <div v-if="chatAttachment" class="chat-attachment-chip">
+                      <span>{{ chatAttachment.name }}</span>
+                      <button type="button" @click="removeChatAttachment">×</button>
+                    </div>
+                    <el-input
+                      v-model="chatInput"
+                      type="textarea"
+                      :rows="1"
+                      :autosize="{minRows: 1, maxRows: 6}"
+                      placeholder="写下请求，或要求我导入 / 建章 / 加角色（Enter 发送，Shift+Enter 换行）"
+                      @keydown="handleChatKeydown"
+                    />
+                  </div>
+                  <div class="chat-send-column">
+                    <el-button
+                      type="primary"
+                      :loading="busyAction === '对话创作'"
+                      @click="sendCreativeMessage"
+                    >
+                      发送
+                    </el-button>
+                    <el-button title="附加文件（TXT / 项目 JSON）" @click="chatAttachInput?.click()">
+                      📎
+                    </el-button>
+                  </div>
+                  <div class="chat-starter-row">
+                    <el-button
+                      v-for="starter in promptStarters"
+                      :key="starter"
+                      size="small"
+                      text
+                      @click="usePromptStarter(starter)"
+                    >
+                      {{ starter }}
+                    </el-button>
+                  </div>
+                </div>
+                <div v-else class="chat-composer adjust-composer">
+                  <el-input
+                    v-model="adjustInput"
+                    type="textarea"
+                    :rows="3"
+                    placeholder="描述要调整的内容，例如：把林薇改成从小认识陈栩，并检查整体影响"
+                    @keydown.ctrl.enter.prevent="generateRevision"
+                  />
                   <el-button
                     type="primary"
-                    :loading="busyAction === '对话创作'"
-                    @click="sendCreativeMessage"
+                    :loading="revisionBusy || busyAction === '生成修订与评估'"
+                    :disabled="!llmConfigured"
+                    @click="generateRevision"
                   >
-                    发送
+                    生成修订 + 评估
                   </el-button>
-                  <el-button title="附加文件（TXT / 项目 JSON）" @click="chatAttachInput?.click()">
-                    📎
-                  </el-button>
+                  <small v-if="!llmConfigured">需要先配置 AI 通道</small>
                 </div>
-              </div>
-              <div v-else class="chat-composer adjust-composer">
-                <el-input
-                  v-model="adjustInput"
-                  type="textarea"
-                  :rows="4"
-                  placeholder="描述要调整的内容，例如：把林薇改成从小认识陈栩，并检查整体影响"
-                  @keydown.ctrl.enter.prevent="generateRevision"
-                />
-                <el-button
-                  type="primary"
-                  :loading="revisionBusy || busyAction === '生成修订与评估'"
-                  :disabled="!llmConfigured"
-                  @click="generateRevision"
-                >
-                  生成修订 + 评估
-                </el-button>
-                <small v-if="!llmConfigured">需要先配置 AI 通道</small>
               </div>
               <div v-if="revisionPreview" class="revision-panel">
                 <div class="revision-head">
