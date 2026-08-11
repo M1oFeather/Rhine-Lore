@@ -39,6 +39,8 @@ import {
   buildContextBundle,
   connectVaultRuntime,
   createManualProposal,
+  deleteBook,
+  executeAgentTool,
   fakeCreativeAnswer,
   generateEvolutionProseApi,
   generateKnowledgeDocument,
@@ -53,7 +55,6 @@ import {
   health,
   installVaultWeb,
   importBook,
-  deleteBook,
   listBooks,
   llmServerChat,
   llmServerPing,
@@ -201,6 +202,7 @@ const chatThreadRef = ref<HTMLElement | null>(null);
 const chatSidebarOpen = ref(true);
 const chatSideSections = ref({chapter: true, refs: true, issues: true});
 const chatMoreOpen = ref(false);
+const pendingAgentAction = ref<AgentToolAction | null>(null);
 const chatAttachment = ref<{name: string; kind: "txt" | "project" | "knowledge"; text: string} | null>(null);
 const chatAttachInput = ref<HTMLInputElement | null>(null);
 const chatMode = ref<"chat" | "adjust">("chat");
@@ -1627,10 +1629,58 @@ async function sendCreativeMessage(): Promise<void> {
     if (last) {
       last.actions = result.actions;
     }
-    await applyAgentActions(result.actions);
+    const pending = result.actions.find((action: AgentToolAction) => action.pending);
+    if (pending) {
+      pendingAgentAction.value = pending;
+    } else {
+      await applyAgentActions(result.actions);
+    }
   }
   chatAttachment.value = null;
   saveProjects();
+}
+
+async function confirmAgentAction(): Promise<void> {
+  const action = pendingAgentAction.value;
+  if (!action) {
+    return;
+  }
+  pendingAgentAction.value = null;
+  const args: Record<string, unknown> = {...action.args};
+  if (
+    ["append_chapter", "add_character", "add_world_card"].includes(action.tool) &&
+    !args.project_id
+  ) {
+    args.project_id = activeProject.value.id;
+  }
+  try {
+    const executed = await perform(`执行「${toolActionLabel(action.tool)}」`, () =>
+      executeAgentTool(action.tool, args),
+    );
+    if (executed) {
+      await applyAgentActions([
+        {tool: action.tool, args, result: executed.result as ApiRecord},
+      ]);
+      appendChat("assistant", `已执行「${toolActionLabel(action.tool)}」。`);
+      saveProjects();
+      markSaved("AI 操作已执行并同步到本地");
+    }
+  } catch (error) {
+    runState.value = {error: error instanceof Error ? error.message : String(error)};
+  }
+}
+
+function discardAgentAction(): void {
+  pendingAgentAction.value = null;
+}
+
+function adjustAgentAction(): void {
+  const action = pendingAgentAction.value;
+  pendingAgentAction.value = null;
+  if (!action) {
+    return;
+  }
+  chatInput.value = `请调整刚才的「${toolActionLabel(action.tool)}」建议，说明哪里不合适：`;
 }
 
 function handleChatAttach(event: Event): void {
@@ -1957,6 +2007,7 @@ function toolActionLabel(tool: string): string {
     create_project: "新建项目",
     append_chapter: "追加章节",
     add_character: "添加角色",
+    update_character: "调整角色",
     add_world_card: "添加设定",
     save_knowledge: "保存资料",
     append_book_chapter: "追加书章",
@@ -4223,6 +4274,60 @@ onUnmounted(() => {
               </div>
 
               <div class="ai-chat-composer">
+                <div v-if="pendingAgentAction" class="agent-confirm-card">
+                  <div class="agent-confirm-head">
+                    <strong>AI 建议：{{ toolActionLabel(pendingAgentAction.tool) }}</strong>
+                    <span>待确认</span>
+                  </div>
+                  <div v-if="pendingAgentAction.tool === 'add_character'" class="agent-character-preview">
+                    <div class="agent-character-name">
+                      {{ String(pendingAgentAction.args.name || "未命名角色") }}
+                    </div>
+                    <div class="agent-character-meta">
+                      <span v-if="pendingAgentAction.args.role">
+                        角色：{{ pendingAgentAction.args.role }}
+                      </span>
+                      <span v-if="pendingAgentAction.args.identity">
+                        身份：{{ pendingAgentAction.args.identity }}
+                      </span>
+                      <span v-if="pendingAgentAction.args.stance">
+                        立场：{{ pendingAgentAction.args.stance }}
+                      </span>
+                    </div>
+                    <dl>
+                      <template v-if="pendingAgentAction.args.drive">
+                        <dt>欲望</dt>
+                        <dd>{{ pendingAgentAction.args.drive }}</dd>
+                      </template>
+                      <template v-if="pendingAgentAction.args.fear">
+                        <dt>恐惧</dt>
+                        <dd>{{ pendingAgentAction.args.fear }}</dd>
+                      </template>
+                      <template v-if="pendingAgentAction.args.traits">
+                        <dt>特质</dt>
+                        <dd>{{ pendingAgentAction.args.traits }}</dd>
+                      </template>
+                      <template v-if="pendingAgentAction.args.background">
+                        <dt>背景</dt>
+                        <dd>{{ pendingAgentAction.args.background }}</dd>
+                      </template>
+                      <template v-if="pendingAgentAction.args.secret">
+                        <dt>秘密</dt>
+                        <dd>{{ pendingAgentAction.args.secret }}</dd>
+                      </template>
+                    </dl>
+                  </div>
+                  <pre v-else class="agent-json-preview">
+                    {{ JSON.stringify(pendingAgentAction.args, null, 2) }}
+                  </pre>
+                  <div class="agent-confirm-actions">
+                    <el-button size="small" type="primary" @click="confirmAgentAction">
+                      确认执行
+                    </el-button>
+                    <el-button size="small" @click="adjustAgentAction">让 AI 调整</el-button>
+                    <el-button size="small" text @click="discardAgentAction">取消</el-button>
+                  </div>
+                </div>
                 <div v-if="chatMode === 'chat'" class="chat-composer ai-composer">
                   <div class="chat-composer-main">
                     <div v-if="chatAttachment" class="chat-attachment-chip">

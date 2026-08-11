@@ -610,6 +610,46 @@ def _run_agent_tool(tool: str, args: dict[str, Any]) -> dict[str, Any]:
         )
         _save_agent_project(project)
         return {"project": project}
+    if tool == "update_character":
+        project = _load_agent_project(str(args.get("project_id") or ""))
+        characters = project.setdefault("characters", [])
+        target = str(args.get("name") or "").strip()
+        target_id = str(args.get("id") or "").strip()
+        card = next(
+            (
+                item
+                for item in characters
+                if (target_id and item.get("id") == target_id)
+                or (target and item.get("name") == target)
+            ),
+            None,
+        )
+        if card is None:
+            raise KeyError(f"角色不存在: {target or target_id}")
+        fields = (
+            "identity",
+            "role",
+            "age",
+            "stance",
+            "drive",
+            "fear",
+            "traits",
+            "abilities",
+            "weakness",
+            "secret",
+            "speech",
+            "appearance",
+            "background",
+            "status",
+            "notes",
+        )
+        for field in fields:
+            if field in args and args[field] is not None:
+                card[field] = str(args[field])
+        if "relationships" in args and isinstance(args["relationships"], list):
+            card["relationships"] = args["relationships"]
+        _save_agent_project(project)
+        return {"project": project}
     if tool == "add_world_card":
         project = _load_agent_project(str(args.get("project_id") or ""))
         world = project.setdefault("world", [])
@@ -650,6 +690,18 @@ def _run_agent_tool(tool: str, args: dict[str, Any]) -> dict[str, Any]:
     raise ValueError(f"未知工具: {tool}")
 
 
+_AGENT_MUTATING_TOOLS = {
+    "import_txt",
+    "create_project",
+    "append_chapter",
+    "add_character",
+    "update_character",
+    "add_world_card",
+    "save_knowledge",
+    "append_book_chapter",
+}
+
+
 def _agent_system_prompt(attachments: list[dict[str, Any]]) -> str:
     tools = (
         "可用工具（需要操作时，单独一行输出 JSON：{\"tool\":\"工具名\",\"args\":{...}}）：\n"
@@ -657,6 +709,7 @@ def _agent_system_prompt(attachments: list[dict[str, Any]]) -> str:
         "- create_project：参数 name, genre, summary —— 新建故事项目\n"
         "- append_chapter：参数 project_id, title, content —— 给故事项目追加章节\n"
         "- add_character：参数 project_id, name, role, drive, fear, stance, identity, traits, background, secret\n"
+        "- update_character：参数 project_id, name 或 id，以及要修改的字段（role, drive, fear, stance, identity, traits, background, secret 等）\n"
         "- add_world_card：参数 project_id, name, type, summary, details, tags\n"
         "- save_knowledge：参数 title, content, tags —— 保存为资料草稿\n"
         "- append_book_chapter：参数 book_id, title, content —— 给 TXT 书追加章节\n"
@@ -687,8 +740,9 @@ def _agent_system_prompt(attachments: list[dict[str, Any]]) -> str:
         "你是 Rhine-Lore 的创作助手，可以读写本地工作区（故事项目、TXT 书架、知识库）。"
         "规则：普通创作对话直接回复正文或建议，不要调用工具；"
         "当用户要求导入、新建项目、追加章节、添加角色/设定、保存资料、操作书架时，"
-        "调用对应工具；工具执行结果会作为新消息返回，请基于结果给出最终中文回复，"
-        "并简要说明你执行了什么操作。\n\n"
+        "先调用对应工具并给出完整参数（例如角色卡的姓名、身份、欲望、恐惧、立场、特质、"
+        "背景、秘密），但创建/修改类操作会先作为“提案”返回给用户确认，不会立即执行；"
+        "用户确认后会单独执行。只读操作（list_books / load_project）可以直接执行。\n\n"
         + tools
         + attach_block
     )
@@ -1428,6 +1482,17 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
                         if call is None:
                             final_text = text
                             break
+                        if call["tool"] in _AGENT_MUTATING_TOOLS:
+                            actions.append(
+                                {
+                                    "tool": call["tool"],
+                                    "args": call["args"],
+                                    "pending": True,
+                                    "result": None,
+                                }
+                            )
+                            final_text = text
+                            break
                         result_payload: dict[str, Any] | None = None
                         try:
                             result = _run_agent_tool(call["tool"], call["args"])
@@ -1471,6 +1536,23 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
                         "actions": actions,
                     },
                 )
+                return
+            if self.command == "POST" and parsed_request.path == "/lore-api/agent/execute":
+                payload = self._read_json_body()
+                tool = str(payload.get("tool") or "").strip()
+                args = payload.get("args") if isinstance(payload.get("args"), dict) else {}
+                if tool not in _AGENT_MUTATING_TOOLS:
+                    self._send_json(400, {"error": "只允许执行已确认的写操作"})
+                    return
+                try:
+                    result = _run_agent_tool(tool, args)
+                except KeyError as exc:
+                    self._send_json(404, {"error": str(exc)})
+                    return
+                except ValueError as exc:
+                    self._send_json(400, {"error": str(exc)})
+                    return
+                self._send_json(200, {"ok": True, "tool": tool, "result": result})
                 return
             if self.command == "POST" and parsed_request.path == "/lore-api/evolution/start":
                 payload = self._read_json_body()

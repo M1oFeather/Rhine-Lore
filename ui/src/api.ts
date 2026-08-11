@@ -109,6 +109,7 @@ export type AgentToolAction = {
   tool: string;
   args: Record<string, unknown>;
   result?: ApiRecord | null;
+  pending?: boolean;
 };
 
 export type CreativeMessage = {
@@ -756,6 +757,13 @@ export function aiWriteBook(body: {
   text?: string;
 }): Promise<AiWriteResult> {
   return postJson(`/lore-api/books/${encodeURIComponent(body.book_id)}/ai/write`, body);
+}
+
+export function executeAgentTool(
+  tool: string,
+  args: Record<string, unknown>,
+): Promise<{ok: boolean; tool: string; result: ApiRecord}> {
+  return postJson("/lore-api/agent/execute", {tool, args});
 }
 
 export function analyzeBook(bookId: string): Promise<{analysis: BookAnalysis; offline: boolean}> {

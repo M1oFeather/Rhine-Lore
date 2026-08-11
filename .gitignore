@@ -22,3 +22,4 @@ android/app/src/main/assets/
 android/keystore.properties
 /dist/
 site/
+/.tmp_*

@@ -1,6 +1,7 @@
 package com.rhinelore.app;
 
 import android.app.Activity;
+import android.content.pm.ApplicationInfo;
 import android.content.Intent;
 import android.content.res.AssetManager;
 import android.os.Bundle;
@@ -35,6 +36,11 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
+        boolean isDebuggable = (getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0;
+        if (isDebuggable) {
+            WebView.setWebContentsDebuggingEnabled(true);
+        }
 
         File uiDir = new File(getFilesDir(), "ui");
         File dataDir = new File(getFilesDir(), "data");

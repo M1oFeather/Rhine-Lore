@@ -5143,3 +5143,96 @@ body {
   }
 }
 
+/* Agent confirm card */
+.agent-confirm-card {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding: 12px 14px;
+  border: 1px solid #c7d7f5;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #eef4ff, #f8faff);
+}
+
+.agent-confirm-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.agent-confirm-head strong {
+  color: #172554;
+  font-size: 14px;
+}
+
+.agent-confirm-head span {
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: #fef3c7;
+  color: #b45309;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.agent-character-preview {
+  display: grid;
+  gap: 8px;
+}
+
+.agent-character-name {
+  color: #172554;
+  font-size: 17px;
+  font-weight: 800;
+}
+
+.agent-character-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  color: #5b6b7c;
+  font-size: 12px;
+}
+
+.agent-character-preview dl {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 4px 10px;
+  margin: 0;
+}
+
+.agent-character-preview dt {
+  color: #5b6b7c;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.agent-character-preview dd {
+  margin: 0;
+  color: #263c53;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.agent-json-preview {
+  max-height: 220px;
+  margin: 0;
+  overflow: auto;
+  padding: 10px;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #33475c;
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
+.agent-confirm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.agent-confirm-actions .el-button {
+  min-height: 36px;
+}
+
