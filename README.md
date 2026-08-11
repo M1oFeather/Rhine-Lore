@@ -8,7 +8,7 @@
   <img src="https://img.shields.io/badge/Python-3.10%2B-blue?style=flat-square" alt="Python 3.10+">
   <img src="https://img.shields.io/badge/Web-Vue%203%20%2B%20Element%20Plus-42b883?style=flat-square" alt="Vue 3 + Element Plus">
   <img src="https://img.shields.io/badge/Android-API%2026%2B-brightgreen?style=flat-square" alt="Android API 26+">
-  <img src="https://img.shields.io/badge/Version-0.1.0-purple?style=flat-square" alt="Version 0.1.0">
+  <img src="https://img.shields.io/badge/Version-0.2.0-purple?style=flat-square" alt="Version 0.2.0">
   <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20Android-lightgrey?style=flat-square" alt="Platforms">
 </p>
 
