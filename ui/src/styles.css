@@ -5273,3 +5273,20 @@ body {
   line-height: 1.6;
 }
 
+.agent-impact.danger {
+  border-color: #f2c9c9;
+  background: #fff5f4;
+}
+
+.agent-impact.danger .agent-impact-head strong {
+  color: #a93a32;
+}
+
+.agent-impact.danger .agent-impact-head span {
+  color: #c03030;
+}
+
+.agent-impact.danger ul {
+  color: #8f3d38;
+}
+

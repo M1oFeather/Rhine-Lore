@@ -458,12 +458,173 @@ const agentImpactPreview = computed<{label: string; lines: string[]} | null>(() 
           `内容预览：${preview(String(args.content || ""), 80)}`,
         ],
       };
+    case "delete_character":
+      return {
+        label: "删除角色",
+        lines: [
+          `位置：项目《${projectName}》 → 角色列表`,
+          `将永久删除角色「${String(args.name || args.id || "?")}」`,
+          "⚠️ 删除后不可恢复",
+        ],
+      };
+    case "update_world_card": {
+      const target = String(args.name || args.id || "?");
+      const card = activeProject.value.world.find(
+        (item) => item.name === target || item.id === args.id,
+      );
+      const changed: string[] = [];
+      const worldFields: [keyof WorldCard, string][] = [
+        ["type", "类型"],
+        ["summary", "概要"],
+        ["details", "详情"],
+        ["significance", "重要性"],
+        ["tags", "标签"],
+      ];
+      for (const [key, label] of worldFields) {
+        if (args[key] !== undefined && String(card?.[key] ?? "") !== String(args[key])) {
+          changed.push(`${label}：${String(card?.[key] ?? "（空）")} → ${String(args[key])}`);
+        }
+      }
+      return {
+        label: `调整设定「${card?.name || target}」`,
+        lines: changed.length > 0 ? changed : ["未检测到字段变化，请确认是否仍要执行"],
+      };
+    }
+    case "delete_world_card":
+      return {
+        label: "删除设定",
+        lines: [
+          `位置：项目《${projectName}》 → 世界观`,
+          `将永久删除设定「${String(args.name || args.id || "?")}」`,
+          "⚠️ 删除后不可恢复",
+        ],
+      };
+    case "update_chapter": {
+      const target = String(args.chapter_id || args.title || "?");
+      return {
+        label: `修改章节「${target}」`,
+        lines: [
+          `位置：项目《${projectName}》 → 章节列表`,
+          args.content !== undefined
+            ? `正文将被替换（新正文约 ${String(args.content).length} 字）`
+            : "将修改章节标题",
+          "⚠️ 原正文会被覆盖",
+        ],
+      };
+    }
+    case "delete_chapter":
+      return {
+        label: "删除章节",
+        lines: [
+          `位置：项目《${projectName}》 → 章节列表`,
+          `将永久删除章节「${String(args.chapter_id || args.title || "?")}」`,
+          "⚠️ 删除后不可恢复",
+        ],
+      };
+    case "update_project": {
+      const project = activeProject.value;
+      const changed: string[] = [];
+      const projectFields: [string, string][] = [
+        ["name", "名称"],
+        ["genre", "类型"],
+        ["summary", "概要"],
+        ["global_guidance", "全局引导"],
+        ["chapter_turns", "单章回合数"],
+      ];
+      for (const [key, label] of projectFields) {
+        if (args[key] !== undefined && String(project?.[key as keyof StoryProject] ?? "") !== String(args[key])) {
+          changed.push(
+            `${label}：${String(project?.[key as keyof StoryProject] ?? "（空）")} → ${String(args[key])}`,
+          );
+        }
+      }
+      return {
+        label: `修改项目「${project?.name || projectName}」`,
+        lines: changed.length > 0 ? changed : ["未检测到字段变化，请确认是否仍要执行"],
+      };
+    }
+    case "merge_chapters": {
+      const book = shelfBooks.value.find((item) => item.book_id === args.book_id);
+      return {
+        label: "合并章节",
+        lines: [
+          `位置：书架 → 《${book?.name || String(args.book_id || "未知书")}》`,
+          `将第 ${String(args.start_order ?? "?")}–${String(args.end_order ?? "?")} 章合并为 1 章`,
+          "⚠️ 合并后的原章节会被移除",
+        ],
+      };
+    }
+    case "evolution_start":
+      return {
+        label: "新建演化",
+        lines: [
+          "位置：演化存档",
+          `将新建《${String(args.project_name || args.project_id || "未命名")}》的演化（从第 1 回合开始）`,
+          "不会修改现有正文",
+        ],
+      };
+    case "evolution_advance":
+      return {
+        label: "推进演化",
+        lines: [
+          `位置：演化存档（${String(args.project_id || "当前项目")}）`,
+          "将推进 1 个回合；如遇分支会暂停等待选择",
+          "已发生的回合记录会追加",
+        ],
+      };
+    case "evolution_guidance":
+      return {
+        label: "设置引导",
+        lines: [
+          `位置：演化存档（${String(args.project_id || "当前项目")}）`,
+          `将设置全局引导：「${String(args.guidance || "（空）")}」`,
+          "后续回合生效",
+        ],
+      };
+    case "evolution_reset":
+      return {
+        label: "重置演化",
+        lines: [
+          `位置：演化存档（${String(args.project_id || "当前项目")}）`,
+          "将永久删除整个演化存档",
+          "⚠️ 删除后不可恢复",
+        ],
+      };
+    case "update_llm_config":
+      return {
+        label: "修改 AI 配置",
+        lines: [
+          "位置：AI 通道配置",
+          [
+            args.base_url !== undefined ? `API 地址：${String(args.base_url)}` : "",
+            args.model !== undefined ? `模型：${String(args.model)}` : "",
+            args.preset !== undefined ? `预设：${String(args.preset)}` : "",
+          ]
+            .filter(Boolean)
+            .join("，") || "更新配置项",
+          "不会写入或清除 API Key",
+        ],
+      };
+    case "list_projects":
+    case "export_project":
+    case "export_book":
+    case "get_llm_config":
+    case "get_server_status":
+      return {
+        label: toolActionLabel(action.tool),
+        lines: ["只读操作，不会修改任何数据"],
+      };
     default:
       return {
         label: toolActionLabel(action.tool),
         lines: ["执行后将写入本地数据"],
       };
   }
+});
+
+const agentImpactDanger = computed(() => {
+  const tool = pendingAgentAction.value?.tool ?? "";
+  return tool.includes("delete") || tool === "evolution_reset" || tool === "merge_chapters" || tool === "update_chapter";
 });
 
 const chatContextLabel = computed(() => {
@@ -2122,7 +2283,24 @@ function toolActionLabel(tool: string): string {
     append_chapter: "追加章节",
     add_character: "添加角色",
     update_character: "调整角色",
+    delete_character: "删除角色",
     add_world_card: "添加设定",
+    update_world_card: "调整设定",
+    delete_world_card: "删除设定",
+    update_chapter: "修改章节",
+    delete_chapter: "删除章节",
+    update_project: "修改项目",
+    list_projects: "查看项目",
+    export_project: "导出项目",
+    export_book: "导出书",
+    merge_chapters: "合并章节",
+    evolution_start: "新建演化",
+    evolution_advance: "推进演化",
+    evolution_guidance: "设置引导",
+    evolution_reset: "重置演化",
+    get_llm_config: "查看 AI 配置",
+    get_server_status: "查看服务状态",
+    update_llm_config: "修改 AI 配置",
     save_knowledge: "保存资料",
     append_book_chapter: "追加书章",
     list_books: "查看书架",
@@ -4434,7 +4612,11 @@ onUnmounted(() => {
                   <pre v-else class="agent-json-preview">
                     {{ JSON.stringify(pendingAgentAction.args, null, 2) }}
                   </pre>
-                  <div v-if="agentImpactPreview" class="agent-impact">
+                  <div
+                    v-if="agentImpactPreview"
+                    class="agent-impact"
+                    :class="{'danger': agentImpactDanger}"
+                  >
                     <div class="agent-impact-head">
                       <strong>执行影响</strong>
                       <span>{{ agentImpactPreview.label }}</span>

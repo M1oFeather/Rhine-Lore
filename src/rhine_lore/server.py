@@ -554,6 +554,41 @@ def _save_agent_project(project: dict[str, Any]) -> dict[str, Any]:
     return project
 
 
+def _list_agent_projects() -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    store_dir = EVOLUTION_STORE.directory
+    if store_dir.is_dir():
+        for path in sorted(store_dir.glob("*.project.json")):
+            try:
+                backup = json.loads(path.read_text(encoding="utf-8"))
+                project = backup.get("project") or {}
+                rows.append(
+                    {
+                        "project_id": str(project.get("id") or ""),
+                        "name": str(project.get("name") or "未命名"),
+                        "genre": str(project.get("genre") or "未分类"),
+                        "chapter_count": len(project.get("chapters") or []),
+                    }
+                )
+            except (OSError, json.JSONDecodeError):
+                continue
+    return rows
+
+
+def _evolution_summary(state: EvolutionState) -> dict[str, Any]:
+    latest = state.history[-1] if state.history else None
+    return {
+        "project_id": state.project_id,
+        "project_name": state.project_name,
+        "turn": state.turn,
+        "tension": state.world.tension,
+        "latest_event": latest.title if latest else None,
+        "awaiting_branch": bool(state.pending_branch),
+        "branch_question": state.pending_branch.question if state.pending_branch else None,
+        "guidance": state.guidance or "",
+    }
+
+
 def _run_agent_tool(tool: str, args: dict[str, Any]) -> dict[str, Any]:
     if tool == "import_txt":
         return {
@@ -650,6 +685,24 @@ def _run_agent_tool(tool: str, args: dict[str, Any]) -> dict[str, Any]:
             card["relationships"] = args["relationships"]
         _save_agent_project(project)
         return {"project": project}
+    if tool == "delete_character":
+        project = _load_agent_project(str(args.get("project_id") or ""))
+        characters = project.setdefault("characters", [])
+        target = str(args.get("name") or "").strip()
+        target_id = str(args.get("id") or "").strip()
+        before = len(characters)
+        project["characters"] = [
+            item
+            for item in characters
+            if not (
+                (target_id and item.get("id") == target_id)
+                or (target and item.get("name") == target)
+            )
+        ]
+        if len(project["characters"]) == before:
+            raise KeyError(f"角色不存在: {target or target_id}")
+        _save_agent_project(project)
+        return {"project": project}
     if tool == "add_world_card":
         project = _load_agent_project(str(args.get("project_id") or ""))
         world = project.setdefault("world", [])
@@ -666,6 +719,161 @@ def _run_agent_tool(tool: str, args: dict[str, Any]) -> dict[str, Any]:
         )
         _save_agent_project(project)
         return {"project": project}
+    if tool == "update_world_card":
+        project = _load_agent_project(str(args.get("project_id") or ""))
+        world = project.setdefault("world", [])
+        target = str(args.get("name") or "").strip()
+        target_id = str(args.get("id") or "").strip()
+        card = next(
+            (
+                item
+                for item in world
+                if (target_id and item.get("id") == target_id)
+                or (target and item.get("name") == target)
+            ),
+            None,
+        )
+        if card is None:
+            raise KeyError(f"设定不存在: {target or target_id}")
+        for key in ("name", "type", "summary", "details", "significance", "tags"):
+            if key in args and args[key] is not None:
+                card[key] = str(args[key])
+        _save_agent_project(project)
+        return {"project": project}
+    if tool == "delete_world_card":
+        project = _load_agent_project(str(args.get("project_id") or ""))
+        world = project.setdefault("world", [])
+        target = str(args.get("name") or "").strip()
+        target_id = str(args.get("id") or "").strip()
+        before = len(world)
+        project["world"] = [
+            item
+            for item in world
+            if not (
+                (target_id and item.get("id") == target_id)
+                or (target and item.get("name") == target)
+            )
+        ]
+        if len(project["world"]) == before:
+            raise KeyError(f"设定不存在: {target or target_id}")
+        _save_agent_project(project)
+        return {"project": project}
+    if tool == "update_chapter":
+        project = _load_agent_project(str(args.get("project_id") or ""))
+        chapters = project.setdefault("chapters", [])
+        target = str(args.get("chapter_id") or args.get("title") or "").strip()
+        chapter = next(
+            (
+                item
+                for item in chapters
+                if item.get("id") == target or item.get("title") == target
+            ),
+            None,
+        )
+        if chapter is None:
+            raise KeyError(f"章节不存在: {target}")
+        if args.get("title") is not None:
+            chapter["title"] = str(args["title"])
+        if args.get("content") is not None:
+            chapter["content"] = str(args["content"])
+        _save_agent_project(project)
+        return {"project": project}
+    if tool == "delete_chapter":
+        project = _load_agent_project(str(args.get("project_id") or ""))
+        chapters = project.setdefault("chapters", [])
+        target = str(args.get("chapter_id") or args.get("title") or "").strip()
+        before = len(chapters)
+        project["chapters"] = [
+            item
+            for item in chapters
+            if not (item.get("id") == target or item.get("title") == target)
+        ]
+        if len(project["chapters"]) == before:
+            raise KeyError(f"章节不存在: {target}")
+        _save_agent_project(project)
+        return {"project": project}
+    if tool == "update_project":
+        project = _load_agent_project(str(args.get("project_id") or ""))
+        for key in ("name", "genre", "summary", "global_guidance"):
+            if key in args and args[key] is not None:
+                project[key] = str(args[key])
+        if args.get("chapter_turns") is not None:
+            try:
+                project["chapter_turns"] = int(args["chapter_turns"])
+            except (TypeError, ValueError):
+                pass
+        _save_agent_project(project)
+        return {"project": project}
+    if tool == "list_projects":
+        return {"projects": _list_agent_projects()}
+    if tool == "export_project":
+        return {"project": _load_agent_project(str(args.get("project_id") or ""))}
+    if tool == "export_book":
+        book_id = str(args.get("book_id") or "")
+        book = BOOK_STORE.get_book(book_id)
+        chapters = [BOOK_STORE.get_chapter(book_id, row["id"]) for row in book["chapters"]]
+        return {"book": book, "chapters": chapters}
+    if tool == "merge_chapters":
+        book = BOOK_STORE.merge_chapters(
+            str(args.get("book_id") or ""),
+            int(args.get("start_order") or 1),
+            int(args.get("end_order") or 1),
+            str(args.get("title") or ""),
+        )
+        return {"book": book}
+    if tool == "evolution_start":
+        state = start_run(
+            project_id=str(args.get("project_id") or ""),
+            project_name=str(args.get("project_name") or ""),
+            genre=str(args.get("genre") or ""),
+            characters=args.get("characters") or [],
+            world=args.get("world") or [],
+            map_nodes=args.get("map_nodes") or [],
+            map_edges=args.get("map_edges") or [],
+            settings=evolution_settings_from_dict(args.get("settings") or {}),
+            seed=int(args["seed"]) if args.get("seed") not in (None, "") else None,
+        )
+        EVOLUTION_STORE.save(state)
+        return {"evolution": _evolution_summary(state)}
+    if tool == "evolution_advance":
+        state = EVOLUTION_STORE.load(str(args.get("project_id") or ""))
+        if state is None:
+            raise KeyError("演化尚未开始")
+        choice = str(args.get("choice_id") or "").strip() or None
+        state, result = advance(state, choice_id=choice)
+        EVOLUTION_STORE.save(state)
+        summary = _evolution_summary(state)
+        summary["message"] = turn_result_to_dict(result).get("message") or ""
+        return {"evolution": summary}
+    if tool == "evolution_guidance":
+        state = EVOLUTION_STORE.load(str(args.get("project_id") or ""))
+        if state is None:
+            raise KeyError("演化尚未开始")
+        state.guidance = str(args.get("guidance") or "").strip()
+        EVOLUTION_STORE.save(state)
+        return {"evolution": _evolution_summary(state)}
+    if tool == "evolution_reset":
+        project_id = str(args.get("project_id") or "").strip()
+        EVOLUTION_STORE.delete(project_id)
+        return {"ok": True, "deleted_project_id": project_id}
+    if tool == "get_llm_config":
+        return {"config": _llm_config_payload(_load_llm_config())}
+    if tool == "get_server_status":
+        return {
+            "status": "ok",
+            "embedded": _is_embedded(),
+            "data_dir": str(DATA_ROOT),
+            "projects": len(_list_agent_projects()),
+            "books": len(BOOK_STORE.list_books()),
+            "vault_connected": True if _is_embedded() else bool(VAULT_MANAGER.status().get("base_url")),
+        }
+    if tool == "update_llm_config":
+        config = _load_llm_config()
+        for key in ("base_url", "model", "preset"):
+            if key in args and args[key] is not None:
+                config[key] = str(args[key])
+        _save_llm_config(config)
+        return {"config": _llm_config_payload(config)}
     if tool == "save_knowledge":
         proposal = _embedded_vault().create_proposal(
             "story-workspace",
@@ -696,7 +904,19 @@ _AGENT_MUTATING_TOOLS = {
     "append_chapter",
     "add_character",
     "update_character",
+    "delete_character",
     "add_world_card",
+    "update_world_card",
+    "delete_world_card",
+    "update_chapter",
+    "delete_chapter",
+    "update_project",
+    "merge_chapters",
+    "evolution_start",
+    "evolution_advance",
+    "evolution_guidance",
+    "evolution_reset",
+    "update_llm_config",
     "save_knowledge",
     "append_book_chapter",
 }
@@ -710,7 +930,24 @@ def _agent_system_prompt(attachments: list[dict[str, Any]]) -> str:
         "- append_chapter：参数 project_id, title, content —— 给故事项目追加章节\n"
         "- add_character：参数 project_id, name, role, drive, fear, stance, identity, traits, background, secret\n"
         "- update_character：参数 project_id, name 或 id，以及要修改的字段（role, drive, fear, stance, identity, traits, background, secret 等）\n"
+        "- delete_character：参数 project_id, name 或 id —— 删除角色（破坏性）\n"
         "- add_world_card：参数 project_id, name, type, summary, details, tags\n"
+        "- update_world_card：参数 project_id, name 或 id 以及要修改的字段\n"
+        "- delete_world_card：参数 project_id, name 或 id（破坏性）\n"
+        "- update_chapter：参数 project_id, chapter_id 或 title，可修改 title/content\n"
+        "- delete_chapter：参数 project_id, chapter_id 或 title（破坏性）\n"
+        "- update_project：参数 project_id, name/genre/summary/global_guidance/chapter_turns\n"
+        "- list_projects：无参数 —— 列出项目\n"
+        "- export_project：参数 project_id —— 导出项目 JSON（只读）\n"
+        "- export_book：参数 book_id —— 导出书与全部章节（只读）\n"
+        "- merge_chapters：参数 book_id, start_order, end_order, title —— 合并书的连续章节\n"
+        "- evolution_start：参数 project_id, project_name, genre, characters, world, seed —— 新建演化\n"
+        "- evolution_advance：参数 project_id, choice_id —— 推进演化（choice_id 可选）\n"
+        "- evolution_guidance：参数 project_id, guidance —— 设置演化引导\n"
+        "- evolution_reset：参数 project_id —— 删除演化存档（破坏性）\n"
+        "- get_llm_config：无参数 —— 查看 AI 配置（只读，不含密钥）\n"
+        "- update_llm_config：参数 base_url/model/preset —— 修改 AI 配置（不写 API Key）\n"
+        "- get_server_status：无参数 —— 查看服务与数据状态（只读）\n"
         "- save_knowledge：参数 title, content, tags —— 保存为资料草稿\n"
         "- append_book_chapter：参数 book_id, title, content —— 给 TXT 书追加章节\n"
         "- list_books：无参数 —— 列出书架\n"

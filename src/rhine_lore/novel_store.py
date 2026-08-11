@@ -337,6 +337,53 @@ class BookStore:
             self._save_index(book_id, rows)
             return self.get_book(book_id)
 
+    def merge_chapters(
+        self,
+        book_id: str,
+        start_order: int,
+        end_order: int,
+        title: str = "",
+    ) -> dict[str, Any]:
+        with self._lock:
+            book = self._load_book(book_id)
+            rows = self._load_index(book_id)
+            start = max(1, int(start_order))
+            end = min(len(rows), int(end_order))
+            if start > end or not rows:
+                raise ValueError("章节范围无效")
+            selected = rows[start - 1 : end]
+            parts: list[str] = []
+            for row in selected:
+                path = self._chapter_path(book_id, row["id"])
+                if path.is_file():
+                    parts.append(path.read_text(encoding="utf-8"))
+                else:
+                    parts.append("")
+            merged_title = title.strip() or f"第{start}–{end}章合并"
+            merged_id = _new_id("ch")
+            merged_row = {
+                "id": merged_id,
+                "title": merged_title[:120],
+                "order": start,
+                "char_count": sum(len(part) for part in parts),
+                "created_at": selected[0].get("created_at") or _now(),
+                "updated_at": _now(),
+            }
+            rest = rows[: start - 1] + rows[end:]
+            rest.insert(start - 1, merged_row)
+            for index, row in enumerate(rest, start=1):
+                row["order"] = index
+            self._chapter_path(book_id, merged_id).write_text("\n\n".join(parts), encoding="utf-8")
+            for row in selected:
+                old_path = self._chapter_path(book_id, row["id"])
+                if old_path.is_file():
+                    old_path.unlink()
+            book.setdefault("summaries", {})[merged_id] = _heuristic_summary("\n\n".join(parts))
+            self._recompute_totals(book, rest)
+            self._save_book(book)
+            self._save_index(book_id, rest)
+            return self.get_book(book_id)
+
     def chapter_summaries(self, book_id: str, before_order: int, limit: int = 3) -> list[dict[str, Any]]:
         with self._lock:
             book = self._load_book(book_id)
