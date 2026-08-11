@@ -4110,7 +4110,7 @@ onUnmounted(() => {
 
               <div ref="chatThreadRef" class="chat-thread ai-chat-thread">
                 <div v-if="activeProject.chat.length === 0 && !chatThinking" class="chat-welcome">
-                  <span>AI 创作助手</span>
+                  <span>开始一段创作对话</span>
                   <strong>先说说你想写什么</strong>
                   <p>
                     可以续写当前章节、讨论剧情、检查角色动机，也可以附加 TXT / 项目文件
@@ -4128,7 +4128,6 @@ onUnmounted(() => {
                   </span>
                   <div class="chat-bubble">
                     <div class="chat-message-head">
-                      <strong>{{ message.role === "assistant" ? "Rhine-Lore" : "我" }}</strong>
                       <small>{{ chatTime(message.created_at) }}</small>
                     </div>
                     <p>{{ message.content }}</p>

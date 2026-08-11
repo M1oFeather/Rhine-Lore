@@ -4796,6 +4796,10 @@ body {
   color: rgba(255, 255, 255, 0.72);
 }
 
+.chat-message.user .chat-message-head {
+  justify-content: flex-end;
+}
+
 .chat-message-head {
   display: flex;
   align-items: center;
