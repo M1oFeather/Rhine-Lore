@@ -200,6 +200,7 @@ const chatThinking = ref(false);
 const chatThreadRef = ref<HTMLElement | null>(null);
 const chatSidebarOpen = ref(true);
 const chatSideSections = ref({chapter: true, refs: true, issues: true});
+const chatMoreOpen = ref(false);
 const chatAttachment = ref<{name: string; kind: "txt" | "project" | "knowledge"; text: string} | null>(null);
 const chatAttachInput = ref<HTMLInputElement | null>(null);
 const chatMode = ref<"chat" | "adjust">("chat");
@@ -467,6 +468,7 @@ const chapterNavigationLabel = computed(() => {
 });
 
 onMounted(async () => {
+  document.addEventListener("click", closeChatMore);
   await perform("初始化", async () => {
     await Promise.allSettled([updateBackendStatus(), refreshWorkspaces(), refreshNodes(), refreshReview()]);
     return {ready: true};
@@ -476,6 +478,10 @@ onMounted(async () => {
   void loadLanInfo();
   void loadLlmServerConfig();
 });
+
+function closeChatMore(): void {
+  chatMoreOpen.value = false;
+}
 
 function loadProjects(): StoryProject[] {
   const raw = localStorage.getItem(projectKey);
@@ -3310,6 +3316,7 @@ async function pasteDeepSeekKey(): Promise<void> {
 }
 
 onUnmounted(() => {
+  document.removeEventListener("click", closeChatMore);
   if (evolutionTimer) {
     window.clearInterval(evolutionTimer);
     evolutionTimer = undefined;
@@ -4096,8 +4103,30 @@ onUnmounted(() => {
                     <el-radio-button value="chat">对话</el-radio-button>
                     <el-radio-button value="adjust">调整正文</el-radio-button>
                   </el-radio-group>
-                  <el-button size="small" text @click="saveChatAsKnowledge">存为资料</el-button>
-                  <el-button size="small" text @click="clearProjectChat">清空</el-button>
+                  <div class="ai-chat-more">
+                    <el-button
+                      class="ai-chat-more-btn"
+                      size="small"
+                      aria-label="更多操作"
+                      @click.stop="chatMoreOpen = !chatMoreOpen"
+                    >
+                      ⋮
+                    </el-button>
+                    <div v-if="chatMoreOpen" class="ai-chat-more-menu">
+                      <button
+                        type="button"
+                        @click="chatMoreOpen = false; saveChatAsKnowledge()"
+                      >
+                        保存对话为资料
+                      </button>
+                      <button
+                        type="button"
+                        @click="chatMoreOpen = false; clearProjectChat()"
+                      >
+                        清空对话
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
 

@@ -965,7 +965,6 @@ body {
     inset: 0;
     z-index: 40;
     background: rgba(15, 23, 42, 0.45);
-    backdrop-filter: blur(2px);
   }
 
   .brand {
@@ -5047,6 +5046,96 @@ body {
     bottom: 20px;
     height: 48px;
     padding: 0 14px;
+  }
+}
+
+/* Chat performance & layout polish */
+.ai-chat-header-actions .el-button {
+  min-height: 34px;
+}
+
+.ai-chat-more {
+  position: relative;
+}
+
+.ai-chat-more-btn {
+  min-width: 36px;
+  padding: 0 8px;
+}
+
+.ai-chat-more-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 70;
+  display: grid;
+  gap: 2px;
+  min-width: 150px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 12px 30px rgba(16, 24, 40, 0.14);
+}
+
+.ai-chat-more-menu button {
+  min-height: 40px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+}
+
+.ai-chat-more-menu button:hover {
+  background: #f2f5f9;
+}
+
+.chat-bubble p {
+  font-size: 15px;
+  line-height: 1.75;
+}
+
+.chat-message-actions .el-button {
+  min-height: 30px;
+}
+
+.chat-welcome strong {
+  font-size: 18px;
+}
+
+.chat-welcome p {
+  font-size: 13px;
+}
+
+@media (max-width: 720px) {
+  .workspace-topbar {
+    backdrop-filter: none;
+  }
+
+  .chat-composer {
+    backdrop-filter: none;
+  }
+
+  .ai-chat-header {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .ai-chat-title {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .ai-chat-header-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
   }
 }
 
