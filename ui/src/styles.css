@@ -5442,3 +5442,153 @@ body {
   }
 }
 
+/* Compact horizontal card pages */
+.world-panel,
+.story-panel,
+.characters-panel,
+.context-panel {
+  overflow: hidden !important;
+}
+
+.story-panel > .el-row {
+  height: 100%;
+  overflow: hidden;
+}
+
+.story-panel .el-col {
+  min-height: 0;
+}
+
+.story-panel .el-col .el-card {
+  display: flex;
+  max-height: 100%;
+  flex-direction: column;
+}
+
+.story-panel .el-col .el-card__body {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.settings-panel {
+  overflow: hidden !important;
+}
+
+.settings-panel .el-tabs {
+  display: flex;
+  height: 100%;
+  flex-direction: column;
+}
+
+.settings-panel .el-tabs__nav-wrap {
+  flex: 0 0 auto;
+}
+
+.settings-panel .el-tabs__content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.world-panel,
+.characters-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.world-panel .world-card-grid,
+.characters-panel .character-card-grid {
+  display: flex;
+  flex: 1;
+  flex-direction: row;
+  gap: 12px;
+  min-height: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 4px;
+}
+
+.world-panel .world-card,
+.characters-panel .character-card {
+  flex: 0 0 300px;
+  max-height: 100%;
+  overflow-y: auto;
+}
+
+.context-panel > .el-row {
+  height: calc(100% - 70px);
+  overflow: hidden;
+}
+
+.context-panel .el-col {
+  min-height: 0;
+}
+
+.context-panel .el-col .el-card {
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.context-panel .el-col .el-card__body {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+@media (max-width: 720px) {
+  .context-panel {
+    overflow: hidden !important;
+  }
+
+  .context-panel > .el-row {
+    display: flex;
+    flex-direction: row;
+    height: calc(100% - 44px);
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  .context-panel .el-col {
+    flex: 0 0 86%;
+    min-width: 0;
+  }
+
+  .context-panel .el-col .el-card {
+    max-height: 100%;
+  }
+
+  .context-panel .knowledge-pipeline {
+    display: none;
+  }
+
+  .story-panel > .el-row {
+    height: auto;
+    overflow: visible;
+  }
+
+  .story-panel .el-col .el-card {
+    max-height: 40dvh;
+  }
+
+  .settings-panel {
+    overflow: hidden !important;
+  }
+
+  .settings-panel .el-tabs {
+    display: flex;
+    height: 100%;
+    flex-direction: column;
+  }
+
+  .settings-panel .el-tabs__nav-wrap {
+    flex: 0 0 auto;
+  }
+
+  .settings-panel .el-tabs__content {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+  }
+}
+

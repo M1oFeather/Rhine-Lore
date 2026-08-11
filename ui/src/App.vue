@@ -4074,7 +4074,7 @@ onUnmounted(() => {
             </el-card>
           </section>
 
-          <section v-else-if="activity === 'story'" class="activity-panel">
+          <section v-else-if="activity === 'story'" class="activity-panel story-panel">
             <el-row :gutter="14">
               <el-col :xs="24" :lg="10">
                 <el-card shadow="never">
@@ -4205,7 +4205,7 @@ onUnmounted(() => {
             </el-row>
           </section>
 
-          <section v-else-if="activity === 'world'" class="activity-panel">
+          <section v-else-if="activity === 'world'" class="activity-panel world-panel">
             <el-card shadow="never">
               <template #header>
                 <div class="card-header">
@@ -5181,7 +5181,7 @@ onUnmounted(() => {
             </el-drawer>
           </section>
 
-          <section v-else-if="activity === 'context'" class="activity-panel">
+          <section v-else-if="activity === 'context'" class="activity-panel context-panel">
             <div class="knowledge-pipeline">
               <div v-for="stat in knowledgePipelineStats" :key="stat.label" class="stat-card" :class="stat.tone">
                 <b>{{ stat.value }}</b>
@@ -6402,7 +6402,7 @@ onUnmounted(() => {
             </template>
           </section>
 
-          <section v-else-if="activity === 'settings'" class="activity-panel">
+          <section v-else-if="activity === 'settings'" class="activity-panel settings-panel">
             <el-tabs v-model="settingsTab" class="settings-tabs">
               <el-tab-pane label="常用设置" name="basic">
                 <el-row :gutter="14">
