@@ -3407,8 +3407,8 @@ onUnmounted(() => {
 
     <div v-if="mobileNavOpen" class="sidebar-backdrop" @click="mobileNavOpen = false" />
 
-    <section class="workspace">
-      <header class="workspace-topbar">
+    <section class="workspace" :class="{'no-topbar': activity === 'chat'}">
+      <header v-if="activity !== 'chat'" class="workspace-topbar">
         <el-button
           class="mobile-menu-button"
           aria-label="打开菜单"
@@ -4079,6 +4079,13 @@ onUnmounted(() => {
           >
             <el-card shadow="never" class="chat-thread-card ai-chat-card">
               <div class="ai-chat-header">
+                <el-button
+                  class="mobile-menu-button"
+                  aria-label="打开菜单"
+                  @click="mobileNavOpen = true"
+                >
+                  ☰
+                </el-button>
                 <div class="ai-chat-title">
                   <span class="ai-chat-logo">RL</span>
                   <div>
@@ -4124,6 +4131,12 @@ onUnmounted(() => {
                         @click="chatMoreOpen = false; clearProjectChat()"
                       >
                         清空对话
+                      </button>
+                      <button
+                        type="button"
+                        @click="chatMoreOpen = false; toggleAiPanel()"
+                      >
+                        AI 设置
                       </button>
                     </div>
                   </div>
