@@ -283,11 +283,11 @@ const restoreBusy = ref("");
 const lanInfo = ref<LanInfo | null>(null);
 
 const promptStarters = [
-  "帮我续写当前章节，保持悬念和节奏。",
-  "整理这一章里值得保存的设定。",
-  "帮我设计下一场冲突，但不要直接改正文。",
-  "检查角色动机是否前后一致。",
-  "结合选中的资料，帮我续写下一段。",
+  "续写当前章节",
+  "设计下一场冲突",
+  "检查角色动机",
+  "整理本章设定",
+  "结合资料续写",
 ];
 
 if (!projects.value.some((project) => project.id === activeProjectId.value) && projects.value.length > 0) {
@@ -4112,10 +4112,7 @@ onUnmounted(() => {
                 <div v-if="activeProject.chat.length === 0 && !chatThinking" class="chat-welcome">
                   <span>开始一段创作对话</span>
                   <strong>先说说你想写什么</strong>
-                  <p>
-                    可以续写当前章节、讨论剧情、检查角色动机，也可以附加 TXT / 项目文件
-                    让我导入或整理。
-                  </p>
+                  <p>续写、讨论、修订、导入——都可以直接说，或点下方快捷提示。</p>
                 </div>
                 <article
                   v-for="message in activeProject.chat"
@@ -4183,7 +4180,7 @@ onUnmounted(() => {
                       type="textarea"
                       :rows="1"
                       :autosize="{minRows: 1, maxRows: 6}"
-                      placeholder="写下请求，或要求我导入 / 建章 / 加角色（Enter 发送，Shift+Enter 换行）"
+                      placeholder="输入消息（Enter 发送，Shift+Enter 换行）"
                       @keydown="handleChatKeydown"
                     />
                   </div>

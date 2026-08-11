@@ -4412,13 +4412,24 @@ body {
 }
 
 .chat-send-column {
-  display: grid;
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
   gap: 8px;
 }
 
 .chat-send-column .el-button {
-  width: 100%;
+  width: auto;
   margin-left: 0;
+}
+
+.chat-send-column .el-button--primary {
+  min-width: 64px;
+}
+
+.chat-send-column .el-button:last-child {
+  width: 40px;
+  flex: 0 0 auto;
 }
 
 /* AI right drawer */
@@ -4455,11 +4466,6 @@ body {
   line-height: 1.6;
 }
 
-@media (max-width: 720px) {
-  .chat-send-column {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
 
 /* V2.1 visual language */
 .nav-item.el-button {
@@ -4867,7 +4873,7 @@ body {
 }
 
 .ai-composer {
-  grid-template-columns: minmax(0, 1fr) 44px;
+  grid-template-columns: minmax(0, 1fr) auto;
 }
 
 .chat-starter-row {
