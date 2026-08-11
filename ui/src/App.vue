@@ -198,6 +198,8 @@ const stagingEntries = ref<ApiRecord[]>([]);
 const chatInput = ref("");
 const chatThinking = ref(false);
 const chatThreadRef = ref<HTMLElement | null>(null);
+const chatSidebarOpen = ref(true);
+const chatSideSections = ref({chapter: true, refs: true, issues: true});
 const chatAttachment = ref<{name: string; kind: "txt" | "project" | "knowledge"; text: string} | null>(null);
 const chatAttachInput = ref<HTMLInputElement | null>(null);
 const chatMode = ref<"chat" | "adjust">("chat");
@@ -4048,7 +4050,14 @@ onUnmounted(() => {
             </el-card>
           </section>
 
-          <section v-else-if="activity === 'chat'" class="activity-panel chat-panel">
+          <section
+            v-else-if="activity === 'chat'"
+            class="activity-panel chat-panel"
+            :class="{
+              'chat-sidebar-closed': !chatSidebarOpen,
+              'chat-sidebar-open': chatSidebarOpen,
+            }"
+          >
             <el-card shadow="never" class="chat-thread-card ai-chat-card">
               <div class="ai-chat-header">
                 <div class="ai-chat-title">
@@ -4060,6 +4069,17 @@ onUnmounted(() => {
                 </div>
                 <div class="ai-chat-header-actions">
                   <span class="llm-channel-chip">{{ llmChannelLabel }}</span>
+                  <el-button
+                    size="small"
+                    text
+                    :type="chatSidebarOpen ? 'primary' : 'default'"
+                    @click="chatSidebarOpen = !chatSidebarOpen"
+                  >
+                    上下文
+                    <span v-if="selectedKnowledgeNodes.length + pendingIssueCount > 0" class="ai-chat-badge">
+                      {{ selectedKnowledgeNodes.length + pendingIssueCount }}
+                    </span>
+                  </el-button>
                   <el-radio-group v-model="chatMode" size="small">
                     <el-radio-button value="chat">对话</el-radio-button>
                     <el-radio-button value="adjust">调整正文</el-radio-button>
@@ -4252,74 +4272,129 @@ onUnmounted(() => {
               </div>
             </el-card>
 
+            <div v-if="chatSidebarOpen" class="chat-sidebar-backdrop" @click="chatSidebarOpen = false" />
+
             <el-card shadow="never" class="chat-side-card">
               <template #header>
                 <div class="card-header">
                   <span>创作上下文</span>
-                  <el-button size="small" @click="refreshChatReferences">刷新资料</el-button>
-                </div>
-              </template>
-              <div v-if="!activeChapter" class="product-empty-state compact">
-                <strong>还没有章节</strong>
-                <p>创建第一章后，就可以在右侧开始对话或写正文。</p>
-                <el-button type="primary" @click="startWriting">创建第一章</el-button>
-              </div>
-              <template v-else>
-                <strong class="side-chapter-title">{{ activeChapter.title }}</strong>
-                <p class="side-chapter-preview">{{ preview(activeChapter.content, 520) }}</p>
-                <el-space wrap>
-                  <el-button @click="activity = 'novel'">打开正文</el-button>
-                  <el-button @click="addChapter">新章节</el-button>
-                  <el-button @click="loadChapterContext">查资料</el-button>
-                  <el-button :disabled="!activeChapter.content.trim()" @click="submitChapterExtract">
-                    本章存为资料
-                  </el-button>
-                </el-space>
-              </template>
-              <div class="reference-picker">
-                <div class="reference-picker-head">
-                  <strong>写作参考</strong>
-                  <span>{{ selectedKnowledgeNodes.length }} / 6</span>
-                </div>
-                <el-empty v-if="chatReferenceNodes.length === 0" description="暂无已入库资料" />
-                <button
-                  v-for="node in chatReferenceNodes"
-                  :key="recordId(node)"
-                  type="button"
-                  class="reference-item"
-                  :class="{active: isKnowledgeSelected(node)}"
-                  @click="toggleKnowledgeReference(node)"
-                >
-                  <strong>{{ recordTitle(node) }}</strong>
-                  <span>{{ recordPreview(node, 92) }}</span>
-                </button>
-                <el-button size="small" @click="activity = 'context'">去资料库管理</el-button>
-              </div>
-              <div class="pending-issues-panel">
-                <div class="reference-picker-head">
-                  <strong>待处理项</strong>
-                  <span>{{ pendingIssueCount }}</span>
-                </div>
-                <div v-if="pendingIssueCount === 0" class="product-empty-state compact">
-                  没有待处理项
-                </div>
-                <div
-                  v-for="issue in activeProject.issues.filter((item) => item.status === '待处理')"
-                  :key="issue.id"
-                  class="issue-row"
-                  :class="`kind-${issue.kind}`"
-                >
-                  <span class="issue-kind">{{ issue.kind }}</span>
-                  <div>
-                    <strong>{{ issue.item }}</strong>
-                    <small v-if="issue.reason">依据：{{ issue.reason }}</small>
-                    <small v-if="issue.suggestion">建议：{{ issue.suggestion }}</small>
-                  </div>
-                  <el-space wrap class="issue-actions">
-                    <el-button size="small" @click="setIssueStatus(issue, '已处理')">已处理</el-button>
-                    <el-button size="small" @click="setIssueStatus(issue, '忽略')">忽略</el-button>
-                    <el-button size="small" type="danger" plain @click="removeIssue(issue)">删除</el-button>
+                  <el-space wrap>
+                    <el-button size="small" @click="refreshChatReferences">刷新资料</el-button>
+                    <el-button
+                      class="chat-sidebar-close mobile-only"
+                      size="small"
+                      text
+                      @click="chatSidebarOpen = false"
+                    >
+                      关闭
+                    </el-button>
                   </el-space>
+                </div>
+              </template>
+
+              <div class="chat-side-section">
+                <button
+                  type="button"
+                  class="chat-side-section-head"
+                  @click="chatSideSections.chapter = !chatSideSections.chapter"
+                >
+                  <strong>当前章节</strong>
+                  <span>{{ chatSideSections.chapter ? "−" : "+" }}</span>
+                </button>
+                <div v-show="chatSideSections.chapter" class="chat-side-section-body">
+                  <div v-if="!activeChapter" class="product-empty-state compact">
+                    <strong>还没有章节</strong>
+                    <p>创建第一章后，就可以在右侧开始对话或写正文。</p>
+                    <el-button type="primary" @click="startWriting">创建第一章</el-button>
+                  </div>
+                  <template v-else>
+                    <strong class="side-chapter-title">{{ activeChapter.title }}</strong>
+                    <p class="side-chapter-preview">{{ preview(activeChapter.content, 520) }}</p>
+                    <el-space wrap>
+                      <el-button size="small" @click="activity = 'novel'">打开正文</el-button>
+                      <el-button size="small" @click="addChapter">新章节</el-button>
+                      <el-button size="small" @click="loadChapterContext">查资料</el-button>
+                      <el-button
+                        size="small"
+                        :disabled="!activeChapter.content.trim()"
+                        @click="submitChapterExtract"
+                      >
+                        本章存为资料
+                      </el-button>
+                    </el-space>
+                  </template>
+                </div>
+              </div>
+
+              <div class="chat-side-section">
+                <button
+                  type="button"
+                  class="chat-side-section-head"
+                  @click="chatSideSections.refs = !chatSideSections.refs"
+                >
+                  <strong>写作参考</strong>
+                  <span>{{ chatSideSections.refs ? "−" : "+" }}</span>
+                </button>
+                <div v-show="chatSideSections.refs" class="chat-side-section-body">
+                  <div class="reference-picker">
+                    <div class="reference-picker-head">
+                      <strong>已选择</strong>
+                      <span>{{ selectedKnowledgeNodes.length }} / 6</span>
+                    </div>
+                    <el-empty v-if="chatReferenceNodes.length === 0" description="暂无已入库资料" />
+                    <button
+                      v-for="node in chatReferenceNodes"
+                      :key="recordId(node)"
+                      type="button"
+                      class="reference-item"
+                      :class="{active: isKnowledgeSelected(node)}"
+                      @click="toggleKnowledgeReference(node)"
+                    >
+                      <strong>{{ recordTitle(node) }}</strong>
+                      <span>{{ recordPreview(node, 92) }}</span>
+                    </button>
+                    <el-button size="small" @click="activity = 'context'">去资料库管理</el-button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="chat-side-section">
+                <button
+                  type="button"
+                  class="chat-side-section-head"
+                  @click="chatSideSections.issues = !chatSideSections.issues"
+                >
+                  <strong>待处理项</strong>
+                  <span>{{ chatSideSections.issues ? "−" : "+" }}</span>
+                </button>
+                <div v-show="chatSideSections.issues" class="chat-side-section-body">
+                  <div class="pending-issues-panel">
+                    <div v-if="pendingIssueCount === 0" class="product-empty-state compact">
+                      没有待处理项
+                    </div>
+                    <div
+                      v-for="issue in activeProject.issues.filter((item) => item.status === '待处理')"
+                      :key="issue.id"
+                      class="issue-row"
+                      :class="`kind-${issue.kind}`"
+                    >
+                      <span class="issue-kind">{{ issue.kind }}</span>
+                      <div>
+                        <strong>{{ issue.item }}</strong>
+                        <small v-if="issue.reason">依据：{{ issue.reason }}</small>
+                        <small v-if="issue.suggestion">建议：{{ issue.suggestion }}</small>
+                      </div>
+                      <el-space wrap class="issue-actions">
+                        <el-button size="small" @click="setIssueStatus(issue, '已处理')">
+                          已处理
+                        </el-button>
+                        <el-button size="small" @click="setIssueStatus(issue, '忽略')">忽略</el-button>
+                        <el-button size="small" type="danger" plain @click="removeIssue(issue)">
+                          删除
+                        </el-button>
+                      </el-space>
+                    </div>
+                  </div>
                 </div>
               </div>
             </el-card>
