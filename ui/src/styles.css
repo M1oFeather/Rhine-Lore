@@ -893,7 +893,6 @@ body {
 }
 
 .mobile-menu-button,
-.mobile-more-toggle,
 .mobile-chapter-bar,
 .sidebar-backdrop {
   display: none;
@@ -1028,18 +1027,6 @@ body {
 
   .nav-label small {
     display: none;
-  }
-
-  .sidebar .mobile-secondary-nav-item {
-    display: none !important;
-  }
-
-  .sidebar.mobile-more-open .mobile-secondary-nav-item {
-    display: inline-flex !important;
-  }
-
-  .mobile-more-toggle {
-    display: inline-flex;
   }
 
   .mobile-menu-button {
@@ -4251,15 +4238,6 @@ body {
 /* Modern app redesign */
 .mobile-only {
   display: none;
-}
-
-.nav-group-label {
-  padding: 8px 12px 2px;
-  color: #7f8b99;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
 }
 
 .sidebar-footer {

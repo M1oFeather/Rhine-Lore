@@ -151,19 +151,11 @@ const activities: {id: Activity; label: string; icon: GameIconName; description:
 const activity = ref<Activity>("studio");
 const sidebarCollapsed = ref(localStorage.getItem("rhine-lore-sidebar-collapsed") === "1");
 const mobileNavOpen = ref(false);
-const mobileMoreOpen = ref(false);
 const showAllProjects = ref(false);
 const novelTocVisible = ref(false);
 const novelSettingsVisible = ref(false);
 const readTocVisible = ref(false);
 const readSettingsVisible = ref(false);
-const mobilePrimaryIds = new Set<Activity>(["studio", "novel", "read", "shelf", "context", "settings"]);
-const mobilePrimaryActivities = computed(() =>
-  activities.filter((item) => mobilePrimaryIds.has(item.id)),
-);
-const mobileSecondaryActivities = computed(() =>
-  activities.filter((item) => !mobilePrimaryIds.has(item.id)),
-);
 const notice = ref("就绪");
 const busyAction = ref("");
 const runState = ref<Record<string, unknown> | null>(null);
@@ -3298,7 +3290,7 @@ onUnmounted(() => {
       accept=".txt,.text,.json,text/plain,application/json"
       @change="handleChatAttach"
     />
-    <aside class="sidebar" :class="{'mobile-more-open': mobileMoreOpen}">
+    <aside class="sidebar">
       <button class="sidebar-close mobile-only" type="button" @click="mobileNavOpen = false">
         ×
       </button>
@@ -3318,37 +3310,10 @@ onUnmounted(() => {
         </el-select>
       </div>
       <nav class="sidebar-nav">
-        <div class="nav-group-label mobile-only">主要</div>
         <el-button
-          v-for="item in mobilePrimaryActivities"
+          v-for="item in activities"
           :key="item.id"
           class="nav-item"
-          :class="{
-            active: activity === item.id,
-            'nav-item-secondary': !isPrimaryActivity(item.id),
-            'mobile-parent-active': isStudioChildActivity(item.id),
-          }"
-          @click="openActivity(item.id); mobileNavOpen = false"
-          :title="sidebarCollapsed ? item.label : ''"
-        >
-          <span class="nav-icon-dot"><GameIcon :name="item.icon" :label="item.label" /></span>
-          <span class="nav-label">
-            <strong>{{ item.label }}</strong>
-            <small>{{ item.description }}</small>
-          </span>
-        </el-button>
-        <div class="nav-group-label mobile-only">更多</div>
-        <el-button class="nav-item mobile-more-toggle" @click="mobileMoreOpen = !mobileMoreOpen">
-          <span class="nav-icon-dot"><GameIcon name="more" label="更多" /></span>
-          <span class="nav-label">
-            <strong>{{ mobileMoreOpen ? "收起" : "更多功能" }}</strong>
-            <small>{{ mobileMoreOpen ? "显示次要功能" : "故事档案 / 角色 / 演化沙盘等" }}</small>
-          </span>
-        </el-button>
-        <el-button
-          v-for="item in mobileSecondaryActivities"
-          :key="item.id"
-          class="nav-item mobile-secondary-nav-item"
           :class="{
             active: activity === item.id,
             'nav-item-secondary': !isPrimaryActivity(item.id),
