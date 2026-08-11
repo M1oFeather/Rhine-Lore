@@ -759,11 +759,55 @@ export function aiWriteBook(body: {
   return postJson(`/lore-api/books/${encodeURIComponent(body.book_id)}/ai/write`, body);
 }
 
+export type VersionRecord = {
+  snapshot_id: string;
+  kind: "project" | "book";
+  entity_id: string;
+  message: string;
+  created_at: string;
+  char_count: number;
+};
+
 export function executeAgentTool(
   tool: string,
   args: Record<string, unknown>,
-): Promise<{ok: boolean; tool: string; result: ApiRecord}> {
+): Promise<{ok: boolean; tool: string; result: ApiRecord; snapshot?: VersionRecord | null}> {
   return postJson("/lore-api/agent/execute", {tool, args});
+}
+
+export function listVersions(
+  kind: "project" | "book",
+  entityId: string,
+): Promise<{versions: VersionRecord[]}> {
+  return getJson(
+    `/lore-api/versions?kind=${encodeURIComponent(kind)}&entity_id=${encodeURIComponent(entityId)}`,
+  );
+}
+
+export function commitVersion(
+  kind: "project" | "book",
+  entityId: string,
+  message: string,
+  payload?: unknown,
+): Promise<{snapshot: VersionRecord}> {
+  return postJson("/lore-api/versions/commit", {
+    kind,
+    entity_id: entityId,
+    message,
+    payload,
+  });
+}
+
+export function restoreVersion(
+  kind: "project" | "book",
+  entityId: string,
+  snapshotId: string,
+): Promise<{payload: ApiRecord; snapshot?: VersionRecord | null}> {
+  return postJson("/lore-api/versions/restore", {
+    kind,
+    entity_id: entityId,
+    snapshot_id: snapshotId,
+  });
 }
 
 export function analyzeBook(bookId: string): Promise<{analysis: BookAnalysis; offline: boolean}> {

@@ -384,6 +384,39 @@ class BookStore:
             self._save_index(book_id, rest)
             return self.get_book(book_id)
 
+    def restore_book(self, book_id: str, chapters: list[dict[str, Any]]) -> dict[str, Any]:
+        with self._lock:
+            book = self._load_book(book_id)
+            chapters_dir = self._book_dir(book_id) / "chapters"
+            if chapters_dir.is_dir():
+                for old in chapters_dir.glob("*.txt"):
+                    old.unlink()
+            else:
+                chapters_dir.mkdir(parents=True, exist_ok=True)
+            rows: list[dict[str, Any]] = []
+            summaries = book.setdefault("summaries", {})
+            for item in chapters or []:
+                chapter_id = _safe_id(str(item.get("id") or _new_id("ch")))
+                content = str(item.get("content") or "")
+                order = int(item.get("order") or (len(rows) + 1))
+                rows.append(
+                    {
+                        "id": chapter_id,
+                        "title": str(item.get("title") or f"第{order}章")[:120],
+                        "order": order,
+                        "char_count": len(content),
+                        "created_at": str(item.get("created_at") or _now()),
+                        "updated_at": _now(),
+                    }
+                )
+                self._chapter_path(book_id, chapter_id).write_text(content, encoding="utf-8")
+                summaries[chapter_id] = _heuristic_summary(content)
+            rows.sort(key=lambda row: int(row.get("order") or 0))
+            self._recompute_totals(book, rows)
+            self._save_book(book)
+            self._save_index(book_id, rows)
+            return self.get_book(book_id)
+
     def chapter_summaries(self, book_id: str, before_order: int, limit: int = 3) -> list[dict[str, Any]]:
         with self._lock:
             book = self._load_book(book_id)

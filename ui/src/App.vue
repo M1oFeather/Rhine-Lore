@@ -27,6 +27,7 @@ import {
   type StoryProject,
   type VaultRuntimeStatus,
   type VaultWebStatus,
+  type VersionRecord,
   type WorkspaceRecord,
   type WorldCard,
   advanceEvolution,
@@ -63,6 +64,9 @@ import {
   listStaging,
   listWorkspaces,
   listProjectBackups,
+  listVersions,
+  commitVersion,
+  restoreVersion,
   registerWorkspace,
   regenerateEvolutionChapter,
   resetEvolutionRun,
@@ -157,6 +161,19 @@ const novelTocVisible = ref(false);
 const novelSettingsVisible = ref(false);
 const readTocVisible = ref(false);
 const readSettingsVisible = ref(false);
+const novelVersionsVisible = ref(false);
+const shelfVersionsVisible = ref(false);
+const novelVersionMessage = ref("");
+const shelfVersionMessage = ref("");
+const novelVersions = ref<VersionRecord[]>([]);
+const shelfVersions = ref<VersionRecord[]>([]);
+const versionBusy = ref("");
+const pendingRestoreVersion = ref<{
+  kind: "project" | "book";
+  entity_id: string;
+  snapshot_id: string;
+  message: string;
+} | null>(null);
 const notice = ref("就绪");
 const busyAction = ref("");
 const runState = ref<Record<string, unknown> | null>(null);
@@ -1244,6 +1261,163 @@ function shelfProgressLabel(): string {
   return total > 0 ? `第 ${Math.max(0, shelfChapterIndex.value + 1)} / ${total} 章` : "无章节";
 }
 
+async function refreshNovelVersions(): Promise<void> {
+  const projectId = activeProject.value?.id;
+  if (!projectId) {
+    return;
+  }
+  try {
+    novelVersions.value = (await listVersions("project", projectId)).versions;
+  } catch (error) {
+    runState.value = {error: error instanceof Error ? error.message : String(error)};
+  }
+}
+
+function openNovelVersions(): void {
+  novelVersionsVisible.value = true;
+  void refreshNovelVersions();
+}
+
+async function commitNovelVersion(): Promise<void> {
+  const project = activeProject.value;
+  if (!project || versionBusy.value) {
+    return;
+  }
+  versionBusy.value = "提交版本";
+  try {
+    await commitVersion(
+      "project",
+      project.id,
+      novelVersionMessage.value.trim() || "手动提交",
+      project,
+    );
+    novelVersionMessage.value = "";
+    markSaved("版本已提交");
+    await refreshNovelVersions();
+  } catch (error) {
+    runState.value = {error: error instanceof Error ? error.message : String(error)};
+  } finally {
+    versionBusy.value = "";
+  }
+}
+
+function requestNovelRestore(record: VersionRecord): void {
+  if (
+    !pendingRestoreVersion.value ||
+    pendingRestoreVersion.value.snapshot_id !== record.snapshot_id
+  ) {
+    pendingRestoreVersion.value = {
+      kind: "project",
+      entity_id: record.entity_id,
+      snapshot_id: record.snapshot_id,
+      message: record.message,
+    };
+    return;
+  }
+  void restoreNovelVersion(record);
+}
+
+async function restoreNovelVersion(record: VersionRecord): Promise<void> {
+  const projectId = activeProject.value?.id;
+  if (!projectId || versionBusy.value) {
+    return;
+  }
+  versionBusy.value = "恢复版本";
+  pendingRestoreVersion.value = null;
+  try {
+    const result = await restoreVersion("project", projectId, record.snapshot_id);
+    const payload = result.payload as unknown as StoryProject;
+    if (payload?.id) {
+      upsertProject(payload);
+      markSaved(`已恢复到「${record.message}」`);
+    }
+    await refreshNovelVersions();
+  } catch (error) {
+    runState.value = {error: error instanceof Error ? error.message : String(error)};
+  } finally {
+    versionBusy.value = "";
+  }
+}
+
+async function refreshShelfVersions(): Promise<void> {
+  if (!shelfBookId.value) {
+    return;
+  }
+  try {
+    shelfVersions.value = (await listVersions("book", shelfBookId.value)).versions;
+  } catch (error) {
+    runState.value = {error: error instanceof Error ? error.message : String(error)};
+  }
+}
+
+function openShelfVersions(): void {
+  shelfVersionsVisible.value = true;
+  void refreshShelfVersions();
+}
+
+async function commitShelfVersion(): Promise<void> {
+  if (!shelfBookId.value || versionBusy.value) {
+    return;
+  }
+  versionBusy.value = "提交版本";
+  try {
+    await commitVersion(
+      "book",
+      shelfBookId.value,
+      shelfVersionMessage.value.trim() || "手动提交",
+    );
+    shelfVersionMessage.value = "";
+    markSaved("版本已提交");
+    await refreshShelfVersions();
+  } catch (error) {
+    runState.value = {error: error instanceof Error ? error.message : String(error)};
+  } finally {
+    versionBusy.value = "";
+  }
+}
+
+function requestShelfRestore(record: VersionRecord): void {
+  if (
+    !pendingRestoreVersion.value ||
+    pendingRestoreVersion.value.snapshot_id !== record.snapshot_id
+  ) {
+    pendingRestoreVersion.value = {
+      kind: "book",
+      entity_id: record.entity_id,
+      snapshot_id: record.snapshot_id,
+      message: record.message,
+    };
+    return;
+  }
+  void restoreShelfVersion(record);
+}
+
+async function restoreShelfVersion(record: VersionRecord): Promise<void> {
+  if (!shelfBookId.value || versionBusy.value) {
+    return;
+  }
+  versionBusy.value = "恢复版本";
+  pendingRestoreVersion.value = null;
+  try {
+    const result = await restoreVersion("book", shelfBookId.value, record.snapshot_id);
+    const payload = result.payload as unknown as {book: BookDetail; chapters: BookChapter[]};
+    if (payload?.book) {
+      shelfBook.value = payload.book;
+      const first = payload.book.chapters[0];
+      if (first) {
+        await loadShelfChapter(first.id);
+      }
+      await loadShelfBooks();
+      markSaved(`已恢复到「${record.message}」`);
+    }
+    await refreshShelfVersions();
+  } catch (error) {
+    runState.value = {error: error instanceof Error ? error.message : String(error)};
+  } finally {
+    versionBusy.value = "";
+  }
+}
+
 async function openKnowledgeIntake(): Promise<void> {
   await openActivity("context");
 }
@@ -1938,7 +2112,9 @@ async function confirmAgentAction(): Promise<void> {
       ]);
       appendChat("assistant", `已执行「${toolActionLabel(action.tool)}」。`);
       saveProjects();
-      markSaved("AI 操作已执行并同步到本地");
+      markSaved(
+        `AI 操作已执行并同步到本地${executed.snapshot ? "（执行前已自动备份）" : ""}`,
+      );
     }
   } catch (error) {
     runState.value = {error: error instanceof Error ? error.message : String(error)};
@@ -4894,6 +5070,7 @@ onUnmounted(() => {
                 <div class="card-header">
                   <span>正文</span>
                   <el-space wrap>
+                    <el-button size="small" @click="openNovelVersions">版本</el-button>
                     <el-button size="small" @click="novelTocVisible = true">目录</el-button>
                     <el-button size="small" @click="novelSettingsVisible = true">阅读设置</el-button>
                     <span class="chapter-meter desktop-only-control">
@@ -5029,6 +5206,49 @@ onUnmounted(() => {
                 <div v-if="activeProject.chapters.length === 0" class="product-empty-state compact">
                   <strong>从第一章开始</strong>
                   <el-button type="primary" @click="startWriting">创建并编辑</el-button>
+                </div>
+              </div>
+            </el-drawer>
+
+            <el-drawer v-model="novelVersionsVisible" title="版本历史" direction="rtl" size="min(420px, 92vw)">
+              <div class="version-panel">
+                <div class="version-commit-row">
+                  <el-input
+                    v-model="novelVersionMessage"
+                    placeholder="提交说明，例如：完成第二章初稿"
+                    size="small"
+                  />
+                  <el-button
+                    size="small"
+                    type="primary"
+                    :loading="versionBusy === '提交版本'"
+                    @click="commitNovelVersion"
+                  >
+                    提交
+                  </el-button>
+                </div>
+                <p class="version-hint">AI 写操作会自动备份；恢复前也会先备份当前状态。</p>
+                <div class="version-list">
+                  <div
+                    v-for="record in novelVersions"
+                    :key="record.snapshot_id"
+                    class="version-item"
+                  >
+                    <div class="version-item-copy">
+                      <strong>{{ record.message }}</strong>
+                      <small>{{ record.created_at }} · {{ record.char_count.toLocaleString() }} 字</small>
+                    </div>
+                    <el-button
+                      size="small"
+                      :type="pendingRestoreVersion?.snapshot_id === record.snapshot_id ? 'danger' : 'default'"
+                      @click="requestNovelRestore(record)"
+                    >
+                      {{ pendingRestoreVersion?.snapshot_id === record.snapshot_id ? "确认恢复" : "恢复" }}
+                    </el-button>
+                  </div>
+                  <div v-if="novelVersions.length === 0" class="product-empty-state compact">
+                    还没有版本记录
+                  </div>
                 </div>
               </div>
             </el-drawer>
@@ -6055,6 +6275,7 @@ onUnmounted(() => {
                   >
                     返回书架
                   </el-button>
+                  <el-button size="small" @click="openShelfVersions">版本</el-button>
                   <el-button size="small" @click="shelfTocVisible = true">目录</el-button>
                   <el-button size="small" @click="shelfSettingsVisible = true">阅读设置</el-button>
                   <el-button
@@ -6201,6 +6422,54 @@ onUnmounted(() => {
                     <strong>{{ chapter.title }}</strong>
                     <small>{{ chapter.char_count.toLocaleString() }} 字</small>
                   </button>
+                </div>
+              </el-drawer>
+
+              <el-drawer
+                v-model="shelfVersionsVisible"
+                title="版本历史"
+                direction="rtl"
+                size="min(420px, 92vw)"
+              >
+                <div class="version-panel">
+                  <div class="version-commit-row">
+                    <el-input
+                      v-model="shelfVersionMessage"
+                      placeholder="提交说明，例如：校对前快照"
+                      size="small"
+                    />
+                    <el-button
+                      size="small"
+                      type="primary"
+                      :loading="versionBusy === '提交版本'"
+                      @click="commitShelfVersion"
+                    >
+                      提交
+                    </el-button>
+                  </div>
+                  <p class="version-hint">AI 写操作会自动备份；恢复前也会先备份当前状态。</p>
+                  <div class="version-list">
+                    <div
+                      v-for="record in shelfVersions"
+                      :key="record.snapshot_id"
+                      class="version-item"
+                    >
+                      <div class="version-item-copy">
+                        <strong>{{ record.message }}</strong>
+                        <small>{{ record.created_at }} · {{ record.char_count.toLocaleString() }} 字</small>
+                      </div>
+                      <el-button
+                        size="small"
+                        :type="pendingRestoreVersion?.snapshot_id === record.snapshot_id ? 'danger' : 'default'"
+                        @click="requestShelfRestore(record)"
+                      >
+                        {{ pendingRestoreVersion?.snapshot_id === record.snapshot_id ? "确认恢复" : "恢复" }}
+                      </el-button>
+                    </div>
+                    <div v-if="shelfVersions.length === 0" class="product-empty-state compact">
+                      还没有版本记录
+                    </div>
+                  </div>
                 </div>
               </el-drawer>
 

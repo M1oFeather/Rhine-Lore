@@ -41,6 +41,7 @@ from rhine_lore.engine import (
     viewpoint_options,
 )
 from rhine_lore.novel_store import BookStore, _heuristic_summary
+from rhine_lore.version_store import VersionStore
 
 
 ALLOWED_PROXY_HOSTS = {"127.0.0.1", "localhost", "::1"}
@@ -60,6 +61,7 @@ DEFAULT_VAULT_DATABASE = PROJECT_ROOT / "data" / "rhine-vault-core.db"
 VAULT_WEB_INSTALL_TIMEOUT = 300
 EVOLUTION_STORE = EvolutionStore(PROJECTS_DIR)
 BOOK_STORE = BookStore(DATA_ROOT)
+VERSION_STORE = VersionStore(DATA_ROOT)
 
 
 def _is_embedded() -> bool:
@@ -921,6 +923,73 @@ _AGENT_MUTATING_TOOLS = {
     "append_book_chapter",
 }
 
+_PROJECT_AGENT_TOOLS = {
+    "append_chapter",
+    "add_character",
+    "update_character",
+    "delete_character",
+    "add_world_card",
+    "update_world_card",
+    "delete_world_card",
+    "update_chapter",
+    "delete_chapter",
+    "update_project",
+}
+
+_BOOK_AGENT_TOOLS = {
+    "append_book_chapter",
+    "merge_chapters",
+}
+
+
+def _project_char_count(project: dict[str, Any]) -> int:
+    return sum(len(str(chapter.get("content") or "")) for chapter in project.get("chapters") or [])
+
+
+def _book_snapshot_payload(book_id: str) -> dict[str, Any]:
+    book = BOOK_STORE.get_book(book_id)
+    chapters = [
+        {
+            "id": row["id"],
+            "title": row.get("title") or "",
+            "order": row.get("order") or 0,
+            "content": BOOK_STORE.get_chapter(book_id, row["id"])["content"],
+        }
+        for row in book["chapters"]
+    ]
+    return {"book_id": book_id, "chapters": chapters}
+
+
+def _book_payload_char_count(payload: dict[str, Any]) -> int:
+    return sum(len(str(chapter.get("content") or "")) for chapter in payload.get("chapters") or [])
+
+
+def _auto_snapshot_for_tool(tool: str, args: dict[str, Any]) -> dict[str, Any] | None:
+    try:
+        if tool in _PROJECT_AGENT_TOOLS and str(args.get("project_id") or "").strip():
+            project_id = str(args["project_id"]).strip()
+            project = _load_agent_project(project_id)
+            return VERSION_STORE.commit(
+                "project",
+                project_id,
+                "AI 操作前快照",
+                project,
+                _project_char_count(project),
+            )
+        if tool in _BOOK_AGENT_TOOLS and str(args.get("book_id") or "").strip():
+            book_id = str(args["book_id"]).strip()
+            payload = _book_snapshot_payload(book_id)
+            return VERSION_STORE.commit(
+                "book",
+                book_id,
+                "AI 操作前快照",
+                payload,
+                _book_payload_char_count(payload),
+            )
+    except KeyError:
+        return None
+    return None
+
 
 def _agent_system_prompt(attachments: list[dict[str, Any]]) -> str:
     tools = (
@@ -1781,6 +1850,7 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
                 if tool not in _AGENT_MUTATING_TOOLS:
                     self._send_json(400, {"error": "只允许执行已确认的写操作"})
                     return
+                snapshot = _auto_snapshot_for_tool(tool, args)
                 try:
                     result = _run_agent_tool(tool, args)
                 except KeyError as exc:
@@ -1789,7 +1859,103 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
                 except ValueError as exc:
                     self._send_json(400, {"error": str(exc)})
                     return
-                self._send_json(200, {"ok": True, "tool": tool, "result": result})
+                self._send_json(
+                    200,
+                    {"ok": True, "tool": tool, "result": result, "snapshot": snapshot},
+                )
+                return
+            if self.command == "POST" and parsed_request.path == "/lore-api/versions/commit":
+                payload = self._read_json_body()
+                kind = str(payload.get("kind") or "").strip()
+                entity_id = str(payload.get("entity_id") or "").strip()
+                if kind not in {"project", "book"} or not entity_id:
+                    raise ValueError("kind 必须是 project/book，且 entity_id 不能为空")
+                message = str(payload.get("message") or "未命名版本")
+                raw = payload.get("payload")
+                if raw is None:
+                    if kind == "project":
+                        project = _load_agent_project(entity_id)
+                        raw = project
+                        char_count = _project_char_count(project)
+                    else:
+                        raw = _book_snapshot_payload(entity_id)
+                        char_count = _book_payload_char_count(raw)
+                else:
+                    char_count = (
+                        _project_char_count(raw)
+                        if kind == "project"
+                        else _book_payload_char_count(raw)
+                    )
+                snapshot = VERSION_STORE.commit(kind, entity_id, message, raw, char_count)
+                self._send_json(200, {"snapshot": snapshot})
+                return
+            if self.command == "GET" and parsed_request.path == "/lore-api/versions":
+                query = parse_qs(parsed_request.query)
+                kind = (query.get("kind") or [""])[0].strip()
+                entity_id = (query.get("entity_id") or [""])[0].strip()
+                if kind not in {"project", "book"} or not entity_id:
+                    raise ValueError("kind 必须是 project/book，且 entity_id 不能为空")
+                self._send_json(200, {"versions": VERSION_STORE.history(kind, entity_id)})
+                return
+            if self.command == "POST" and parsed_request.path == "/lore-api/versions/restore":
+                payload = self._read_json_body()
+                kind = str(payload.get("kind") or "").strip()
+                entity_id = str(payload.get("entity_id") or "").strip()
+                snapshot_id = str(payload.get("snapshot_id") or "").strip()
+                if kind not in {"project", "book"} or not entity_id or not snapshot_id:
+                    raise ValueError("参数不完整")
+                pre_snapshot = None
+                try:
+                    if kind == "project":
+                        project = _load_agent_project(entity_id)
+                        pre_snapshot = VERSION_STORE.commit(
+                            "project",
+                            entity_id,
+                            "恢复前快照",
+                            project,
+                            _project_char_count(project),
+                        )
+                    else:
+                        current = _book_snapshot_payload(entity_id)
+                        pre_snapshot = VERSION_STORE.commit(
+                            "book",
+                            entity_id,
+                            "恢复前快照",
+                            current,
+                            _book_payload_char_count(current),
+                        )
+                except KeyError:
+                    pre_snapshot = None
+                loaded = VERSION_STORE.load_snapshot(kind, entity_id, snapshot_id)
+                restored_payload = loaded["payload"]
+                if kind == "project":
+                    if (
+                        not isinstance(restored_payload, dict)
+                        or not str(restored_payload.get("id") or "").strip()
+                    ):
+                        raise ValueError("快照内容损坏")
+                    _save_agent_project(restored_payload)
+                    self._send_json(
+                        200,
+                        {"payload": restored_payload, "snapshot": pre_snapshot},
+                    )
+                    return
+                if (
+                    not isinstance(restored_payload, dict)
+                    or not isinstance(restored_payload.get("chapters"), list)
+                ):
+                    raise ValueError("快照内容损坏")
+                book = BOOK_STORE.restore_book(entity_id, restored_payload["chapters"])
+                chapters = [
+                    BOOK_STORE.get_chapter(entity_id, row["id"]) for row in book["chapters"]
+                ]
+                self._send_json(
+                    200,
+                    {
+                        "payload": {"book": book, "chapters": chapters},
+                        "snapshot": pre_snapshot,
+                    },
+                )
                 return
             if self.command == "POST" and parsed_request.path == "/lore-api/evolution/start":
                 payload = self._read_json_body()
