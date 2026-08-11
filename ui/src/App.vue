@@ -3955,7 +3955,7 @@ onUnmounted(() => {
 
       <el-scrollbar class="workspace-main">
         <main class="content-grid">
-          <section v-if="activity === 'studio'" class="activity-panel">
+          <section v-if="activity === 'studio'" class="activity-panel home-panel">
             <el-card shadow="never" class="home-hero">
               <div class="home-hero-copy">
                 <p class="home-kicker">写作引导台</p>
@@ -4047,11 +4047,10 @@ onUnmounted(() => {
                   </el-space>
                 </div>
               </template>
-              <div class="project-grid" :class="{'project-grid-collapsed': !showAllProjects}">
+              <div class="project-grid project-grid-home">
                 <button
-                  v-for="(project, index) in projects"
+                  v-for="project in projects"
                   :key="project.id"
-                  v-show="showAllProjects || index < 3"
                   type="button"
                   class="project-card"
                   :class="{active: activeProject.id === project.id}"
@@ -4072,113 +4071,7 @@ onUnmounted(() => {
                   </span>
                 </button>
               </div>
-              <div v-if="projects.length > 3" class="project-fold-toggle">
-                <el-button size="small" text @click="showAllProjects = !showAllProjects">
-                  {{ showAllProjects ? "收起" : `展开全部（${projects.length} 个故事）` }}
-                </el-button>
-              </div>
             </el-card>
-
-            <div class="workbench-continuity">
-              <div>
-                <span>当前进度</span>
-                <strong>{{ latestChapter?.title || "还没有章节" }}</strong>
-                <small>{{ projectCharacterCount }} 字正文 · {{ activeProject.chat.length }} 条创作对话</small>
-              </div>
-              <el-space wrap>
-                <el-button type="primary" @click="startWriting">继续写</el-button>
-                <el-button @click="activity = 'chat'">聊一聊</el-button>
-                <el-button @click="activity = 'story'">故事档案</el-button>
-              </el-space>
-            </div>
-
-            <div class="section-heading">
-              <div>
-                <span>按需完善</span>
-                <small>这些内容不需要一次写完，创作过程中随时补充即可。</small>
-              </div>
-            </div>
-            <div class="guide-grid">
-              <button class="guide-card" type="button" @click="activity = 'story'">
-                <span>故事档案</span>
-                <strong>名称、类型和一句话概要</strong>
-                <small>{{ activeProject.summary ? "已填写概要" : "还可以补充概要" }}</small>
-              </button>
-              <button class="guide-card" type="button" @click="activity = 'world'">
-                <span>世界观</span>
-                <strong>地点、规则和重要背景</strong>
-                <small>{{ activeProject.world.length }} 条设定</small>
-              </button>
-              <button class="guide-card" type="button" @click="activity = 'characters'">
-                <span>角色</span>
-                <strong>人物、动机和关系</strong>
-                <small>{{ activeProject.characters.length }} 个角色</small>
-              </button>
-              <button class="guide-card" type="button" @click="activity = 'context'">
-                <span>资料库</span>
-                <strong>保存和查找创作资料</strong>
-                <small>{{ nodes.length }} 条资料</small>
-              </button>
-              <button class="guide-card" type="button" @click="activity = 'evolution'">
-                <span>演化沙盘</span>
-                <strong>让小说自己演下去</strong>
-                <small>{{ evolutionState ? `已进行 ${evolutionState.turn} 回合` : "回合制沙盘与有限视角小说" }}</small>
-              </button>
-              <button class="guide-card" type="button" @click="activity = 'map'">
-                <span>故事地图</span>
-                <strong>摆放地点，画出路线</strong>
-                <small>{{ activeProject.map.nodes.length }} 个地点 · {{ activeProject.map.edges.length }} 条连接</small>
-              </button>
-            </div>
-
-            <div class="knowledge-home-strip">
-              <div class="knowledge-home-copy">
-                <span>资料流程</span>
-                <strong>{{ knowledgePipelineHint }}</strong>
-                <small>对话和正文会先变成资料草稿，确认后才会进入可检索知识库。</small>
-              </div>
-              <div class="knowledge-pipeline compact">
-                <div v-for="stat in knowledgePipelineStats" :key="stat.label" class="stat-card" :class="stat.tone">
-                  <b>{{ stat.value }}</b>
-                  <span>{{ stat.label }}</span>
-                </div>
-              </div>
-              <el-button @click="openKnowledgeIntake">处理资料</el-button>
-            </div>
-
-            <div class="ai-channel-strip">
-              <div class="ai-channel-copy">
-                <span>AI 生成通道</span>
-                <strong>{{ llmStatusLabel }}</strong>
-                <small>用于演化扩写与对话创作；配置保存在服务端，局域网手机等所有设备共用。</small>
-              </div>
-              <div class="ai-channel-fields">
-                <el-select v-model="llmPreset" size="small" @change="applyLlmProvider">
-                  <el-option label="DeepSeek" value="deepseek" />
-                  <el-option label="OpenAI" value="openai" />
-                  <el-option label="自定义" value="custom" />
-                </el-select>
-                <el-input v-model="llmModel" size="small" placeholder="模型名称" />
-                <el-input
-                  v-model="llmApiKey"
-                  type="password"
-                  show-password
-                  size="small"
-                  placeholder="已配置则留空保持不变"
-                />
-              </div>
-              <el-space wrap>
-                <el-button
-                  size="small"
-                  :loading="busyAction === '测试模型连接'"
-                  @click="testLlmConnection"
-                >
-                  测试连接
-                </el-button>
-                <el-button size="small" type="primary" @click="saveLlmConfig">保存</el-button>
-              </el-space>
-            </div>
-
           </section>
 
           <section v-else-if="activity === 'story'" class="activity-panel">

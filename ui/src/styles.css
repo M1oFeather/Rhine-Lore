@@ -5343,3 +5343,102 @@ body {
   font-size: 12px;
 }
 
+/* Fixed viewport pages */
+.home-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  height: calc(100vh - 118px);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.home-panel .home-hero .el-card__body {
+  min-height: 108px;
+  padding: 16px 18px;
+}
+
+.home-panel .home-hero h2 {
+  font-size: 22px;
+}
+
+.home-panel .ai-entry-banner {
+  padding: 10px 14px;
+}
+
+.home-panel .ai-entry-logo {
+  width: 34px;
+  height: 34px;
+  font-size: 12px;
+}
+
+.home-panel .home-quick-tile {
+  padding: 10px 12px;
+}
+
+.home-panel .home-quick-icon {
+  width: 30px;
+  height: 30px;
+}
+
+.home-panel .setup-guide {
+  padding: 10px 12px;
+}
+
+.home-panel .story-picker-card {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.home-panel .story-picker-card .el-card__body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.project-grid-home {
+  display: flex;
+  flex-direction: row;
+  gap: 10px;
+  height: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 4px;
+}
+
+.project-grid-home .project-card {
+  flex: 0 0 230px;
+  height: 100%;
+}
+
+.activity-panel:not(.home-panel):not(.chat-panel):not(.novel-panel):not(.reading-panel):not(.shelf-panel) {
+  height: calc(100vh - 118px);
+  min-height: 0;
+  overflow-y: auto;
+}
+
+@media (max-width: 720px) {
+  .home-panel {
+    height: calc(100dvh - 158px);
+  }
+
+  .home-panel .home-hero .el-card__body {
+    min-height: 96px;
+    padding: 14px 16px;
+  }
+
+  .home-panel .home-quick-grid {
+    gap: 8px;
+  }
+
+  .project-grid-home .project-card {
+    flex: 0 0 200px;
+  }
+
+  .activity-panel:not(.home-panel):not(.chat-panel):not(.novel-panel):not(.reading-panel):not(.shelf-panel) {
+    height: calc(100dvh - 158px);
+  }
+}
+
