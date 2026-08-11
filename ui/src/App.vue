@@ -134,11 +134,11 @@ const WRITING_QUALITY_GUIDE =
   "7) 与已知设定、人物声音、时间线严格一致，不发明未发生的情节。";
 
 const activities: {id: Activity; label: string; icon: GameIconName; description: string}[] = [
+  {id: "chat", label: "AI 对话", icon: "message", description: "续写、修订、导入的创作助手"},
   {id: "studio", label: "工作台", icon: "home", description: "选择故事和开始写作"},
   {id: "story", label: "故事档案", icon: "file-text", description: "名称、类型和概要"},
   {id: "world", label: "世界观", icon: "globe", description: "规则、地点和历史"},
   {id: "characters", label: "角色", icon: "users", description: "人物、动机和关系"},
-  {id: "chat", label: "对话创作", icon: "message", description: "聊剧情，生成草稿"},
   {id: "novel", label: "正文", icon: "pen", description: "阅读和编辑章节"},
   {id: "context", label: "资料库", icon: "database", description: "查找设定和参考资料"},
   {id: "evolution", label: "演化", icon: "sparkles", description: "沙盘观演与有限视角小说"},
@@ -346,6 +346,8 @@ const selectedKnowledgeNodes = computed(() => {
   const ids = new Set(selectedKnowledgeIds.value);
   return nodes.value.filter((node) => ids.has(recordId(node)));
 });
+
+const showAiFab = computed(() => !["chat", "novel", "read", "shelf"].includes(activity.value));
 
 const chatContextLabel = computed(() => {
   const chapterText = activeChapter.value ? `《${activeChapter.value.title}》` : "未选择章节";
@@ -3369,6 +3371,7 @@ onUnmounted(() => {
             active: activity === item.id,
             'nav-item-secondary': !isPrimaryActivity(item.id),
             'mobile-parent-active': isStudioChildActivity(item.id),
+            'nav-chat': item.id === 'chat',
           }"
           @click="openActivity(item.id); mobileNavOpen = false"
           :title="sidebarCollapsed ? item.label : ''"
@@ -3446,6 +3449,15 @@ onUnmounted(() => {
                 <el-button @click="activity = 'evolution'">演化沙盘</el-button>
               </el-space>
             </el-card>
+
+            <button class="ai-entry-banner" type="button" @click="openActivity('chat')">
+              <span class="ai-entry-logo">RL</span>
+              <span class="ai-entry-copy">
+                <strong>AI 创作助手</strong>
+                <small>续写 · 修订 · 导入 · 角色与设定管理</small>
+              </span>
+              <span class="ai-entry-arrow">→</span>
+            </button>
 
             <div class="home-quick-grid">
               <button class="home-quick-tile" type="button" @click="startWriting">
@@ -6190,6 +6202,17 @@ onUnmounted(() => {
         </div>
       </div>
     </el-drawer>
+
+    <button
+      v-if="showAiFab"
+      class="ai-fab"
+      type="button"
+      aria-label="打开 AI 对话"
+      @click="openActivity('chat')"
+    >
+      <GameIcon name="message" :size="20" />
+      <span>AI</span>
+    </button>
   </div>
 </template>
 
