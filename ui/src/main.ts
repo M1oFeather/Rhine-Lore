@@ -7,6 +7,7 @@ import {
   ElDescriptionsItem,
 } from "element-plus/es/components/descriptions/index.mjs";
 import { ElDialog } from "element-plus/es/components/dialog/index.mjs";
+import { ElDrawer } from "element-plus/es/components/drawer/index.mjs";
 import { ElEmpty } from "element-plus/es/components/empty/index.mjs";
 import {
   ElForm,
@@ -41,6 +42,7 @@ const app = createApp(App);
   ElDescriptions,
   ElDescriptionsItem,
   ElDialog,
+  ElDrawer,
   ElEmpty,
   ElForm,
   ElFormItem,
