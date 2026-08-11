@@ -5236,3 +5236,40 @@ body {
   min-height: 36px;
 }
 
+.agent-impact {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid #c7d7f5;
+  border-radius: 10px;
+  background: #f8faff;
+}
+
+.agent-impact-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.agent-impact-head strong {
+  color: #172554;
+  font-size: 13px;
+}
+
+.agent-impact-head span {
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.agent-impact ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 18px;
+  color: #33475c;
+  font-size: 13px;
+  line-height: 1.6;
+}
+

@@ -352,6 +352,120 @@ const selectedKnowledgeNodes = computed(() => {
 
 const showAiFab = computed(() => !["chat", "novel", "read", "shelf"].includes(activity.value));
 
+const agentImpactPreview = computed<{label: string; lines: string[]} | null>(() => {
+  const action = pendingAgentAction.value;
+  if (!action) {
+    return null;
+  }
+  const args = action.args;
+  const projectName = activeProject.value?.name || "当前项目";
+  switch (action.tool) {
+    case "create_project":
+      return {
+        label: "新建项目",
+        lines: [
+          `名称：${String(args.name || "未命名")}`,
+          `类型：${String(args.genre || "未分类")}`,
+          `概要：${String(args.summary || "（空）")}`,
+          "影响：项目列表新增 1 个故事，不修改现有数据",
+        ],
+      };
+    case "add_character":
+      return {
+        label: "新增角色卡",
+        lines: [
+          `位置：项目《${projectName}》 → 角色列表`,
+          `将新增 1 个角色：${String(args.name || "未命名")}`,
+          "现有角色不会被修改",
+        ],
+      };
+    case "update_character": {
+      const targetName = String(args.name || args.id || "");
+      const card = activeProject.value.characters.find(
+        (item) => item.name === targetName || item.id === args.id,
+      );
+      const fields: [keyof CharacterCard, string][] = [
+        ["role", "角色"],
+        ["drive", "欲望"],
+        ["fear", "恐惧"],
+        ["stance", "立场"],
+        ["identity", "身份"],
+        ["traits", "特质"],
+        ["background", "背景"],
+        ["secret", "秘密"],
+        ["status", "状态"],
+      ];
+      const changed: string[] = [];
+      for (const [key, label] of fields) {
+        if (args[key] !== undefined && String(card?.[key] ?? "") !== String(args[key])) {
+          changed.push(
+            `${label}：${String(card?.[key] ?? "（空）")} → ${String(args[key])}`,
+          );
+        }
+      }
+      if (!card) {
+        changed.push(`将按名称/ID 匹配角色「${targetName || "?"}」，未在当前项目找到对应角色`);
+      }
+      return {
+        label: `调整角色「${card?.name || targetName || "?"}」`,
+        lines: changed.length > 0 ? changed : ["未检测到字段变化，请确认是否仍要执行"],
+      };
+    }
+    case "add_world_card":
+      return {
+        label: "新增设定",
+        lines: [
+          `位置：项目《${projectName}》 → 世界观`,
+          `新增：${String(args.name || "未命名")}（${String(args.type || "地点")}）`,
+          "现有设定不会被修改",
+        ],
+      };
+    case "append_chapter":
+      return {
+        label: "追加章节",
+        lines: [
+          `位置：项目《${projectName}》 → 章节列表（末尾）`,
+          `新增章节：《${String(args.title || "未命名")}》 · 约 ${String(args.content || "").length} 字`,
+          "现有章节不会被修改",
+        ],
+      };
+    case "import_txt":
+      return {
+        label: "导入 TXT",
+        lines: [
+          "位置：书架",
+          `新增书籍：《${String(args.name || "未命名")}》 · 约 ${String(args.text || "").length} 字`,
+          "现有书籍不会被修改",
+        ],
+      };
+    case "append_book_chapter": {
+      const book = shelfBooks.value.find((item) => item.book_id === args.book_id);
+      return {
+        label: "给书追加章节",
+        lines: [
+          `位置：书架 → 《${book?.name || String(args.book_id || "未知书")}》`,
+          `新增章节：《${String(args.title || "未命名")}》 · 约 ${String(args.content || "").length} 字`,
+          "现有章节不会被修改",
+        ],
+      };
+    }
+    case "save_knowledge":
+      return {
+        label: "保存资料草稿",
+        lines: [
+          "位置：资料库 → 草稿",
+          `标题：${String(args.title || "未命名")}`,
+          `内容预览：${preview(String(args.content || ""), 80)}`,
+        ],
+      };
+    default:
+      return {
+        label: toolActionLabel(action.tool),
+        lines: ["执行后将写入本地数据"],
+      };
+  }
+});
+
 const chatContextLabel = computed(() => {
   const chapterText = activeChapter.value ? `《${activeChapter.value.title}》` : "未选择章节";
   const referenceText = selectedKnowledgeNodes.value.length > 0 ? `${selectedKnowledgeNodes.value.length} 条资料` : "未选择资料";
@@ -4320,6 +4434,17 @@ onUnmounted(() => {
                   <pre v-else class="agent-json-preview">
                     {{ JSON.stringify(pendingAgentAction.args, null, 2) }}
                   </pre>
+                  <div v-if="agentImpactPreview" class="agent-impact">
+                    <div class="agent-impact-head">
+                      <strong>执行影响</strong>
+                      <span>{{ agentImpactPreview.label }}</span>
+                    </div>
+                    <ul>
+                      <li v-for="(line, index) in agentImpactPreview.lines" :key="index">
+                        {{ line }}
+                      </li>
+                    </ul>
+                  </div>
                   <div class="agent-confirm-actions">
                     <el-button size="small" type="primary" @click="confirmAgentAction">
                       确认执行
