@@ -16,6 +16,7 @@ nav:
   - 界面重设计: design/redesign-v2.md
   - 滚动设计审计: design/scroll-audit.md
   - 全量设计评估: design/full-design-evaluation.md
+  - 引导与交互方案: design/interaction-guidance.md
   - 版本与发布:
       - 发布管理: releases/index.md
       - 更新日志: releases/changelog.md
