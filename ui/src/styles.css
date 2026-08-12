@@ -815,7 +815,7 @@ body {
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--reader-day-bg);
-  padding: 34px max(24px, calc((100% - 760px) / 2));
+  padding: 34px max(24px, calc((100% - var(--reader-measure, 900px)) / 2));
   color: var(--reader-day-ink);
   line-height: 1.9;
 }
@@ -1651,7 +1651,7 @@ body {
 .novel-reader {
   max-width: none;
   margin: 0;
-  padding: 48px max(24px, calc((100% - 760px) / 2));
+  padding: 48px max(24px, calc((100% - var(--reader-measure, 900px)) / 2));
 }
 
 .novel-reader p {
@@ -3814,7 +3814,7 @@ body {
 }
 
 .evolution-chapter-reader {
-  padding: 26px max(24px, calc((100% - 760px) / 2));
+  padding: 26px max(24px, calc((100% - var(--reader-measure, 900px)) / 2));
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--reader-day-bg);
@@ -5959,7 +5959,7 @@ body {
   border: 0;
   border-radius: 0;
   box-shadow: none;
-  padding: 24px max(24px, calc((100% - 760px) / 2)) 140px;
+  padding: 24px max(24px, calc((100% - var(--reader-measure, 900px)) / 2)) 140px;
 }
 
 .reading-progress {

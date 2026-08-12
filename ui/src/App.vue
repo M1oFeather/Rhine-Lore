@@ -252,6 +252,7 @@ const readerTheme = ref<"day" | "sepia" | "night">(
 );
 const readerParagraphSpacing = ref(Number(localStorage.getItem("rhine-lore-reader-paragraph-spacing") || "1.1"));
 const readerJustify = ref(localStorage.getItem("rhine-lore-reader-justify") !== "0");
+const readerMeasure = ref(Number(localStorage.getItem("rhine-lore-reader-measure") || "900"));
 const lastReaderAutoAdvance = ref(0);
 const shelfBooks = ref<BookMeta[]>([]);
 const shelfBookId = ref("");
@@ -1238,6 +1239,7 @@ function persistReaderSettings(): void {
   localStorage.setItem("rhine-lore-reader-theme", readerTheme.value);
   localStorage.setItem("rhine-lore-reader-paragraph-spacing", String(readerParagraphSpacing.value));
   localStorage.setItem("rhine-lore-reader-justify", readerJustify.value ? "1" : "0");
+  localStorage.setItem("rhine-lore-reader-measure", String(readerMeasure.value));
 }
 
 function readerThemeClass(): string {
@@ -1250,6 +1252,7 @@ function readerContentStyle(): Record<string, string> {
     lineHeight: String(readerLineHeight.value),
     textAlign: readerJustify.value ? "justify" : "left",
     "--reader-para-margin": `${readerParagraphSpacing.value}em`,
+    "--reader-measure": `${readerMeasure.value}px`,
   } as Record<string, string>;
 }
 
@@ -5827,6 +5830,15 @@ onUnmounted(() => {
                   <el-radio-button :value="true">两端对齐</el-radio-button>
                   <el-radio-button :value="false">左对齐</el-radio-button>
                 </el-radio-group>
+                <label>阅读宽度</label>
+                <el-slider
+                  v-model="readerMeasure"
+                  :min="700"
+                  :max="1100"
+                  :step="20"
+                  show-input
+                  @change="persistReaderSettings"
+                />
               </div>
             </el-drawer>
           </section>
@@ -6801,6 +6813,15 @@ onUnmounted(() => {
                   <el-radio-button :value="true">两端对齐</el-radio-button>
                   <el-radio-button :value="false">左对齐</el-radio-button>
                 </el-radio-group>
+                <label>阅读宽度</label>
+                <el-slider
+                  v-model="readerMeasure"
+                  :min="700"
+                  :max="1100"
+                  :step="20"
+                  show-input
+                  @change="persistReaderSettings"
+                />
               </div>
             </el-drawer>
           </section>
@@ -7133,6 +7154,15 @@ onUnmounted(() => {
                     <el-radio-button :value="true">两端对齐</el-radio-button>
                     <el-radio-button :value="false">左对齐</el-radio-button>
                   </el-radio-group>
+                  <label>阅读宽度</label>
+                  <el-slider
+                    v-model="readerMeasure"
+                    :min="700"
+                    :max="1100"
+                    :step="20"
+                    show-input
+                    @change="persistReaderSettings"
+                  />
                 </div>
               </el-drawer>
             </template>
