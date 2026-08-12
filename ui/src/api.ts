@@ -662,6 +662,70 @@ export function llmServerChat(
   return postJson("/lore-api/llm/chat", {messages, attachments});
 }
 
+export type LlmStreamEvent =
+  | {type: "start"; model?: string}
+  | {type: "delta"; text: string}
+  | {type: "done"; answer: string; actions?: AgentToolAction[]}
+  | {type: "error"; message: string};
+
+export async function llmServerChatStream(
+  messages: LlmChatMessage[],
+  attachments: ChatAttachment[] = [],
+  onEvent: (event: LlmStreamEvent) => void,
+  signal?: AbortSignal,
+): Promise<{answer: string; actions: AgentToolAction[]}> {
+  const response = await fetch(apiUrl("/lore-api/llm/chat/stream"), {
+    method: "POST",
+    headers: {"Content-Type": "application/json", Accept: "text/event-stream"},
+    body: JSON.stringify({messages, attachments}),
+    signal,
+  });
+  if (!response.ok || !response.body) {
+    throw new Error(await response.text());
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  let buffer = "";
+  let answer = "";
+  let actions: AgentToolAction[] = [];
+  for (;;) {
+    const {done, value} = await reader.read();
+    if (done) {
+      break;
+    }
+    buffer += decoder.decode(value, {stream: true});
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("data:")) {
+        continue;
+      }
+      const payload = trimmed.slice(5).trim();
+      if (!payload) {
+        continue;
+      }
+      let event: LlmStreamEvent;
+      try {
+        event = JSON.parse(payload) as LlmStreamEvent;
+      } catch {
+        continue;
+      }
+      if (event.type === "delta" && typeof event.text === "string") {
+        answer += event.text;
+        onEvent(event);
+      } else if (event.type === "done") {
+        answer = event.answer ?? answer;
+        actions = event.actions ?? [];
+        onEvent(event);
+      } else {
+        onEvent(event);
+      }
+    }
+  }
+  return {answer, actions};
+}
+
 export type LlmChatMessage = {
   role: string;
   content: string;

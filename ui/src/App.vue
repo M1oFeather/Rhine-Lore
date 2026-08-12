@@ -60,6 +60,7 @@ import {
   importBook,
   listBooks,
   llmServerChat,
+  llmServerChatStream,
   llmServerPing,
   listNodes,
   listProposals,
@@ -228,6 +229,7 @@ const proposals = ref<ApiRecord[]>([]);
 const stagingEntries = ref<ApiRecord[]>([]);
 const chatInput = ref("");
 const chatThinking = ref(false);
+const streamingChatText = ref("");
 const chatThreadRef = ref<HTMLElement | null>(null);
 const chatSidebarOpen = ref(true);
 const chatSideSections = ref({chapter: true, refs: true, issues: true});
@@ -288,6 +290,7 @@ const chapterBusy = ref(false);
 const evolutionChat = ref<EvolutionChatMessage[]>([]);
 const evolutionChatInput = ref("");
 const evolutionChatBusy = ref(false);
+const evolutionChatStreaming = ref("");
 const evolutionCharacterDialogVisible = ref(false);
 const evolutionNewCharacter = ref({name: "", role: "配角", drive: "", secret: ""});
 const ignoredCharacterPromptProjects = ref<string[]>([]);
@@ -2229,22 +2232,52 @@ async function sendCreativeMessage(): Promise<void> {
   const attachments = chatAttachment.value ? [chatAttachment.value] : [];
   let result: any = null;
   chatThinking.value = true;
+  streamingChatText.value = "";
   try {
-    result = await perform("对话创作", () => {
+    result = await perform("对话创作", async () => {
       if (llmConfigured.value) {
-        return llmServerChat(
-          [
-            {
-              role: "system",
-              content:
-                "你是 Rhine-Lore 的创作助手：基于用户给出的世界观、角色与章节续写或讨论剧情，不要编造未提供的设定。" +
-                (styleCard ? `\n风格基准（必须严格遵守）：\n${styleCard}` : "") +
-                WRITING_QUALITY_GUIDE,
+        let fullText = "";
+        let revealed = 0;
+        let revealTimer: ReturnType<typeof setInterval> | undefined;
+        revealTimer = setInterval(() => {
+          if (revealed >= fullText.length) {
+            return;
+          }
+          const step = Math.max(3, Math.ceil(fullText.length / 150));
+          revealed = Math.min(fullText.length, revealed + step);
+          streamingChatText.value = fullText.slice(0, revealed);
+          void scrollChatToBottom();
+        }, 16);
+        try {
+          const streamed = await llmServerChatStream(
+            [
+              {
+                role: "system",
+                content:
+                  "你是 Rhine-Lore 的创作助手：基于用户给出的世界观、角色与章节续写或讨论剧情，不要编造未提供的设定。" +
+                  (styleCard ? `\n风格基准（必须严格遵守）：\n${styleCard}` : "") +
+                  WRITING_QUALITY_GUIDE,
+              },
+              {role: "user", content: prompt},
+            ],
+            attachments,
+            (event) => {
+              if (event.type === "delta") {
+                fullText += event.text;
+              }
             },
-            {role: "user", content: prompt},
-          ],
-          attachments,
-        );
+          );
+          if (revealTimer) {
+            clearInterval(revealTimer);
+          }
+          revealed = fullText.length;
+          streamingChatText.value = fullText;
+          return {answer: streamed.answer, actions: streamed.actions};
+        } finally {
+          if (revealTimer) {
+            clearInterval(revealTimer);
+          }
+        }
       }
       return fakeCreativeAnswer({
         query: prompt,
@@ -2255,6 +2288,7 @@ async function sendCreativeMessage(): Promise<void> {
     });
   } finally {
     chatThinking.value = false;
+    streamingChatText.value = "";
   }
   let reply = result ? extractAssistantText(result, fallback) : fallback;
   if (reply && reply !== fallback && activeProject.value.polish_writing && llmConfigured.value) {
@@ -3406,16 +3440,46 @@ async function sendEvolutionChatMessage(): Promise<void> {
   evolutionChat.value.push({id: uid("chat-message"), role: "user", content: text});
   evolutionChatInput.value = "";
   evolutionChatBusy.value = true;
-  const result = await perform("与故事对话", () =>
-    llmServerChat(buildEvolutionChatMessages(text)),
-  );
-  evolutionChatBusy.value = false;
-  const reply = result ? String(result.answer ?? "").trim() : "";
-  evolutionChat.value.push({
-    id: uid("chat-message"),
-    role: "assistant",
-    content: reply || "（没有收到回复，请重试或简化问题）",
-  });
+  evolutionChatStreaming.value = "";
+  let fullText = "";
+  let revealTimer: ReturnType<typeof setInterval> | undefined;
+  revealTimer = setInterval(() => {
+    if (fullText.length === 0) {
+      return;
+    }
+    const current = evolutionChatStreaming.value;
+    if (current.length >= fullText.length) {
+      return;
+    }
+    const step = Math.max(3, Math.ceil(fullText.length / 150));
+    evolutionChatStreaming.value = fullText.slice(0, Math.min(fullText.length, current.length + step));
+  }, 16);
+  try {
+    const result = await perform("与故事对话", async () => {
+      const streamed = await llmServerChatStream(buildEvolutionChatMessages(text), [], (event) => {
+        if (event.type === "delta") {
+          fullText += event.text;
+        }
+      });
+      return {answer: streamed.answer};
+    });
+    if (revealTimer) {
+      clearInterval(revealTimer);
+    }
+    evolutionChatStreaming.value = fullText;
+    const reply = result ? String(result.answer ?? "").trim() : "";
+    evolutionChatStreaming.value = "";
+    evolutionChat.value.push({
+      id: uid("chat-message"),
+      role: "assistant",
+      content: reply || "（没有收到回复，请重试或简化问题）",
+    });
+  } finally {
+    if (revealTimer) {
+      clearInterval(revealTimer);
+    }
+    evolutionChatBusy.value = false;
+  }
 }
 
 function setEvolutionMessageAsGuidance(message: EvolutionChatMessage): void {
@@ -4993,10 +5057,15 @@ onUnmounted(() => {
                 </article>
                 <div v-if="chatThinking" class="chat-message assistant">
                   <img class="chat-avatar assistant" :src="rhineLoreMark" alt="Rhine-Lore" />
-                  <div class="chat-bubble chat-thinking">
-                    <span />
-                    <span />
-                    <span />
+                  <div class="chat-bubble chat-thinking" :class="{streaming: streamingChatText}">
+                    <template v-if="streamingChatText">
+                      <p class="streaming-text">{{ streamingChatText }}<span class="stream-cursor" /></p>
+                    </template>
+                    <template v-else>
+                      <span class="thinking-dot" />
+                      <span class="thinking-dot" />
+                      <span class="thinking-dot" />
+                    </template>
                   </div>
                 </div>
               </div>
@@ -6240,6 +6309,10 @@ onUnmounted(() => {
                     </div>
                     <p>{{ message.content }}</p>
                   </article>
+                  <div v-if="evolutionChatStreaming" class="chat-message assistant">
+                    <div class="chat-message-head"><strong>导演助理</strong></div>
+                    <p class="streaming-text">{{ evolutionChatStreaming }}<span class="stream-cursor" /></p>
+                  </div>
                 </div>
                 <div class="prompt-starters evolution-chat-starters">
                   <el-button

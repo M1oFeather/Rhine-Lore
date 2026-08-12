@@ -10,6 +10,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import uuid
 from http import HTTPStatus
@@ -69,12 +70,15 @@ def _is_embedded() -> bool:
 
 
 _EMBEDDED_VAULT: EmbeddedVaultStore | None = None
+_EMBEDDED_VAULT_LOCK = threading.Lock()
 
 
 def _embedded_vault() -> EmbeddedVaultStore:
     global _EMBEDDED_VAULT
     if _EMBEDDED_VAULT is None:
-        _EMBEDDED_VAULT = EmbeddedVaultStore(DATA_ROOT)
+        with _EMBEDDED_VAULT_LOCK:
+            if _EMBEDDED_VAULT is None:
+                _EMBEDDED_VAULT = EmbeddedVaultStore(DATA_ROOT)
     return _EMBEDDED_VAULT
 
 
@@ -1169,6 +1173,71 @@ def _chat_with_vault(messages: list[dict[str, str]], llm: dict[str, Any]) -> str
     return text
 
 
+def _run_agent_chat(
+    raw_messages: list[dict[str, Any]],
+    attachments: list[Any] | None = None,
+) -> tuple[str, list[dict[str, Any]]]:
+    """Run the agent loop: call the model, execute read-only tools, return final text + actions."""
+    llm = _resolve_llm(None)
+    if not llm["api_key"]:
+        raise ValueError("未配置 API Key")
+    messages = [
+        {"role": str(item.get("role") or "user"), "content": str(item.get("content") or "")}
+        for item in raw_messages
+    ]
+    working: list[dict[str, str]] = [
+        {"role": "system", "content": _agent_system_prompt(attachments or [])},
+        *messages,
+    ]
+    actions: list[dict[str, Any]] = []
+    final_text = ""
+    for step in range(5):
+        text = _chat_with_vault(working, llm)
+        call = _extract_agent_tool_call(text)
+        if call is None:
+            final_text = text
+            break
+        if call["tool"] in _AGENT_MUTATING_TOOLS:
+            actions.append(
+                {
+                    "tool": call["tool"],
+                    "args": call["args"],
+                    "pending": True,
+                    "result": None,
+                }
+            )
+            final_text = text
+            break
+        result_payload: dict[str, Any] | None = None
+        try:
+            result = _run_agent_tool(call["tool"], call["args"])
+            result_payload = result
+            result_text = json.dumps(result, ensure_ascii=False)[:1200]
+            summary = f"工具 {call['tool']} 执行成功：{result_text}"
+        except Exception as exc:  # noqa: BLE001 - tool errors go back to the model
+            result_payload = {"error": str(exc)}
+            summary = f"工具 {call['tool']} 执行失败：{exc}"
+        actions.append(
+            {
+                "tool": call["tool"],
+                "args": call["args"],
+                "result": result_payload,
+            }
+        )
+        working.append({"role": "assistant", "content": text})
+        working.append({"role": "user", "content": summary})
+        if step >= 3:
+            working.append(
+                {
+                    "role": "user",
+                    "content": "请基于以上工具结果直接输出最终中文回复，不要再调用工具。",
+                }
+            )
+    if not final_text:
+        final_text = _chat_with_vault(working, llm)
+    return final_text, actions
+
+
 def _store_turn_prose(
     state: EvolutionState,
     viewpoint_id: str,
@@ -1384,6 +1453,29 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _stream_llm_answer(
+        self,
+        text: str,
+        actions: list[dict[str, Any]],
+        model: str,
+    ) -> None:
+        """SSE 打字机流式输出：正文分片下发，结束后发送 done 事件。"""
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.end_headers()
+
+        def emit(event_type: str, payload: dict[str, Any]) -> None:
+            data = f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode("utf-8")
+            self.wfile.write(data)
+            self.wfile.flush()
+
+        emit("start", {"type": "start", "model": model, "provider": "openai-compatible"})
+        chunk_size = 6
+        for index in range(0, len(text), chunk_size):
+            emit("delta", {"type": "delta", "text": text[index : index + chunk_size]})
+            time.sleep(0.012)
+        emit("done", {"type": "done", "answer": text, "actions": actions})
 
     def _vault_status_payload(self) -> dict[str, Any]:
         if _is_embedded():
@@ -1803,70 +1895,13 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
                 raw_messages = payload.get("messages") or []
                 if not isinstance(raw_messages, list) or not raw_messages:
                     raise ValueError("messages 不能为空")
-                llm = _resolve_llm(None)
-                if not llm["api_key"]:
-                    self._send_json(400, {"error": "未配置 API Key"})
-                    return
-                messages = [
-                    {
-                        "role": str(item.get("role") or "user"),
-                        "content": str(item.get("content") or ""),
-                    }
-                    for item in raw_messages
-                ]
                 raw_attachments = payload.get("attachments")
                 attachments = raw_attachments if isinstance(raw_attachments, list) else []
-                working: list[dict[str, str]] = [
-                    {"role": "system", "content": _agent_system_prompt(attachments)},
-                    *messages,
-                ]
-                actions: list[dict[str, Any]] = []
-                final_text = ""
+                if not _resolve_llm(None)["api_key"]:
+                    self._send_json(400, {"error": "未配置 API Key"})
+                    return
                 try:
-                    for step in range(5):
-                        text = _chat_with_vault(working, llm)
-                        call = _extract_agent_tool_call(text)
-                        if call is None:
-                            final_text = text
-                            break
-                        if call["tool"] in _AGENT_MUTATING_TOOLS:
-                            actions.append(
-                                {
-                                    "tool": call["tool"],
-                                    "args": call["args"],
-                                    "pending": True,
-                                    "result": None,
-                                }
-                            )
-                            final_text = text
-                            break
-                        result_payload: dict[str, Any] | None = None
-                        try:
-                            result = _run_agent_tool(call["tool"], call["args"])
-                            result_payload = result
-                            result_text = json.dumps(result, ensure_ascii=False)[:1200]
-                            summary = f"工具 {call['tool']} 执行成功：{result_text}"
-                        except Exception as exc:  # noqa: BLE001 - tool errors go back to the model
-                            result_payload = {"error": str(exc)}
-                            summary = f"工具 {call['tool']} 执行失败：{exc}"
-                        actions.append(
-                            {
-                                "tool": call["tool"],
-                                "args": call["args"],
-                                "result": result_payload,
-                            }
-                        )
-                        working.append({"role": "assistant", "content": text})
-                        working.append({"role": "user", "content": summary})
-                        if step >= 3:
-                            working.append(
-                                {
-                                    "role": "user",
-                                    "content": "请基于以上工具结果直接输出最终中文回复，不要再调用工具。",
-                                }
-                            )
-                    if not final_text:
-                        final_text = _chat_with_vault(working, llm)
+                    final_text, actions = _run_agent_chat(raw_messages, attachments)
                 except HTTPError as exc:
                     detail = exc.read().decode("utf-8", errors="replace")[-300:]
                     self._send_json(502, {"error": f"AI 请求失败：{detail or exc}"})
@@ -1878,11 +1913,32 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
                     200,
                     {
                         "answer": final_text,
-                        "model": llm["model"],
+                        "model": _resolve_llm(None)["model"],
                         "provider": "openai-compatible",
                         "actions": actions,
                     },
                 )
+                return
+            if self.command == "POST" and parsed_request.path == "/lore-api/llm/chat/stream":
+                payload = self._read_json_body()
+                raw_messages = payload.get("messages") or []
+                if not isinstance(raw_messages, list) or not raw_messages:
+                    raise ValueError("messages 不能为空")
+                raw_attachments = payload.get("attachments")
+                attachments = raw_attachments if isinstance(raw_attachments, list) else []
+                if not _resolve_llm(None)["api_key"]:
+                    self._send_json(400, {"error": "未配置 API Key"})
+                    return
+                try:
+                    final_text, actions = _run_agent_chat(raw_messages, attachments)
+                except HTTPError as exc:
+                    detail = exc.read().decode("utf-8", errors="replace")[-300:]
+                    self._send_json(502, {"error": f"AI 请求失败：{detail or exc}"})
+                    return
+                except (URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError) as exc:
+                    self._send_json(502, {"error": f"AI 请求失败：{exc}"})
+                    return
+                self._stream_llm_answer(final_text, actions, _resolve_llm(None)["model"])
                 return
             if self.command == "POST" and parsed_request.path == "/lore-api/agent/execute":
                 payload = self._read_json_body()
