@@ -152,17 +152,11 @@ body {
 }
 
 .sidebar-footer-brand {
-  display: inline-grid;
+  display: block;
   width: 18px;
   height: 18px;
-  place-items: center;
   border-radius: 6px;
-  background: #2563eb;
-  color: #ffffff;
-  font-size: 9px;
-  font-style: normal;
-  font-weight: 800;
-  letter-spacing: 0;
+  object-fit: cover;
 }
 
 .sidebar-footer .status-dot {
@@ -4688,16 +4682,12 @@ body {
 }
 
 .ai-chat-logo {
-  display: grid;
+  display: block;
   width: 34px;
   height: 34px;
   flex: 0 0 auto;
-  place-items: center;
   border-radius: 12px;
-  background: linear-gradient(135deg, #2563eb, #1d4ed8);
-  color: #ffffff;
-  font-size: 12px;
-  font-weight: 800;
+  object-fit: cover;
 }
 
 .ai-chat-title strong {
@@ -4769,6 +4759,8 @@ body {
 }
 
 .chat-avatar.assistant {
+  display: block;
+  object-fit: cover;
   background: linear-gradient(135deg, #2563eb, #1d4ed8);
   color: #ffffff;
 }
@@ -4981,16 +4973,12 @@ body {
 }
 
 .ai-entry-logo {
-  display: grid;
+  display: block;
   width: 40px;
   height: 40px;
   flex: 0 0 auto;
-  place-items: center;
   border-radius: 13px;
-  background: linear-gradient(135deg, #2563eb, #1d4ed8);
-  color: #ffffff;
-  font-size: 13px;
-  font-weight: 800;
+  object-fit: cover;
 }
 
 .ai-entry-copy {
@@ -5463,6 +5451,19 @@ body {
   font-style: normal;
 }
 
+.fold-toggle {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  background: #f8fafc;
+  color: var(--blue);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+}
+
 @media (max-width: 720px) {
   .feature-map-grid {
     grid-template-columns: minmax(0, 1fr);
@@ -5597,12 +5598,15 @@ body {
 }
 
 .settings-panel {
+  display: flex;
+  flex-direction: column;
   overflow: hidden !important;
 }
 
 .settings-panel .el-tabs {
   display: flex;
-  height: 100%;
+  flex: 1;
+  min-height: 0;
   flex-direction: column;
 }
 
@@ -5694,27 +5698,7 @@ body {
   }
 
   .story-panel .el-col .el-card {
-    max-height: 40dvh;
-  }
-
-  .settings-panel {
-    overflow: hidden !important;
-  }
-
-  .settings-panel .el-tabs {
-    display: flex;
-    height: 100%;
-    flex-direction: column;
-  }
-
-  .settings-panel .el-tabs__nav-wrap {
-    flex: 0 0 auto;
-  }
-
-  .settings-panel .el-tabs__content {
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
+    max-height: 38dvh;
   }
 }
 

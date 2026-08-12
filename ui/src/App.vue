@@ -162,6 +162,7 @@ const activity = ref<Activity>("studio");
 const sidebarCollapsed = ref(localStorage.getItem("rhine-lore-sidebar-collapsed") === "1");
 const mobileNavOpen = ref(false);
 const showAllProjects = ref(false);
+const storyStyleOpen = ref(false);
 const novelTocVisible = ref(false);
 const novelSettingsVisible = ref(false);
 const readTocVisible = ref(false);
@@ -1194,6 +1195,7 @@ function handleShelfTxtImport(event: Event): void {
       });
       shelfBooks.value = (await listBooks()).books;
       await openShelfBook(book.book_id);
+      toastSuccess("TXT 导入完成");
       return {book_id: book.book_id, chapters: book.chapter_count, chars: book.total_chars};
     });
   };
@@ -1555,6 +1557,7 @@ function confirmCreateProject(destination: CreateDestination): void {
   createDialogVisible.value = false;
   saveProjects();
   markSaved("故事已创建");
+  toastSuccess("故事已创建");
   if (destination === "novel") {
     readerMode.value = "edit";
   }
@@ -2832,6 +2835,7 @@ async function submitManualKnowledgeDraft(): Promise<void> {
     manualKnowledgeTitle.value = "";
     manualKnowledgeContent.value = "";
     markSaved("资料草稿已保存");
+    toastSuccess("资料草稿已保存");
     await refreshReview();
   }
 }
@@ -2914,6 +2918,7 @@ async function stageAll(proposal: ApiRecord): Promise<void> {
   const result = await perform("送去确认", () => stageProposal(proposalId, temporaryIds));
   if (result) {
     markSaved("资料已送去确认");
+    toastSuccess("资料已送去确认");
     await refreshReview();
   }
 }
@@ -2922,6 +2927,7 @@ async function approveEntry(entry: ApiRecord): Promise<void> {
   const result = await perform("确认入库", () => approveStaging([String(entry.entry_id)]));
   if (result) {
     markSaved("资料已入库");
+    toastSuccess("资料已入库");
     await Promise.allSettled([refreshReview(), refreshNodes()]);
   }
 }
@@ -3619,6 +3625,7 @@ async function persistLlmConfig(): Promise<void> {
 async function saveLlmConfig(): Promise<void> {
   await persistLlmConfig();
   markSaved("模型设置已保存");
+  toastSuccess("模型设置已保存");
   void runAiCheck();
 }
 
@@ -4264,6 +4271,16 @@ onUnmounted(() => {
                         </button>
                       </div>
                     </el-form-item>
+                    <el-form-item>
+                      <button
+                        type="button"
+                        class="fold-toggle"
+                        @click="storyStyleOpen = !storyStyleOpen"
+                      >
+                        {{ storyStyleOpen ? "收起文风设置" : "展开文风设置（AI 写作基准）" }}
+                      </button>
+                    </el-form-item>
+                    <template v-if="storyStyleOpen">
                     <el-form-item label="文风">
                       <div class="preset-chips">
                         <button
@@ -4310,6 +4327,7 @@ onUnmounted(() => {
                         @input="saveProjects"
                       />
                     </el-form-item>
+                    </template>
                   </el-form>
                 </el-card>
               </el-col>
