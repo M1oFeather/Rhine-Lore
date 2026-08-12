@@ -17,6 +17,7 @@ nav:
   - 滚动设计审计: design/scroll-audit.md
   - 全量设计评估: design/full-design-evaluation.md
   - 引导与交互方案: design/interaction-guidance.md
+  - 每页验收标准: design/page-acceptance.md
   - 版本与发布:
       - 发布管理: releases/index.md
       - 更新日志: releases/changelog.md

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
+import { ElMessage } from "element-plus/es/components/message/index.mjs";
 
 import {
   type ApiRecord,
@@ -81,6 +82,7 @@ import {
   workspaceId,
 } from "./api";
 import GameIcon from "./components/GameIcon.vue";
+import EmptyState from "./components/EmptyState.vue";
 import type { GameIconName } from "./icons/gameIconPack";
 
 type Activity = "studio" | "story" | "world" | "characters" | "chat" | "novel" | "context" | "evolution" | "read" | "shelf" | "map" | "settings";
@@ -643,6 +645,48 @@ const agentImpactDanger = computed(() => {
   const tool = pendingAgentAction.value?.tool ?? "";
   return tool.includes("delete") || tool === "evolution_reset" || tool === "merge_chapters" || tool === "update_chapter";
 });
+
+const createPathSteps = [
+  {
+    index: 1,
+    label: "创建故事",
+    hint: "名称与概要",
+    action: () => {
+      activity.value = "story";
+    },
+  },
+  {index: 2, label: "写正文", hint: "第一章", action: startWriting},
+  {
+    index: 3,
+    label: "AI 对话",
+    hint: "续写 / 导入",
+    action: () => void openActivity("chat"),
+  },
+  {
+    index: 4,
+    label: "演化小说",
+    hint: "让故事自己演",
+    action: () => void openActivity("evolution"),
+  },
+  {
+    index: 5,
+    label: "TXT 书架",
+    hint: "导入长篇小说",
+    action: () => void openActivity("shelf"),
+  },
+];
+
+function toastSuccess(message: string): void {
+  ElMessage({message, type: "success", duration: 2200});
+}
+
+function toastError(message: string): void {
+  ElMessage({message, type: "error", duration: 3200});
+}
+
+function toastInfo(message: string): void {
+  ElMessage({message, type: "info", duration: 2200});
+}
 
 const chatContextLabel = computed(() => {
   const chapterText = activeChapter.value ? `《${activeChapter.value.title}》` : "未选择章节";
@@ -1293,6 +1337,7 @@ async function commitNovelVersion(): Promise<void> {
     );
     novelVersionMessage.value = "";
     markSaved("版本已提交");
+    toastSuccess("版本已提交");
     await refreshNovelVersions();
   } catch (error) {
     runState.value = {error: error instanceof Error ? error.message : String(error)};
@@ -1330,6 +1375,7 @@ async function restoreNovelVersion(record: VersionRecord): Promise<void> {
     if (payload?.id) {
       upsertProject(payload);
       markSaved(`已恢复到「${record.message}」`);
+      toastSuccess(`已恢复到「${record.message}」`);
     }
     await refreshNovelVersions();
   } catch (error) {
@@ -1368,6 +1414,7 @@ async function commitShelfVersion(): Promise<void> {
     );
     shelfVersionMessage.value = "";
     markSaved("版本已提交");
+    toastSuccess("版本已提交");
     await refreshShelfVersions();
   } catch (error) {
     runState.value = {error: error instanceof Error ? error.message : String(error)};
@@ -1409,6 +1456,7 @@ async function restoreShelfVersion(record: VersionRecord): Promise<void> {
       }
       await loadShelfBooks();
       markSaved(`已恢复到「${record.message}」`);
+      toastSuccess(`已恢复到「${record.message}」`);
     }
     await refreshShelfVersions();
   } catch (error) {
@@ -2112,12 +2160,14 @@ async function confirmAgentAction(): Promise<void> {
       ]);
       appendChat("assistant", `已执行「${toolActionLabel(action.tool)}」。`);
       saveProjects();
+      toastSuccess(`已执行「${toolActionLabel(action.tool)}」`);
       markSaved(
         `AI 操作已执行并同步到本地${executed.snapshot ? "（执行前已自动备份）" : ""}`,
       );
     }
   } catch (error) {
     runState.value = {error: error instanceof Error ? error.message : String(error)};
+    toastError(error instanceof Error ? error.message : String(error));
   }
 }
 
@@ -3985,6 +4035,24 @@ onUnmounted(() => {
               <span class="ai-entry-arrow">→</span>
             </button>
 
+            <div class="home-path-row">
+              <span class="home-path-label">创作路径</span>
+              <button
+                v-for="step in createPathSteps"
+                :key="step.index"
+                type="button"
+                class="home-path-chip"
+                @click="step.action()"
+              >
+                <span class="home-path-index">{{ step.index }}</span>
+                <span class="home-path-copy">
+                  <strong>{{ step.label }}</strong>
+                  <small>{{ step.hint }}</small>
+                </span>
+                <i>→</i>
+              </button>
+            </div>
+
             <div class="home-quick-grid">
               <button class="home-quick-tile" type="button" @click="startWriting">
                 <span class="home-quick-icon"><GameIcon name="pen" label="正文" /></span>
@@ -4047,7 +4115,17 @@ onUnmounted(() => {
                   </el-space>
                 </div>
               </template>
-              <div class="project-grid project-grid-home">
+              <EmptyState
+                v-if="projects.length === 0"
+                icon="home"
+                title="创建你的第一个故事"
+                description="故事是正文、AI 对话与演化的数据基础，先给它一个名字和一句话想法。"
+                compact
+              >
+                <el-button type="primary" size="small" @click="createProject">新建故事</el-button>
+                <el-button size="small" @click="activity = 'chat'">先聊聊想法</el-button>
+              </EmptyState>
+              <div v-else class="project-grid project-grid-home">
                 <button
                   v-for="project in projects"
                   :key="project.id"
@@ -4216,11 +4294,15 @@ onUnmounted(() => {
                   </el-space>
                 </div>
               </template>
-              <div v-if="activeProject.world.length === 0" class="product-empty-state">
-                <strong>还没有世界观设定</strong>
-                <p>先写地点、势力或规则；地点可以一键放置到地图。</p>
+              <EmptyState
+                v-if="activeProject.world.length === 0"
+                icon="globe"
+                title="还没有世界观设定"
+                description="先写地点、势力或规则；地点可以一键放置到地图，设定会进入演化与资料库。"
+              >
                 <el-button type="primary" @click="addLoreItem()">添加第一条设定</el-button>
-              </div>
+                <el-button @click="activity = 'map'">看看地图</el-button>
+              </EmptyState>
               <div class="world-card-grid">
                 <div v-for="item in activeProject.world" :key="item.id" class="character-card world-card">
                   <div class="character-card-head">
@@ -4290,11 +4372,15 @@ onUnmounted(() => {
                   </el-space>
                 </div>
               </template>
-              <div v-if="activeProject.map.nodes.length === 0" class="product-empty-state">
-                <strong>地图还是空的</strong>
-                <p>点击“添加地点”，或从世界观设定里一键放置地点，然后用“连接”画出路线。</p>
+              <EmptyState
+                v-if="activeProject.map.nodes.length === 0"
+                icon="map"
+                title="地图还是空的"
+                description="点击“添加地点”，或从世界观设定里一键放置地点，然后用“连接”画出路线。"
+              >
                 <el-button type="primary" @click="addMapNode">添加第一个地点</el-button>
-              </div>
+                <el-button @click="activity = 'world'">去世界观放地点</el-button>
+              </EmptyState>
               <svg
                 class="story-map"
                 :viewBox="mapViewBox"
@@ -4362,11 +4448,15 @@ onUnmounted(() => {
                   </el-space>
                 </div>
               </template>
-              <div v-if="activeProject.characters.length === 0" class="product-empty-state">
-                <strong>还没有角色卡</strong>
-                <p>从主角开始：写下名字、身份，以及他此刻最想要和最怕失去的东西。</p>
+              <EmptyState
+                v-if="activeProject.characters.length === 0"
+                icon="users"
+                title="还没有角色卡"
+                description="角色卡驱动演化与 AI 一致性：从主角开始，写下名字、身份、欲望与恐惧。"
+              >
                 <el-button type="primary" @click="addCharacter">添加第一张角色卡</el-button>
-              </div>
+                <el-button @click="activity = 'chat'">让 AI 生成一个</el-button>
+              </EmptyState>
               <div class="character-card-grid">
                 <div v-for="card in activeProject.characters" :key="card.id" class="character-card">
                   <div class="character-card-head">
@@ -5026,14 +5116,16 @@ onUnmounted(() => {
                 </div>
               </template>
 
-              <div v-if="!activeChapter" class="product-empty-state reader-empty-state">
-                <strong>正文还没有开始</strong>
-                <p>我们会自动创建“第一章”，你可以直接写，也可以先去对话创作找灵感。</p>
-                <el-space wrap>
-                  <el-button type="primary" @click="startWriting">创建第一章</el-button>
-                  <el-button @click="activity = 'chat'">先聊聊想法</el-button>
-                </el-space>
-              </div>
+              <EmptyState
+                v-if="!activeChapter"
+                class="reader-empty-state"
+                icon="pen"
+                title="正文还没有开始"
+                description="正文是作品本身：我们会自动创建“第一章”，也可以先去 AI 对话找灵感。"
+              >
+                <el-button type="primary" @click="startWriting">创建第一章</el-button>
+                <el-button @click="activity = 'chat'">先聊聊想法</el-button>
+              </EmptyState>
               <div v-else class="novel-reader-shell">
                 <div v-if="saveNotice" class="save-notice">{{ saveNotice }}</div>
                 <div class="reader-meta-band">
@@ -5288,7 +5380,17 @@ onUnmounted(() => {
                   </el-space>
                 </div>
               </template>
-              <el-table :data="nodes" height="360" class="knowledge-table">
+              <EmptyState
+                v-if="nodes.length === 0"
+                icon="database"
+                title="还没有已入库资料"
+                description="对话或正文可以保存为资料草稿，送审入库后会出现在这里，并可加入对话参考。"
+                compact
+              >
+                <el-button size="small" type="primary" @click="activity = 'chat'">去对话创作</el-button>
+                <el-button size="small" @click="prefillKnowledgeFromChapter">保存当前章节</el-button>
+              </EmptyState>
+              <el-table v-else :data="nodes" height="360" class="knowledge-table">
                 <el-table-column label="资料" min-width="220">
                   <template #default="{row}">
                     <div class="node-title-cell">
@@ -6112,14 +6214,15 @@ onUnmounted(() => {
                 </div>
                 <el-button type="primary" @click="shelfImportInput?.click()">导入 TXT</el-button>
               </div>
-              <div v-if="shelfBooks.length === 0" class="product-empty-state">
-                <strong>书架还是空的</strong>
-                <p>
-                  导入一个 .txt 文件，系统会自动按“第X章 / Chapter”拆分章节；
-                  没有章节标题的长文也会自动分节，百万字级小说按章存储、按章加载。
-                </p>
+              <EmptyState
+                v-if="shelfBooks.length === 0"
+                icon="library"
+                title="书架还是空的"
+                description="把 TXT 长篇小说导入这里：自动拆章、按章加载，支持 AI 续写/改写/扩写与全书分析。"
+              >
                 <el-button type="primary" @click="shelfImportInput?.click()">选择 TXT 文件</el-button>
-              </div>
+                <el-button @click="activity = 'chat'">去 AI 对话试试</el-button>
+              </EmptyState>
               <div v-else class="shelf-grid">
                 <el-card
                   v-for="book in shelfBooks"
@@ -6405,6 +6508,30 @@ onUnmounted(() => {
           <section v-else-if="activity === 'settings'" class="activity-panel settings-panel">
             <el-tabs v-model="settingsTab" class="settings-tabs">
               <el-tab-pane label="常用设置" name="basic">
+                <el-card shadow="never" class="feature-map-card">
+                  <template #header>
+                    <div class="card-header">
+                      <span>功能地图</span>
+                      <small>每个功能是干什么的，点一下直达</small>
+                    </div>
+                  </template>
+                  <div class="feature-map-grid">
+                    <button
+                      v-for="item in activities"
+                      :key="item.id"
+                      type="button"
+                      class="feature-map-item"
+                      @click="activity = item.id"
+                    >
+                      <span class="feature-map-icon"><GameIcon :name="item.icon" :size="18" /></span>
+                      <span class="feature-map-copy">
+                        <strong>{{ item.label }}</strong>
+                        <small>{{ item.description }}</small>
+                      </span>
+                      <i>→</i>
+                    </button>
+                  </div>
+                </el-card>
                 <el-row :gutter="14">
                   <el-col :xs="24" :lg="12">
                     <el-card shadow="never">
