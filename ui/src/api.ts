@@ -768,6 +768,30 @@ export type VersionRecord = {
   char_count: number;
 };
 
+export type ServerProjectMeta = {
+  project_id: string;
+  name: string;
+  genre: string;
+  summary: string;
+  chapter_count: number;
+  world_count: number;
+  character_count: number;
+  total_chars: number;
+  updated_at: string;
+};
+
+export function listServerProjects(): Promise<{projects: ServerProjectMeta[]}> {
+  return getJson("/lore-api/projects");
+}
+
+export function getServerProject(projectId: string): Promise<{project: StoryProject}> {
+  return getJson(`/lore-api/projects/${encodeURIComponent(projectId)}`);
+}
+
+export function saveServerProject(project: StoryProject): Promise<{ok: boolean; project_id: string}> {
+  return postJson(`/lore-api/projects/${encodeURIComponent(project.id)}`, project);
+}
+
 export function executeAgentTool(
   tool: string,
   args: Record<string, unknown>,

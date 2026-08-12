@@ -1,5 +1,46 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-label="Rhine-Lore">
-  <rect width="96" height="96" rx="18" fill="#12171f"/>
-  <path d="M23 22h31c12 0 20 8 20 20 0 10-6 17-15 19l17 13H59L42 61h-6v13H23V22Zm13 12v16h17c5 0 8-3 8-8s-3-8-8-8H36Z" fill="#7dd3fc"/>
-  <path d="M22 78h52" stroke="#f4c95d" stroke-width="6" stroke-linecap="round"/>
+  <defs>
+    <linearGradient id="rl-bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1b232d"/>
+      <stop offset="1" stop-color="#0b0f15"/>
+    </linearGradient>
+    <linearGradient id="rl-r" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#aee8fc"/>
+      <stop offset="1" stop-color="#56bce9"/>
+    </linearGradient>
+  </defs>
+  <rect width="96" height="96" rx="18" fill="url(#rl-bg)"/>
+  <rect x="1.5" y="1.5" width="93" height="93" rx="16.5" fill="none" stroke="#9fb6c9" stroke-opacity="0.28" stroke-width="1.5"/>
+  <g stroke="#ffffff" stroke-opacity="0.18" stroke-width="1.4">
+    <path d="M16 26 h3"/>
+    <path d="M16 34 h3"/>
+    <path d="M16 42 h3"/>
+    <path d="M16 50 h3"/>
+  </g>
+  <g fill="#20262e" stroke="#64788c" stroke-width="0.9">
+    <circle cx="20" cy="20" r="2.2"/>
+    <circle cx="20" cy="76" r="2.2"/>
+    <circle cx="76" cy="76" r="2.2"/>
+  </g>
+  <path d="M38 20 H27 L24 23 V73 L27 76 H38 Z" fill="url(#rl-r)"/>
+  <path d="M38 20 H69 L74 25 V31 H38 Z" fill="url(#rl-r)"/>
+  <path d="M62 31 H74 V49 L70 54 H62 Z" fill="url(#rl-r)"/>
+  <path d="M38 42 H62 V54 H38 Z" fill="url(#rl-r)"/>
+  <path d="M70 50 L62 42 L30 74 L38 82 Z" fill="url(#rl-r)"/>
+  <circle cx="64" cy="47" r="2.4" fill="#0d131a" stroke="#f4c95d" stroke-width="1.2"/>
+  <g stroke="#f4c95d" stroke-width="1.5" fill="none">
+    <circle cx="80" cy="17" r="5.5"/>
+    <path d="M80 8 V12"/>
+    <path d="M80 22 V26"/>
+    <path d="M74 17 H78"/>
+    <path d="M82 17 H86"/>
+  </g>
+  <rect x="22" y="84" width="52" height="7" fill="#141a22"/>
+  <rect x="22" y="84" width="52" height="7" fill="none" stroke="#3a4656" stroke-width="1"/>
+  <path d="M25 84 h5 l-6 7 h-5 z" fill="#f4c95d"/>
+  <path d="M33 84 h5 l-6 7 h-5 z" fill="#f4c95d"/>
+  <path d="M41 84 h5 l-6 7 h-5 z" fill="#f4c95d"/>
+  <path d="M49 84 h5 l-6 7 h-5 z" fill="#f4c95d"/>
+  <path d="M57 84 h5 l-6 7 h-5 z" fill="#f4c95d"/>
+  <path d="M65 84 h5 l-6 7 h-5 z" fill="#f4c95d"/>
 </svg>

@@ -37,7 +37,6 @@ import {
   approveStaging,
   aiWriteBook,
   analyzeBook,
-  backupProject,
   buildContextBundle,
   connectVaultRuntime,
   createManualProposal,
@@ -51,6 +50,7 @@ import {
   getLlmServerConfig,
   getBook,
   getBookChapter,
+  getServerProject,
   getVaultRuntimeStatus,
   getVaultWebStatus,
   guideEvolution,
@@ -65,6 +65,7 @@ import {
   listStaging,
   listWorkspaces,
   listProjectBackups,
+  listServerProjects,
   listVersions,
   commitVersion,
   restoreVersion,
@@ -74,6 +75,7 @@ import {
   restoreProjectBackup,
   saveBookChapter,
   saveLlmServerConfig,
+  saveServerProject,
   setWorkspaceId,
   stageProposal,
   startEvolutionRun,
@@ -84,6 +86,7 @@ import {
 import GameIcon from "./components/GameIcon.vue";
 import EmptyState from "./components/EmptyState.vue";
 import type { GameIconName } from "./icons/gameIconPack";
+import rhineLoreMark from "./assets/rhine-lore-mark.svg";
 
 type Activity = "studio" | "story" | "world" | "characters" | "chat" | "novel" | "context" | "evolution" | "read" | "shelf" | "map" | "settings";
 type WorkMode = "write" | "advanced";
@@ -200,7 +203,7 @@ const createDialogVisible = ref(false);
 const newProjectName = ref("");
 const newProjectGenre = ref("未分类");
 const newProjectIdea = ref("");
-const projects = ref<StoryProject[]>(loadProjects());
+const projects = ref<StoryProject[]>([]);
 const workspaces = ref<WorkspaceRecord[]>([]);
 const selectedWorkspaceId = ref(workspaceId);
 const newWorkspaceId = ref("story-workspace");
@@ -807,6 +810,7 @@ const chapterNavigationLabel = computed(() => {
 
 onMounted(async () => {
   document.addEventListener("click", closeChatMore);
+  await initProjects();
   await perform("初始化", async () => {
     await Promise.allSettled([updateBackendStatus(), refreshWorkspaces(), refreshNodes(), refreshReview()]);
     return {ready: true};
@@ -821,7 +825,29 @@ function closeChatMore(): void {
   chatMoreOpen.value = false;
 }
 
-function loadProjects(): StoryProject[] {
+function createDefaultProject(): StoryProject {
+  return {
+    id: `project-${Date.now()}`,
+    name: "我的故事",
+    genre: "未分类",
+    summary: "",
+    global_guidance: "",
+    chapter_turns: 4,
+    writing_style: "",
+    polish_writing: true,
+    style_example: "",
+    style_notes: "",
+    style_avoid: "",
+    world: [],
+    characters: [],
+    map: {nodes: [], edges: []},
+    chapters: [],
+    chat: [],
+    issues: [],
+  };
+}
+
+function loadLegacyProjects(): StoryProject[] {
   const raw = localStorage.getItem(projectKey);
   if (raw) {
     try {
@@ -831,27 +857,52 @@ function loadProjects(): StoryProject[] {
       localStorage.removeItem(projectKey);
     }
   }
-  return [
-    {
-      id: `project-${Date.now()}`,
-      name: "我的故事",
-      genre: "未分类",
-      summary: "",
-      global_guidance: "",
-      chapter_turns: 4,
-      writing_style: "",
-      polish_writing: true,
-      style_example: "",
-      style_notes: "",
-      style_avoid: "",
-      world: [],
-      characters: [],
-      map: {nodes: [], edges: []},
-      chapters: [],
-      chat: [],
-      issues: [],
-    },
-  ];
+  return [];
+}
+
+async function initProjects(): Promise<void> {
+  try {
+    const metaResult = await listServerProjects();
+    if (metaResult.projects.length > 0) {
+      projects.value = await Promise.all(
+        metaResult.projects.map((meta) =>
+          getServerProject(meta.project_id).then((result) => normalizeProject(result.project)),
+        ),
+      );
+    } else {
+      const legacy = loadLegacyProjects();
+      if (legacy.length > 0) {
+        for (const project of legacy) {
+          await saveServerProject(project);
+        }
+        projects.value = legacy;
+        localStorage.removeItem(projectKey);
+      } else {
+        projects.value = [createDefaultProject()];
+        await saveServerProject(projects.value[0]);
+      }
+      localStorage.removeItem(projectKey);
+    }
+  } catch {
+    const legacy = loadLegacyProjects();
+    projects.value = legacy.length > 0 ? legacy : [createDefaultProject()];
+  }
+  if (
+    !projects.value.some((project) => project.id === activeProjectId.value) &&
+    projects.value.length > 0
+  ) {
+    activeProjectId.value = projects.value[0].id;
+    localStorage.setItem(activeProjectKey, activeProjectId.value);
+  }
+  const initialProject = projects.value.find((project) => project.id === activeProjectId.value);
+  if (
+    initialProject &&
+    initialProject.chapters.length > 0 &&
+    !initialProject.chapters.some((chapter) => chapter.id === activeChapterId.value)
+  ) {
+    activeChapterId.value = initialProject.chapters[0].id;
+    localStorage.setItem(activeChapterKey, activeChapterId.value);
+  }
 }
 
 function normalizeCharacter(item: Partial<CharacterCard> & Partial<LoreItem>): CharacterCard {
@@ -969,7 +1020,6 @@ function normalizeProject(project: Partial<StoryProject>): StoryProject {
 }
 
 function saveProjects(): void {
-  localStorage.setItem(projectKey, JSON.stringify(projects.value));
   localStorage.setItem(activeProjectKey, activeProjectId.value);
   localStorage.setItem(activeChapterKey, activeChapterId.value);
   lastSavedAt.value = new Date().toLocaleTimeString("zh-CN", {hour: "2-digit", minute: "2-digit"});
@@ -987,9 +1037,10 @@ async function backupActiveProject(): Promise<void> {
     return;
   }
   try {
-    await backupProject(project);
-  } catch {
-    // 磁盘备份失败不打断写作
+    await saveServerProject(project);
+  } catch (error) {
+    runState.value = {error: `自动保存失败：${error instanceof Error ? error.message : String(error)}`};
+    toastError("自动保存失败，请检查本地服务");
   }
 }
 
@@ -3965,7 +4016,7 @@ onUnmounted(() => {
           {{ backendStatusLabel }}
         </span>
         <span class="sidebar-footer-meta">
-          <i class="sidebar-footer-brand">RL</i>
+          <img class="sidebar-footer-brand" :src="rhineLoreMark" alt="Rhine-Lore">
           v0.1.0
         </span>
       </div>
@@ -4027,7 +4078,7 @@ onUnmounted(() => {
             </el-card>
 
             <button class="ai-entry-banner" type="button" @click="openActivity('chat')">
-              <span class="ai-entry-logo">RL</span>
+              <img class="ai-entry-logo" :src="rhineLoreMark" alt="Rhine-Lore">
               <span class="ai-entry-copy">
                 <strong>AI 创作助手</strong>
                 <small>续写 · 修订 · 导入 · 角色与设定管理</small>
@@ -4589,7 +4640,7 @@ onUnmounted(() => {
                   ☰
                 </el-button>
                 <div class="ai-chat-title">
-                  <span class="ai-chat-logo">RL</span>
+                  <img class="ai-chat-logo" :src="rhineLoreMark" alt="Rhine-Lore">
                   <div>
                     <strong>AI 创作助手</strong>
                     <small>{{ activeProject.name }} · {{ chatContextLabel }}</small>
@@ -4676,9 +4727,13 @@ onUnmounted(() => {
                   class="chat-message"
                   :class="message.role"
                 >
-                  <span class="chat-avatar" :class="message.role">
-                    {{ message.role === "assistant" ? "RL" : "我" }}
-                  </span>
+                  <img
+                    v-if="message.role === 'assistant'"
+                    class="chat-avatar assistant"
+                    :src="rhineLoreMark"
+                    alt="Rhine-Lore"
+                  />
+                  <span v-else class="chat-avatar user">我</span>
                   <div class="chat-bubble">
                     <div class="chat-message-head">
                       <small>{{ chatTime(message.created_at) }}</small>
@@ -4715,7 +4770,7 @@ onUnmounted(() => {
                   </div>
                 </article>
                 <div v-if="chatThinking" class="chat-message assistant">
-                  <span class="chat-avatar assistant">RL</span>
+                  <img class="chat-avatar assistant" :src="rhineLoreMark" alt="Rhine-Lore" />
                   <div class="chat-bubble chat-thinking">
                     <span />
                     <span />

@@ -577,6 +577,35 @@ def _list_agent_projects() -> list[dict[str, Any]]:
     return rows
 
 
+def _list_projects_meta() -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    store_dir = EVOLUTION_STORE.directory
+    if store_dir.is_dir():
+        for path in sorted(store_dir.glob("*.project.json")):
+            try:
+                backup = json.loads(path.read_text(encoding="utf-8"))
+                project = backup.get("project") or {}
+                rows.append(
+                    {
+                        "project_id": str(project.get("id") or ""),
+                        "name": str(project.get("name") or "未命名"),
+                        "genre": str(project.get("genre") or "未分类"),
+                        "summary": str(project.get("summary") or ""),
+                        "chapter_count": len(project.get("chapters") or []),
+                        "world_count": len(project.get("world") or []),
+                        "character_count": len(project.get("characters") or []),
+                        "total_chars": _project_char_count(project),
+                        "updated_at": time.strftime(
+                            "%Y-%m-%dT%H:%M:%S%z",
+                            time.localtime(path.stat().st_mtime),
+                        ),
+                    }
+                )
+            except (OSError, json.JSONDecodeError):
+                continue
+    return rows
+
+
 def _evolution_summary(state: EvolutionState) -> dict[str, Any]:
     latest = state.history[-1] if state.history else None
     return {
@@ -2223,6 +2252,28 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
                     self._send_json(500, {"error": "备份文件损坏"})
                     return
                 self._send_json(200, {"project": project})
+                return
+            if self.command == "GET" and parsed_request.path == "/lore-api/projects":
+                self._send_json(200, {"projects": _list_projects_meta()})
+                return
+            if self.command == "GET" and parsed_request.path.startswith("/lore-api/projects/"):
+                project_id = parsed_request.path[len("/lore-api/projects/") :].strip("/")
+                if project_id:
+                    try:
+                        project = _load_agent_project(project_id)
+                    except KeyError as exc:
+                        self._send_json(404, {"error": str(exc)})
+                        return
+                    self._send_json(200, {"project": project})
+                    return
+            if self.command == "POST" and parsed_request.path.startswith("/lore-api/projects/"):
+                project_id = parsed_request.path[len("/lore-api/projects/") :].strip("/")
+                payload = self._read_json_body()
+                project = payload.get("project") if isinstance(payload.get("project"), dict) else payload
+                if str(project.get("id") or "").strip() != project_id:
+                    raise ValueError("project id 不匹配")
+                _save_agent_project(project)
+                self._send_json(200, {"ok": True, "project_id": project_id})
                 return
         except subprocess.CalledProcessError as exc:
             self._send_json(
