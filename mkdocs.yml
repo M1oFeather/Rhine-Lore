@@ -14,6 +14,7 @@ nav:
       - 首个里程碑: implementation/FIRST_MILESTONE.md
       - 文风一致: implementation/STYLE_ADOPTION.md
   - 界面重设计: design/redesign-v2.md
+  - 滚动设计审计: design/scroll-audit.md
   - 版本与发布:
       - 发布管理: releases/index.md
       - 更新日志: releases/changelog.md
