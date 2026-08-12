@@ -5515,22 +5515,34 @@ onUnmounted(() => {
                     </div>
                   </template>
                   <p class="knowledge-flow-note">草稿需要先送去确认，再入库成为对话可引用的资料。</p>
-                  <el-table :data="proposals" height="180" class="knowledge-table">
-                    <el-table-column prop="title" label="资料草稿" min-width="140" />
-                    <el-table-column label="下一步" width="110">
-                      <template #default="{row}">
-                        <el-button size="small" @click="stageAll(row)">送去确认</el-button>
-                      </template>
-                    </el-table-column>
-                  </el-table>
-                  <el-table :data="stagingEntries" height="180" class="advanced-table knowledge-table">
-                    <el-table-column prop="title" label="待入库" min-width="140" />
-                    <el-table-column label="下一步" width="96">
-                      <template #default="{row}">
-                        <el-button size="small" type="primary" @click="approveEntry(row)">入库</el-button>
-                      </template>
-                    </el-table-column>
-                  </el-table>
+                  <div class="knowledge-card-list">
+                    <div
+                      v-for="row in proposals"
+                      :key="row.proposal_id || row.id"
+                      class="knowledge-flow-card"
+                    >
+                      <div class="knowledge-flow-copy">
+                        <strong>{{ row.title || "未命名草稿" }}</strong>
+                        <small>{{ preview(row.content || "", 60) }}</small>
+                      </div>
+                      <el-button size="small" @click="stageAll(row)">送去确认</el-button>
+                    </div>
+                    <p v-if="proposals.length === 0" class="knowledge-flow-empty">暂无草稿</p>
+                  </div>
+                  <div class="knowledge-card-list advanced-card-list">
+                    <div
+                      v-for="row in stagingEntries"
+                      :key="row.entry_id || row.id"
+                      class="knowledge-flow-card"
+                    >
+                      <div class="knowledge-flow-copy">
+                        <strong>{{ row.title || "未命名" }}</strong>
+                        <small>{{ preview(row.content || "", 60) }}</small>
+                      </div>
+                      <el-button size="small" type="primary" @click="approveEntry(row)">入库</el-button>
+                    </div>
+                    <p v-if="stagingEntries.length === 0" class="knowledge-flow-empty">暂无待入库</p>
+                  </div>
                 </el-card>
               </el-col>
             </el-row>
@@ -5557,24 +5569,20 @@ onUnmounted(() => {
                 <el-button size="small" type="primary" @click="activity = 'chat'">去对话创作</el-button>
                 <el-button size="small" @click="prefillKnowledgeFromChapter">保存当前章节</el-button>
               </EmptyState>
-              <el-table v-else :data="nodes" height="360" class="knowledge-table">
-                <el-table-column label="资料" min-width="220">
-                  <template #default="{row}">
+              <div v-else class="knowledge-node-grid">
+                <div v-for="row in nodes" :key="recordId(row)" class="knowledge-node-card">
                     <div class="node-title-cell">
                       <strong>{{ recordTitle(row) }}</strong>
-                      <span>{{ recordPreview(row, 120) }}</span>
+                      <span>{{ recordPreview(row, 90) }}</span>
                     </div>
-                  </template>
-                </el-table-column>
-                <el-table-column prop="node_type" label="类型" width="120" />
-                <el-table-column label="对话参考" width="130">
-                  <template #default="{row}">
+                  <div class="knowledge-node-foot">
+                    <span class="knowledge-node-type">{{ row.node_type || "Note" }}</span>
                     <el-button size="small" :type="isKnowledgeSelected(row) ? 'primary' : 'default'" @click="addKnowledgeToChat(row)">
                       {{ isKnowledgeSelected(row) ? "已加入" : "加入" }}
                     </el-button>
-                  </template>
-                </el-table-column>
-              </el-table>
+                  </div>
+                </div>
+              </div>
             </el-card>
           </section>
 
