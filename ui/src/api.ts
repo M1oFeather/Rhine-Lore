@@ -835,6 +835,35 @@ export function deleteBook(bookId: string): Promise<{ok: boolean}> {
   });
 }
 
+export async function exportBackupZip(): Promise<{blob: Blob; filename: string}> {
+  const response = await fetch(apiUrl("/lore-api/backup/export"), {method: "POST"});
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  const disposition = response.headers.get("Content-Disposition") || "";
+  const match = disposition.match(/filename="?([^"]+)"?/);
+  const filename =
+    match?.[1] || `rhine-lore-backup-${new Date().toISOString().slice(0, 10)}.zip`;
+  return {blob: await response.blob(), filename};
+}
+
+export async function importBackupZip(file: Blob): Promise<{
+  ok: boolean;
+  projects: number;
+  books: number;
+  versions: number;
+}> {
+  const response = await fetch(apiUrl("/lore-api/backup/import"), {
+    method: "POST",
+    headers: {"Content-Type": "application/zip"},
+    body: file,
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json() as Promise<{ok: boolean; projects: number; books: number; versions: number}>;
+}
+
 export function getBookChapter(bookId: string, chapterId: string): Promise<{chapter: BookChapter}> {
   return getJson(
     `/lore-api/books/${encodeURIComponent(bookId)}/chapters/${encodeURIComponent(chapterId)}`,

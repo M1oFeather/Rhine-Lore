@@ -1770,6 +1770,10 @@ body {
   margin-top: 14px;
 }
 
+.backup-card {
+  margin-top: 14px;
+}
+
 .server-connect-grid {
   display: grid;
   grid-template-columns: minmax(220px, 0.72fr) minmax(0, 1.28fr);

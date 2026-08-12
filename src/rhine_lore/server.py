@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import copy
+import io
 import os
 import re
 import socket
@@ -13,9 +14,10 @@ import tempfile
 import threading
 import time
 import uuid
+import zipfile
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, quote, urlencode, urlparse, urlunparse
@@ -1238,6 +1240,64 @@ def _run_agent_chat(
     return final_text, actions
 
 
+_BACKUP_ALLOWED_ROOTS = {"projects", "books", "versions"}
+_BACKUP_FORMAT = "rhine-lore-backup-v1"
+
+
+def _build_backup_zip() -> bytes:
+    """打包项目、书、版本为 ZIP；为保护密钥，AI 配置不随备份导出。"""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for root_name in ("projects", "books", "versions"):
+            root = DATA_ROOT / root_name
+            if not root.is_dir():
+                continue
+            for path in sorted(root.rglob("*.json")):
+                relative = path.relative_to(root).as_posix()
+                archive.write(path, f"{root_name}/{relative}")
+        meta = {
+            "format": _BACKUP_FORMAT,
+            "exported_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "note": "AI 配置（含 API Key）不随备份导出，导入后请重新配置。",
+        }
+        archive.writestr("meta.json", json.dumps(meta, ensure_ascii=False, indent=2))
+    return buffer.getvalue()
+
+
+def _restore_backup_zip(data: bytes) -> dict[str, int]:
+    """校验并恢复 ZIP 备份，逐文件原子写入 data 目录。"""
+    counts = {"projects": 0, "books": 0, "versions": 0}
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        names = archive.namelist()
+        if "meta.json" not in names:
+            raise ValueError("不是有效的 Rhine-Lore 备份包（缺少 meta.json）")
+        meta = json.loads(archive.read("meta.json").decode("utf-8"))
+        if str(meta.get("format") or "") != _BACKUP_FORMAT:
+            raise ValueError("备份格式版本不支持")
+        for name in names:
+            if name == "meta.json":
+                continue
+            parts = PurePosixPath(name).parts
+            if (
+                not parts
+                or parts[0] not in _BACKUP_ALLOWED_ROOTS
+                or not parts[-1].endswith(".json")
+                or ".." in parts
+                or "\\" in name
+                or name.startswith("/")
+            ):
+                continue
+            payload = archive.read(name)
+            json.loads(payload.decode("utf-8"))
+            target = DATA_ROOT.joinpath(*parts)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            temporary = target.with_suffix(".json.tmp")
+            temporary.write_bytes(payload)
+            os.replace(temporary, target)
+            counts[parts[0]] += 1
+    return counts
+
+
 def _store_turn_prose(
     state: EvolutionState,
     viewpoint_id: str,
@@ -1939,6 +1999,24 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
                     self._send_json(502, {"error": f"AI 请求失败：{exc}"})
                     return
                 self._stream_llm_answer(final_text, actions, _resolve_llm(None)["model"])
+                return
+            if self.command == "POST" and parsed_request.path == "/lore-api/backup/export":
+                body = _build_backup_zip()
+                filename = f"rhine-lore-backup-{time.strftime('%Y%m%d-%H%M%S')}.zip"
+                self.send_response(200)
+                self.send_header("Content-Type", "application/zip")
+                self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            if self.command == "POST" and parsed_request.path == "/lore-api/backup/import":
+                try:
+                    counts = _restore_backup_zip(self._read_body())
+                except (ValueError, zipfile.BadZipFile, json.JSONDecodeError, OSError) as exc:
+                    self._send_json(400, {"error": f"导入失败：{exc}"})
+                    return
+                self._send_json(200, {"ok": True, **counts})
                 return
             if self.command == "POST" and parsed_request.path == "/lore-api/agent/execute":
                 payload = self._read_json_body()

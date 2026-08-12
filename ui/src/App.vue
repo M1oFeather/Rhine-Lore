@@ -42,6 +42,7 @@ import {
   createManualProposal,
   deleteBook,
   executeAgentTool,
+  exportBackupZip,
   fakeCreativeAnswer,
   generateEvolutionProseApi,
   generateKnowledgeDocument,
@@ -58,6 +59,7 @@ import {
   health,
   installVaultWeb,
   importBook,
+  importBackupZip,
   listBooks,
   llmServerChat,
   llmServerChatStream,
@@ -270,6 +272,9 @@ const serverBaseInput = ref(getServerBase());
 const serverBaseCurrent = ref(getServerBase());
 const serverBaseBusy = ref(false);
 const serverBaseMessage = ref("");
+const backupImportInput = ref<HTMLInputElement | null>(null);
+const backupBusy = ref(false);
+const backupMessage = ref("");
 const saveNotice = ref("");
 const lastSavedAt = ref("");
 let saveNoticeTimer: number | undefined;
@@ -3189,6 +3194,78 @@ async function applyServerBase(): Promise<void> {
     runState.value = {error: error instanceof Error ? error.message : String(error)};
   } finally {
     serverBaseBusy.value = false;
+  }
+}
+
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result ?? "");
+      const base64 = result.includes(",") ? result.slice(result.indexOf(",") + 1) : result;
+      resolve(base64);
+    };
+    reader.onerror = () => reject(reader.error ?? new Error("读取文件失败"));
+    reader.readAsDataURL(blob);
+  });
+}
+
+function triggerBlobDownload(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function exportBackup(): Promise<void> {
+  backupBusy.value = true;
+  backupMessage.value = "正在打包…";
+  try {
+    const result = await perform("导出备份", async () => {
+      const {blob, filename} = await exportBackupZip();
+      const bridge = (window as {AndroidBridge?: {saveBackup?: (name: string, base64: string) => string}}).AndroidBridge;
+      if (bridge?.saveBackup) {
+        const base64 = await blobToBase64(blob);
+        return {saved: bridge.saveBackup(filename, base64), size: blob.size};
+      }
+      triggerBlobDownload(blob, filename);
+      return {downloaded: filename, size: blob.size};
+    });
+    backupMessage.value = result ? "备份完成" : "导出失败";
+  } finally {
+    backupBusy.value = false;
+  }
+}
+
+async function handleBackupImport(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file) {
+    return;
+  }
+  backupBusy.value = true;
+  backupMessage.value = "正在导入…";
+  try {
+    const result = await perform("导入备份", () => importBackupZip(file));
+    if (result) {
+      await initProjects();
+      await Promise.allSettled([
+        loadShelfBooks(),
+        loadDiskBackups(),
+        refreshWorkspaces(),
+        refreshNodes(),
+        refreshReview(),
+      ]);
+      backupMessage.value = `导入完成：${result.projects} 个项目、${result.books} 本书、${result.versions} 个版本`;
+      toastSuccess("备份导入完成");
+    }
+  } finally {
+    backupBusy.value = false;
+    input.value = "";
   }
 }
 
@@ -7022,6 +7099,43 @@ onUnmounted(() => {
                     <el-radio-button value="system">跟随系统</el-radio-button>
                   </el-radio-group>
                   <small class="chat-key-hint">深色模式会同步应用到阅读页与全部卡片，随设置持久保存。</small>
+                </el-card>
+
+                <el-card shadow="never" class="backup-card">
+                  <template #header>
+                    <div class="card-header">
+                      <span>备份与迁移</span>
+                      <small>ZIP 一键打包项目、书与版本，导入后自动合并</small>
+                    </div>
+                  </template>
+                  <div class="server-connect-grid">
+                    <div class="vault-status-card">
+                      <strong>数据备份</strong>
+                      <span>包含：故事项目、演化存档、TXT 书库、版本历史</span>
+                      <small>为保护密钥安全，AI 配置不随备份导出。</small>
+                      <small v-if="backupMessage">{{ backupMessage }}</small>
+                    </div>
+                    <el-form label-position="top" class="vault-deploy-form">
+                      <el-space wrap>
+                        <el-button type="primary" :loading="backupBusy" @click="exportBackup">
+                          导出 ZIP 备份
+                        </el-button>
+                        <el-button :loading="backupBusy" @click="backupImportInput?.click()">
+                          导入 ZIP 备份
+                        </el-button>
+                        <input
+                          ref="backupImportInput"
+                          class="sr-only"
+                          type="file"
+                          accept=".zip,application/zip"
+                          @change="handleBackupImport"
+                        />
+                      </el-space>
+                      <small class="chat-key-hint">
+                        导入会覆盖同名项目/书并保留新文件；建议导入前先导出当前数据。
+                      </small>
+                    </el-form>
+                  </div>
                 </el-card>
               </el-tab-pane>
 
