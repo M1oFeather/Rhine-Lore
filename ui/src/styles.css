@@ -5956,6 +5956,113 @@ body {
   text-align: center;
 }
 
+/* 全屏阅读器 */
+.reader-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  background: var(--reader-day-bg);
+  color: var(--reader-day-ink);
+}
+
+.reader-overlay.theme-sepia {
+  background: var(--reader-sepia-bg);
+  color: var(--reader-sepia-ink);
+}
+
+.reader-overlay.theme-night {
+  background: var(--reader-night-bg);
+  color: var(--reader-night-ink);
+}
+
+.reader-overlay-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.reader-overlay-progress {
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  height: 3px;
+  background: transparent;
+}
+
+.reader-overlay-progress i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--blue), var(--blue-light));
+  transition: width 120ms ease;
+}
+
+.reader-overlay-content {
+  max-width: none;
+  margin: 0 auto;
+  min-height: calc(100dvh - 96px);
+  padding: 36px max(24px, calc((100% - var(--reader-measure, 900px)) / 2)) 120px;
+}
+
+.reader-overlay-content h2 {
+  margin: 0 0 26px;
+  color: inherit;
+  font-size: 1.45em;
+  text-align: center;
+}
+
+.reader-overlay-content p {
+  margin: 0 0 var(--reader-para-margin, 1.1em);
+  line-height: inherit;
+  text-indent: 2em;
+}
+
+.reader-overlay-content .empty-paragraph {
+  color: var(--muted);
+  text-align: center;
+  text-indent: 0;
+}
+
+.reader-overlay-paged .reader-overlay-content {
+  display: flex;
+  flex-direction: column;
+}
+
+.reader-overlay-paged .reader-page-area {
+  flex: 1;
+}
+
+.reader-overlay .reader-tap-zones {
+  position: absolute;
+  inset: 0;
+  height: auto;
+}
+
+.reader-overlay .reader-tap-zone {
+  height: 100%;
+}
+
+.reader-overlay-toolbar {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  z-index: 20;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  max-width: calc(100vw - 24px);
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel);
+  box-shadow: var(--shadow-raised);
+  transform: translateX(-50%);
+}
+
 .novel-reader-card.immersive .el-card__header,
 .novel-reader-card.immersive .save-notice,
 .novel-reader-card.immersive .reader-meta-band,

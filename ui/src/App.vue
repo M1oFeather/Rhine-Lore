@@ -259,6 +259,8 @@ const readerPageMode = ref<"scroll" | "page">(
 const readerPages = ref<string[][]>([]);
 const readerPageIndex = ref(0);
 const readerPageAreaRef = ref<HTMLElement | null>(null);
+const readerOverlayPageAreaRef = ref<HTMLElement | null>(null);
+const readerOverlayOpen = ref(false);
 const userScrolledReading = ref(false);
 const lastReaderAutoAdvance = ref(0);
 const shelfBooks = ref<BookMeta[]>([]);
@@ -866,6 +868,7 @@ onMounted(async () => {
   window.addEventListener("scroll", handleReadingScroll, {passive: true});
   readerScrollContainer()?.addEventListener("scroll", handleReadingScroll, {passive: true});
   window.addEventListener("resize", handleReaderResize);
+  window.addEventListener("keydown", handleReaderOverlayKeydown);
   await initProjects();
   await perform("初始化", async () => {
     await Promise.allSettled([updateBackendStatus(), refreshWorkspaces(), refreshNodes(), refreshReview()]);
@@ -1266,6 +1269,9 @@ function readerContentStyle(): Record<string, string> {
 }
 
 function readerScrollContainer(): HTMLElement | null {
+  if (readerOverlayOpen.value) {
+    return document.querySelector<HTMLElement>(".reader-overlay-scroll");
+  }
   return document.querySelector<HTMLElement>(".workspace-main .el-scrollbar__wrap");
 }
 
@@ -1277,6 +1283,7 @@ function resetReaderScroll(): void {
   } else {
     window.scrollTo({top: 0});
   }
+  requestAnimationFrame(updateReadingProgress);
 }
 
 async function loadShelfBooks(): Promise<void> {
@@ -2547,6 +2554,13 @@ watch(
   },
 );
 
+watch(readerOverlayOpen, async (open) => {
+  await nextTick();
+  if (open) {
+    readerScrollContainer()?.addEventListener("scroll", handleReadingScroll, {passive: true});
+  }
+});
+
 function upsertProject(project: StoryProject): void {
   const normalized = normalizeProject(project);
   const index = projects.value.findIndex((item) => item.id === normalized.id);
@@ -3166,7 +3180,7 @@ async function repaginate(): Promise<void> {
     return;
   }
   await nextTick();
-  const area = readerPageAreaRef.value;
+  const area = readerOverlayOpen.value ? readerOverlayPageAreaRef.value : readerPageAreaRef.value;
   if (!area) {
     return;
   }
@@ -3248,6 +3262,30 @@ function readerPageNext(): void {
 
 function currentReaderPage(): string[] {
   return readerPages.value[readerPageIndex.value] ?? [];
+}
+
+function enterReaderMode(): void {
+  readerMode.value = "read";
+  if (!activeChapter.value) {
+    return;
+  }
+  readerOverlayOpen.value = true;
+  userScrolledReading.value = false;
+  requestAnimationFrame(() => {
+    resetReaderScroll();
+    void repaginate();
+  });
+}
+
+function exitReaderMode(): void {
+  readerOverlayOpen.value = false;
+  readerMode.value = "edit";
+}
+
+function handleReaderOverlayKeydown(event: KeyboardEvent): void {
+  if (event.key === "Escape" && readerOverlayOpen.value) {
+    exitReaderMode();
+  }
 }
 
 function handleReaderResize(): void {
@@ -4485,6 +4523,7 @@ onUnmounted(() => {
   window.removeEventListener("scroll", handleReadingScroll);
   readerScrollContainer()?.removeEventListener("scroll", handleReadingScroll);
   window.removeEventListener("resize", handleReaderResize);
+  window.removeEventListener("keydown", handleReaderOverlayKeydown);
   if (evolutionTimer) {
     window.clearInterval(evolutionTimer);
     evolutionTimer = undefined;
@@ -5745,10 +5784,10 @@ onUnmounted(() => {
                     <el-button size="small" @click="openNovelVersions">版本</el-button>
                     <el-button size="small" @click="novelTocVisible = true">目录</el-button>
                     <el-button size="small" @click="novelSettingsVisible = true">阅读设置</el-button>
-                    <el-button :type="readerMode === 'read' ? 'primary' : 'default'" @click="readerMode = 'read'">
+                    <el-button :type="readerMode === 'read' ? 'primary' : 'default'" @click="enterReaderMode">
                       阅读
                     </el-button>
-                    <el-button :type="readerMode === 'edit' ? 'primary' : 'default'" @click="readerMode = 'edit'">
+                    <el-button :type="readerMode === 'edit' ? 'primary' : 'default'" @click="exitReaderMode">
                       编辑
                     </el-button>
                     <el-button class="desktop-only-control" @click="submitChapterExtract">
@@ -5866,7 +5905,7 @@ onUnmounted(() => {
                 >
                   下一章
                 </el-button>
-                <el-button size="small" type="primary" @click="readerMode = 'edit'">编辑</el-button>
+                <el-button size="small" type="primary" @click="exitReaderMode">编辑</el-button>
               </div>
             </el-card>
 
@@ -7881,6 +7920,76 @@ onUnmounted(() => {
       <GameIcon name="message" :size="20" />
       <span>AI</span>
     </button>
+
+    <div
+      v-if="readerOverlayOpen && activity === 'novel' && activeChapter"
+      class="reader-overlay"
+      :class="[readerThemeClass(), {'reader-overlay-paged': readerPageMode === 'page'}]"
+      role="application"
+      aria-label="阅读器"
+    >
+      <div class="reader-overlay-scroll">
+        <div class="reader-overlay-progress"><i :style="{width: `${readingProgress}%`}" /></div>
+        <div class="reader-overlay-content" :style="readerContentStyle()">
+          <template v-if="readerPageMode === 'page'">
+            <h2>{{ activeChapter.title }}</h2>
+            <div ref="readerOverlayPageAreaRef" class="reader-page-area">
+              <p v-for="(paragraph, index) in currentReaderPage()" :key="`ov-${readerPageIndex}-${index}`">
+                {{ paragraph }}
+              </p>
+              <p v-if="currentReaderPage().length === 0" class="empty-paragraph">这一章还没有正文。</p>
+            </div>
+            <div class="reader-page-meta">{{ readerPageIndex + 1 }} / {{ Math.max(1, readerPages.length) }} 页</div>
+          </template>
+          <template v-else>
+            <h2>{{ activeChapter.title }}</h2>
+            <p v-for="(paragraph, index) in activeChapterParagraphs" :key="`ov-${index}`">
+              {{ paragraph }}
+            </p>
+            <p v-if="activeChapterParagraphs.length === 0" class="empty-paragraph">这一章还没有正文。</p>
+          </template>
+        </div>
+      </div>
+      <div class="reader-tap-zones">
+        <button
+          type="button"
+          class="reader-tap-zone left"
+          :disabled="readerPageMode === 'page' ? (readerPageIndex <= 0 && activeChapterIndex <= 0) : activeChapterIndex <= 0"
+          aria-label="上一章或上一页"
+          @click="readerPagePrev"
+        />
+        <button
+          type="button"
+          class="reader-tap-zone right"
+          :disabled="readerPageMode === 'page' ? (readerPageIndex >= readerPages.length - 1 && activeChapterIndex >= activeProject.chapters.length - 1) : activeChapterIndex >= activeProject.chapters.length - 1"
+          aria-label="下一章或下一页"
+          @click="readerPageNext"
+        />
+      </div>
+      <div class="reader-overlay-toolbar">
+        <el-button size="small" @click="novelTocVisible = true">目录</el-button>
+        <el-button size="small" @click="novelSettingsVisible = true">阅读设置</el-button>
+        <template v-if="readerPageMode === 'page'">
+          <el-button size="small" :disabled="readerPageIndex <= 0" @click="readerPagePrev">上一页</el-button>
+          <span class="immersive-chapter">{{ readerPageIndex + 1 }} / {{ Math.max(1, readerPages.length) }} 页</span>
+          <el-button size="small" :disabled="readerPageIndex >= readerPages.length - 1" @click="readerPageNext">
+            下一页
+          </el-button>
+        </template>
+        <el-button size="small" :disabled="activeChapterIndex <= 0" @click="openAdjacentChapter(-1)">
+          上一章
+        </el-button>
+        <span class="immersive-chapter">{{ chapterNavigationLabel }}</span>
+        <el-button
+          size="small"
+          :disabled="activeChapterIndex >= activeProject.chapters.length - 1"
+          @click="openAdjacentChapter(1)"
+        >
+          下一章
+        </el-button>
+        <el-button size="small" type="primary" @click="exitReaderMode">退出阅读</el-button>
+      </div>
+    </div>
   </div>
 </template>
 
