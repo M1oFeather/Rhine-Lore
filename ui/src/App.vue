@@ -4399,24 +4399,26 @@ onUnmounted(() => {
         <main ref="contentMainRef" tabindex="-1" class="content-grid" :aria-label="activeTabMeta.label">
           <section v-if="activity === 'studio'" class="activity-panel home-panel">
             <el-card shadow="never" class="home-hero">
-              <HomeIllustration class="home-hero-art" />
-              <div class="home-hero-copy">
-                <p class="home-kicker">写作引导台</p>
-                <h2>{{ activeProject.name || "未命名故事" }}</h2>
-                <p>{{ activeProject.summary || "选择一个故事，然后进入正文、对话或资料库继续创作。" }}</p>
-                <div class="hero-meta">
-                  <span>{{ activeProject.genre || "未分类" }}</span>
-                  <span>{{ activeProject.chapters.length }} 章</span>
-                  <span>{{ projectCharacterCount }} 字</span>
+              <div class="home-hero-main">
+                <div class="home-hero-copy">
+                  <p class="home-kicker">写作引导台</p>
+                  <h2>{{ activeProject.name || "未命名故事" }}</h2>
+                  <p>{{ activeProject.summary || "选择一个故事，然后进入正文、对话或资料库继续创作。" }}</p>
+                  <div class="hero-meta">
+                    <span>{{ activeProject.genre || "未分类" }}</span>
+                    <span>{{ activeProject.chapters.length }} 章</span>
+                    <span>{{ projectCharacterCount }} 字</span>
+                  </div>
                 </div>
+                <el-space wrap class="home-hero-actions">
+                  <el-button type="primary" @click="startWriting">
+                    {{ activeProject.chapters.length > 0 ? "继续写作" : "写第一章" }}
+                  </el-button>
+                  <el-button @click="activity = 'chat'">对话创作</el-button>
+                  <el-button @click="activity = 'evolution'">演化沙盘</el-button>
+                </el-space>
               </div>
-              <el-space wrap class="home-hero-actions">
-                <el-button type="primary" @click="startWriting">
-                  {{ activeProject.chapters.length > 0 ? "继续写作" : "写第一章" }}
-                </el-button>
-                <el-button @click="activity = 'chat'">对话创作</el-button>
-                <el-button @click="activity = 'evolution'">演化沙盘</el-button>
-              </el-space>
+              <HomeIllustration class="home-hero-art" />
             </el-card>
 
             <button class="ai-entry-banner" type="button" @click="openActivity('chat')">

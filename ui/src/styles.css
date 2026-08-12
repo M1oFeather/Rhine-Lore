@@ -4680,18 +4680,17 @@ body {
 }
 
 .home-hero-art {
-  position: absolute;
-  right: 20px;
-  bottom: -4px;
-  width: 250px;
+  position: static;
+  width: 230px;
   height: auto;
+  flex: 0 0 auto;
   pointer-events: none;
-  opacity: 0.9;
+  opacity: 1;
 }
 
 @media (max-width: 960px) {
   .home-hero-art {
-    width: 180px;
+    width: 170px;
     opacity: 0.55;
   }
 }
@@ -4703,9 +4702,21 @@ body {
 }
 
 .home-hero .el-card__body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 20px;
+  align-items: center;
   position: relative;
-  z-index: 1;
   min-height: 150px;
+}
+
+.home-hero-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  min-width: 0;
 }
 
 .home-hero .home-kicker {
