@@ -2423,12 +2423,24 @@ body {
   display: grid;
   grid-template-columns: minmax(0, 1.6fr) minmax(280px, 0.8fr);
   gap: 14px;
-  align-items: start;
   margin-top: 14px;
+  min-height: 0;
+  height: clamp(340px, calc(100dvh - 330px), 660px);
 }
 
 .evolution-timeline-card {
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: 100%;
+}
+
+.evolution-timeline-card .el-card__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .evolution-event {
@@ -2484,6 +2496,34 @@ body {
   display: grid;
   gap: 14px;
   min-width: 0;
+  min-height: 0;
+  max-height: 100%;
+}
+
+.evolution-state-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: 100%;
+}
+
+.evolution-state-card .el-card__body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.evolution-state-tabs {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.evolution-state-tabs .el-tabs__header {
+  flex: none;
+  margin-bottom: 8px;
 }
 
 .world-state-block {
@@ -3513,11 +3553,14 @@ body {
 }
 
 .evolution-state-tabs {
-  min-height: 320px;
+  min-height: 0;
 }
 
 .evolution-state-tabs .el-tabs__content {
-  overflow: visible;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .evolution-chat-card {
@@ -5668,6 +5711,165 @@ body {
     width: calc(100% - 24px);
     border-radius: 18px;
     backdrop-filter: none;
+  }
+}
+
+/* Fullscreen map */
+.map-panel .map-card.map-immersive {
+  position: relative;
+  display: flex;
+  height: 100%;
+  flex-direction: column;
+  overflow: hidden;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.map-immersive .el-card__header {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  left: 10px;
+  z-index: 6;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.map-immersive .el-card__header .card-header {
+  justify-content: flex-start;
+  padding: 8px 10px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.9);
+  color: #eef3f8;
+  backdrop-filter: blur(10px);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.map-immersive .el-card__header .card-header::-webkit-scrollbar {
+  display: none;
+}
+
+.map-immersive .el-card__header .card-header .el-button {
+  border-color: rgba(255, 255, 255, 0.22);
+  color: #eef3f8;
+}
+
+.map-immersive .el-card__body {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  padding: 0;
+}
+
+.map-immersive .story-map {
+  flex: 1;
+  height: auto;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+.map-immersive .empty-state {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  background: transparent;
+}
+
+.map-immersive .map-edit-hint {
+  position: absolute;
+  bottom: 12px;
+  left: 12px;
+  z-index: 4;
+  margin: 0;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.72);
+  color: #cbd5e1;
+}
+
+.map-immersive .map-node-editor {
+  position: absolute;
+  bottom: 48px;
+  left: 50%;
+  z-index: 5;
+  width: min(480px, calc(100% - 24px));
+  margin: 0;
+  transform: translateX(-50%);
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.2);
+}
+
+@media (max-width: 720px) {
+  .map-immersive .el-card__header .card-header {
+    border-radius: 14px;
+  }
+
+  .map-immersive .map-node-editor {
+    bottom: 14px;
+  }
+}
+
+/* Bookshelf covers */
+.shelf-cover {
+  display: grid;
+  height: 76px;
+  margin-bottom: 10px;
+  place-items: center;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #2563eb, #7c3aed);
+  color: #ffffff;
+  font-size: 30px;
+  font-weight: 800;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18), 0 8px 20px rgba(37, 99, 235, 0.18);
+}
+
+.shelf-card:nth-child(3n + 2) .shelf-cover {
+  background: linear-gradient(135deg, #0f766e, #2563eb);
+}
+
+.shelf-card:nth-child(3n) .shelf-cover {
+  background: linear-gradient(135deg, #b45309, #d97706);
+}
+
+/* Motion basics */
+.content-grid > .activity-panel {
+  animation: page-in 160ms ease-out;
+}
+
+@keyframes page-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.el-button {
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease,
+    transform 80ms ease;
+}
+
+.el-button:not(.is-disabled):active {
+  transform: scale(0.97);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }
 

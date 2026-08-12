@@ -4508,7 +4508,7 @@ onUnmounted(() => {
           </section>
 
           <section v-else-if="activity === 'map'" class="activity-panel map-panel">
-            <el-card shadow="never" class="map-card">
+            <el-card shadow="never" class="map-card map-immersive">
               <template #header>
                 <div class="card-header">
                   <span>故事地图</span>
@@ -6460,6 +6460,9 @@ onUnmounted(() => {
                       <small>{{ book.genre }}</small>
                     </div>
                   </template>
+                  <div class="shelf-cover">
+                    <span>{{ (book.name || "书").slice(0, 1) }}</span>
+                  </div>
                   <p class="shelf-card-summary">{{ book.summary || "暂无简介" }}</p>
                   <div class="shelf-card-meta">
                     <span>{{ book.chapter_count }} 章</span>
