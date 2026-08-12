@@ -18,6 +18,7 @@ nav:
   - 全量设计评估: design/full-design-evaluation.md
   - 引导与交互方案: design/interaction-guidance.md
   - 每页验收标准: design/page-acceptance.md
+  - 通用验收标准: design/acceptance-standard.md
   - 版本与发布:
       - 发布管理: releases/index.md
       - 更新日志: releases/changelog.md
