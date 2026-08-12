@@ -12,6 +12,20 @@
  */
 
 const WHITELIST_OUTER = new Set(["正文", "小说阅读", "书架"]);
+const DEFAULT_PAGES = [
+  "AI 对话",
+  "工作台",
+  "故事档案",
+  "世界观",
+  "角色",
+  "正文",
+  "资料库",
+  "演化",
+  "小说阅读",
+  "书架",
+  "地图",
+  "设置",
+];
 
 const MEASURE_EXPRESSION = `(() => {
   const doc = document.scrollingElement;
@@ -67,11 +81,32 @@ async function evaluate(send, expression) {
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const WORKBENCH_ONLY = new Set(["AI 对话", "工作台", "故事档案", "世界观", "角色", "演化", "地图"]);
+const READER_ONLY = new Set(["小说阅读", "书架"]);
+
+async function ensureSidebarMode(send, label) {
+  let mode = "";
+  if (WORKBENCH_ONLY.has(label)) mode = "工作台";
+  else if (READER_ONLY.has(label)) mode = "阅读器";
+  if (!mode) return;
+  const current = await evaluate(
+    send,
+    `Array.from(document.querySelectorAll('.sidebar-mode-switch button.active')).map((el) => el.textContent.trim()).join(',')`,
+  );
+  if (current === mode) return;
+  await evaluate(
+    send,
+    `Array.from(document.querySelectorAll('.sidebar-mode-switch button')).find((el) => el.textContent.trim() === ${JSON.stringify(mode)})?.click(); true`,
+  );
+  await wait(450);
+}
+
 async function navigateTo(send, label, mobile) {
   if (mobile) {
     await evaluate(send, `document.querySelector('.mobile-menu-button')?.click(); true`);
     await wait(420);
   }
+  await ensureSidebarMode(send, label);
   await evaluate(send, NAV_CLICK_EXPRESSION(label));
   await wait(820);
 }
@@ -82,11 +117,7 @@ async function navigateTo(send, label, mobile) {
  */
 export async function auditAll(send, opts = {}) {
   const label = opts.label || "cdp";
-  const navLabels = await evaluate(
-    send,
-    `Array.from(document.querySelectorAll('.sidebar .nav-label strong')).map((el) => el.textContent)`,
-  );
-  const pages = opts.pages || navLabels || [];
+  const pages = opts.pages || DEFAULT_PAGES;
   const results = [];
   const failures = [];
 

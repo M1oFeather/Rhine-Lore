@@ -165,6 +165,16 @@ const activities: {id: Activity; label: string; icon: GameIconName; description:
   {id: "settings", label: "设置", icon: "settings", description: "连接、高级和维护"},
 ];
 
+type SidebarMode = "workbench" | "reader";
+const sidebarMode = ref<SidebarMode>((localStorage.getItem("rhine-lore-sidebar-mode") as SidebarMode) || "workbench");
+const workbenchActivities = activities.filter((item) => !["read", "shelf"].includes(item.id));
+const readerActivities = activities.filter((item) =>
+  ["novel", "read", "shelf", "context", "settings"].includes(item.id),
+);
+const visibleActivities = computed(() =>
+  sidebarMode.value === "reader" ? readerActivities : workbenchActivities,
+);
+
 const activity = ref<Activity>("studio");
 const sidebarCollapsed = ref(localStorage.getItem("rhine-lore-sidebar-collapsed") === "1");
 const mobileNavOpen = ref(false);
@@ -1231,6 +1241,19 @@ async function openActivity(next: Activity): Promise<void> {
 function toggleSidebar(): void {
   sidebarCollapsed.value = !sidebarCollapsed.value;
   localStorage.setItem("rhine-lore-sidebar-collapsed", sidebarCollapsed.value ? "1" : "0");
+}
+
+function setSidebarMode(mode: SidebarMode): void {
+  if (sidebarMode.value === mode) {
+    return;
+  }
+  sidebarMode.value = mode;
+  localStorage.setItem("rhine-lore-sidebar-mode", mode);
+  const list = mode === "reader" ? readerActivities : workbenchActivities;
+  if (!list.some((item) => item.id === activity.value)) {
+    activity.value = list[0].id;
+    void openActivity(list[0].id);
+  }
 }
 
 async function openMobileNav(): Promise<void> {
@@ -4582,9 +4605,27 @@ onUnmounted(() => {
           />
         </el-select>
       </div>
+      <div class="sidebar-mode-switch" role="group" aria-label="侧边栏模式">
+        <button
+          type="button"
+          :class="{active: sidebarMode === 'workbench'}"
+          :aria-pressed="sidebarMode === 'workbench'"
+          @click="setSidebarMode('workbench')"
+        >
+          工作台
+        </button>
+        <button
+          type="button"
+          :class="{active: sidebarMode === 'reader'}"
+          :aria-pressed="sidebarMode === 'reader'"
+          @click="setSidebarMode('reader')"
+        >
+          阅读器
+        </button>
+      </div>
       <nav class="sidebar-nav" aria-label="主导航">
         <el-button
-          v-for="item in activities"
+          v-for="item in visibleActivities"
           :key="item.id"
           class="nav-item"
           :class="{
