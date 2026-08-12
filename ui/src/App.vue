@@ -165,6 +165,7 @@ const showAllProjects = ref(false);
 const storyStyleOpen = ref(false);
 const novelTocVisible = ref(false);
 const novelSettingsVisible = ref(false);
+const readingProgress = ref(0);
 const readTocVisible = ref(false);
 const readSettingsVisible = ref(false);
 const novelVersionsVisible = ref(false);
@@ -822,6 +823,7 @@ const chapterNavigationLabel = computed(() => {
 
 onMounted(async () => {
   document.addEventListener("click", closeChatMore);
+  window.addEventListener("scroll", updateReadingProgress, {passive: true});
   await initProjects();
   await perform("初始化", async () => {
     await Promise.allSettled([updateBackendStatus(), refreshWorkspaces(), refreshNodes(), refreshReview()]);
@@ -2898,6 +2900,17 @@ function openAdjacentChapter(direction: -1 | 1): void {
     return;
   }
   selectChapter(nextChapter.id);
+  window.scrollTo({top: 0});
+}
+
+function updateReadingProgress(): void {
+  if (activity.value !== "novel" || readerMode.value !== "read") {
+    return;
+  }
+  const doc = document.documentElement;
+  const max = doc.scrollHeight - window.innerHeight;
+  readingProgress.value =
+    max > 0 ? Math.min(100, Math.max(0, (window.scrollY / max) * 100)) : 100;
 }
 
 async function loadChapterContext(): Promise<void> {
@@ -3995,6 +4008,7 @@ async function pasteDeepSeekKey(): Promise<void> {
 
 onUnmounted(() => {
   document.removeEventListener("click", closeChatMore);
+  window.removeEventListener("scroll", updateReadingProgress);
   if (evolutionTimer) {
     window.clearInterval(evolutionTimer);
     evolutionTimer = undefined;
@@ -5215,7 +5229,11 @@ onUnmounted(() => {
               </div>
             </el-card>
 
-            <el-card shadow="never" class="novel-reader-card">
+            <el-card
+              shadow="never"
+              class="novel-reader-card"
+              :class="{'immersive': readerMode === 'read' && activeChapter}"
+            >
               <template #header>
                 <div class="card-header">
                   <span>正文</span>
@@ -5283,6 +5301,13 @@ onUnmounted(() => {
                 </div>
               </template>
 
+              <div
+                v-if="readerMode === 'read' && activeChapter"
+                class="reading-progress"
+              >
+                <i :style="{width: `${readingProgress}%`}" />
+              </div>
+
               <EmptyState
                 v-if="!activeChapter"
                 class="reader-empty-state"
@@ -5322,9 +5347,33 @@ onUnmounted(() => {
                   @input="saveProjects"
                 />
               </div>
+
+              <div
+                v-if="readerMode === 'read' && activeChapter"
+                class="immersive-toolbar"
+              >
+                <el-button size="small" @click="novelTocVisible = true">目录</el-button>
+                <el-button size="small" @click="novelSettingsVisible = true">阅读设置</el-button>
+                <el-button
+                  size="small"
+                  :disabled="activeChapterIndex <= 0"
+                  @click="openAdjacentChapter(-1)"
+                >
+                  上一章
+                </el-button>
+                <span class="immersive-chapter">{{ chapterNavigationLabel }}</span>
+                <el-button
+                  size="small"
+                  :disabled="activeChapterIndex >= activeProject.chapters.length - 1"
+                  @click="openAdjacentChapter(1)"
+                >
+                  下一章
+                </el-button>
+                <el-button size="small" type="primary" @click="readerMode = 'edit'">编辑</el-button>
+              </div>
             </el-card>
 
-            <div v-if="activeChapter" class="mobile-chapter-bar">
+            <div v-if="activeChapter && readerMode !== 'read'" class="mobile-chapter-bar">
               <el-button
                 size="small"
                 :disabled="activeChapterIndex <= 0"
