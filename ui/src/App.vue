@@ -91,6 +91,7 @@ import {
 } from "./api";
 import GameIcon from "./components/GameIcon.vue";
 import EmptyState from "./components/EmptyState.vue";
+import HomeIllustration from "./components/HomeIllustration.vue";
 import type { GameIconName } from "./icons/gameIconPack";
 import rhineLoreMark from "./assets/rhine-lore-mark.svg";
 
@@ -1244,6 +1245,38 @@ async function loadShelfBooks(): Promise<void> {
   } catch (error) {
     runState.value = {error: error instanceof Error ? error.message : String(error)};
   }
+}
+
+const shelfCoverPalettes: [string, string][] = [
+  ["#1e3a8a", "#7c3aed"],
+  ["#0f766e", "#2563eb"],
+  ["#b45309", "#db2777"],
+  ["#7a3fc0", "#0ea5e9"],
+  ["#be123c", "#f59e0b"],
+  ["#166534", "#0f766e"],
+];
+
+function hashText(text: string): number {
+  let hash = 0;
+  for (const ch of text) {
+    hash = (hash * 31 + (ch.codePointAt(0) ?? 0)) >>> 0;
+  }
+  return hash;
+}
+
+function shelfCoverStyle(book: {name?: string}): Record<string, string> {
+  const key = book.name || "书";
+  const hash = hashText(key);
+  const palette = shelfCoverPalettes[hash % shelfCoverPalettes.length];
+  const patterns = [
+    "repeating-linear-gradient(115deg, transparent 0 10px, rgba(255,255,255,0.55) 10px 12px)",
+    "radial-gradient(circle at 24% 28%, rgba(255,255,255,0.5) 0 2px, transparent 2.5px)",
+    "repeating-linear-gradient(0deg, transparent 0 14px, rgba(255,255,255,0.4) 14px 15px)",
+  ];
+  return {
+    background: `linear-gradient(135deg, ${palette[0]}, ${palette[1]})`,
+    "--cover-pattern": patterns[hash % patterns.length],
+  } as Record<string, string>;
 }
 
 function handleShelfTxtImport(event: Event): void {
@@ -4366,6 +4399,7 @@ onUnmounted(() => {
         <main ref="contentMainRef" tabindex="-1" class="content-grid" :aria-label="activeTabMeta.label">
           <section v-if="activity === 'studio'" class="activity-panel home-panel">
             <el-card shadow="never" class="home-hero">
+              <HomeIllustration class="home-hero-art" />
               <div class="home-hero-copy">
                 <p class="home-kicker">写作引导台</p>
                 <h2>{{ activeProject.name || "未命名故事" }}</h2>
@@ -6706,7 +6740,7 @@ onUnmounted(() => {
                       <small>{{ book.genre }}</small>
                     </div>
                   </template>
-                  <div class="shelf-cover">
+                  <div class="shelf-cover" :style="shelfCoverStyle(book)">
                     <span>{{ (book.name || "书").slice(0, 1) }}</span>
                   </div>
                   <p class="shelf-card-summary">{{ book.summary || "暂无简介" }}</p>
