@@ -5937,6 +5937,25 @@ body {
   pointer-events: none;
 }
 
+.novel-reader.reader-paged {
+  display: flex;
+  flex-direction: column;
+}
+
+.reader-page-area {
+  flex: 1;
+  min-height: 260px;
+  overflow: hidden;
+}
+
+.reader-page-meta {
+  margin-top: 14px;
+  color: var(--reader-day-ink);
+  font-size: 12px;
+  opacity: 0.55;
+  text-align: center;
+}
+
 .novel-reader-card.immersive .el-card__header,
 .novel-reader-card.immersive .save-notice,
 .novel-reader-card.immersive .reader-meta-band,

@@ -253,6 +253,13 @@ const readerTheme = ref<"day" | "sepia" | "night">(
 const readerParagraphSpacing = ref(Number(localStorage.getItem("rhine-lore-reader-paragraph-spacing") || "1.1"));
 const readerJustify = ref(localStorage.getItem("rhine-lore-reader-justify") !== "0");
 const readerMeasure = ref(Number(localStorage.getItem("rhine-lore-reader-measure") || "900"));
+const readerPageMode = ref<"scroll" | "page">(
+  (localStorage.getItem("rhine-lore-reader-mode") as "scroll" | "page") || "scroll",
+);
+const readerPages = ref<string[][]>([]);
+const readerPageIndex = ref(0);
+const readerPageAreaRef = ref<HTMLElement | null>(null);
+const userScrolledReading = ref(false);
 const lastReaderAutoAdvance = ref(0);
 const shelfBooks = ref<BookMeta[]>([]);
 const shelfBookId = ref("");
@@ -858,6 +865,7 @@ onMounted(async () => {
   document.addEventListener("click", closeChatMore);
   window.addEventListener("scroll", handleReadingScroll, {passive: true});
   readerScrollContainer()?.addEventListener("scroll", handleReadingScroll, {passive: true});
+  window.addEventListener("resize", handleReaderResize);
   await initProjects();
   await perform("初始化", async () => {
     await Promise.allSettled([updateBackendStatus(), refreshWorkspaces(), refreshNodes(), refreshReview()]);
@@ -1240,6 +1248,7 @@ function persistReaderSettings(): void {
   localStorage.setItem("rhine-lore-reader-paragraph-spacing", String(readerParagraphSpacing.value));
   localStorage.setItem("rhine-lore-reader-justify", readerJustify.value ? "1" : "0");
   localStorage.setItem("rhine-lore-reader-measure", String(readerMeasure.value));
+  localStorage.setItem("rhine-lore-reader-mode", readerPageMode.value);
 }
 
 function readerThemeClass(): string {
@@ -1261,6 +1270,7 @@ function readerScrollContainer(): HTMLElement | null {
 }
 
 function resetReaderScroll(): void {
+  userScrolledReading.value = false;
   const wrap = readerScrollContainer();
   if (wrap) {
     wrap.scrollTop = 0;
@@ -2516,6 +2526,27 @@ watch(
 );
 watch(chatThinking, () => void scrollChatToBottom());
 
+watch(
+  [
+    activity,
+    readerMode,
+    () => activeChapter.value?.id,
+    readerFontSize,
+    readerLineHeight,
+    readerParagraphSpacing,
+    readerJustify,
+    readerMeasure,
+    readerPageMode,
+  ],
+  () => {
+    if (readerPageMode.value !== "page") {
+      return;
+    }
+    readerPageIndex.value = 0;
+    void repaginate();
+  },
+);
+
 function upsertProject(project: StoryProject): void {
   const normalized = normalizeProject(project);
   const index = projects.value.findIndex((item) => item.id === normalized.id);
@@ -3076,6 +3107,9 @@ function maybeAutoAdvanceChapter(): void {
   if (now - lastReaderAutoAdvance.value < 900) {
     return;
   }
+  if (!userScrolledReading.value) {
+    return;
+  }
   const wrap = readerScrollContainer();
   if (!wrap) {
     return;
@@ -3089,6 +3123,7 @@ function maybeAutoAdvanceChapter(): void {
       return;
     }
     lastReaderAutoAdvance.value = now;
+    userScrolledReading.value = false;
     openAdjacentChapter(1);
     return;
   }
@@ -3097,6 +3132,7 @@ function maybeAutoAdvanceChapter(): void {
       return;
     }
     lastReaderAutoAdvance.value = now;
+    userScrolledReading.value = false;
     openEvolutionAdjacentChapter(1);
     return;
   }
@@ -3105,13 +3141,119 @@ function maybeAutoAdvanceChapter(): void {
       return;
     }
     lastReaderAutoAdvance.value = now;
+    userScrolledReading.value = false;
     openShelfAdjacentChapter(1);
   }
 }
 
 function handleReadingScroll(): void {
   updateReadingProgress();
+  const wrap = readerScrollContainer();
+  if (wrap && wrap.scrollTop > 0) {
+    userScrolledReading.value = true;
+  }
   maybeAutoAdvanceChapter();
+}
+
+function changeReaderPageMode(): void {
+  persistReaderSettings();
+  readerPageIndex.value = 0;
+  void repaginate();
+}
+
+async function repaginate(): Promise<void> {
+  if (readerPageMode.value !== "page") {
+    return;
+  }
+  await nextTick();
+  const area = readerPageAreaRef.value;
+  if (!area) {
+    return;
+  }
+  const paragraphs = activeChapterParagraphs.value;
+  const pageHeight = area.clientHeight;
+  if (pageHeight < 100) {
+    return;
+  }
+  const measure = document.createElement("div");
+  measure.style.position = "fixed";
+  measure.style.left = "-9999px";
+  measure.style.top = "0";
+  measure.style.visibility = "hidden";
+  measure.style.width = `${area.clientWidth}px`;
+  measure.style.fontSize = `${readerFontSize.value}px`;
+  measure.style.lineHeight = String(readerLineHeight.value);
+  measure.style.textAlign = readerJustify.value ? "justify" : "left";
+  document.body.appendChild(measure);
+  const heights: number[] = [];
+  for (const paragraph of paragraphs) {
+    const el = document.createElement("p");
+    el.textContent = paragraph;
+    el.style.textIndent = "2em";
+    el.style.marginBottom = `${Math.round(readerParagraphSpacing.value * readerFontSize.value)}px`;
+    measure.appendChild(el);
+    const margin = parseFloat(getComputedStyle(el).marginBottom) || 0;
+    heights.push(el.offsetHeight + margin);
+  }
+  const pages: string[][] = [];
+  let current: string[] = [];
+  let used = 0;
+  for (let i = 0; i < paragraphs.length; i++) {
+    const height = heights[i];
+    if (used + height > pageHeight && current.length > 0) {
+      pages.push(current);
+      current = [];
+      used = 0;
+    }
+    current.push(paragraphs[i]);
+    used += height;
+  }
+  if (current.length > 0) {
+    pages.push(current);
+  }
+  document.body.removeChild(measure);
+  readerPages.value = pages.length > 0 ? pages : [[]];
+  if (readerPageIndex.value >= readerPages.value.length) {
+    readerPageIndex.value = Math.max(0, readerPages.value.length - 1);
+  }
+}
+
+function readerPagePrev(): void {
+  if (readerPageMode.value === "page") {
+    if (readerPageIndex.value > 0) {
+      readerPageIndex.value -= 1;
+      return;
+    }
+    if (activeChapterIndex.value > 0) {
+      openAdjacentChapter(-1);
+    }
+    return;
+  }
+  openAdjacentChapter(-1);
+}
+
+function readerPageNext(): void {
+  if (readerPageMode.value === "page") {
+    if (readerPageIndex.value < readerPages.value.length - 1) {
+      readerPageIndex.value += 1;
+      return;
+    }
+    if (activeChapterIndex.value < activeProject.value.chapters.length - 1) {
+      openAdjacentChapter(1);
+    }
+    return;
+  }
+  openAdjacentChapter(1);
+}
+
+function currentReaderPage(): string[] {
+  return readerPages.value[readerPageIndex.value] ?? [];
+}
+
+function handleReaderResize(): void {
+  if (readerPageMode.value === "page" && activity.value === "novel") {
+    void repaginate();
+  }
 }
 
 async function loadChapterContext(): Promise<void> {
@@ -4342,6 +4484,7 @@ onUnmounted(() => {
   document.removeEventListener("click", closeChatMore);
   window.removeEventListener("scroll", handleReadingScroll);
   readerScrollContainer()?.removeEventListener("scroll", handleReadingScroll);
+  window.removeEventListener("resize", handleReaderResize);
   if (evolutionTimer) {
     window.clearInterval(evolutionTimer);
     evolutionTimer = undefined;
@@ -5628,14 +5771,14 @@ onUnmounted(() => {
                   class="reader-tap-zone left"
                   :disabled="activeChapterIndex <= 0"
                   aria-label="上一章"
-                  @click="openAdjacentChapter(-1)"
+                  @click="readerPagePrev"
                 />
                 <button
                   type="button"
                   class="reader-tap-zone right"
                   :disabled="activeChapterIndex >= activeProject.chapters.length - 1"
                   aria-label="下一章"
-                  @click="openAdjacentChapter(1)"
+                  @click="readerPageNext"
                 />
               </div>
 
@@ -5660,14 +5803,26 @@ onUnmounted(() => {
                 <div
                   v-if="readerMode === 'read'"
                   class="novel-reader"
-                  :class="readerThemeClass()"
+                  :class="[readerThemeClass(), {'reader-paged': readerPageMode === 'page'}]"
                   :style="readerContentStyle()"
                 >
-                  <h2>{{ activeChapter.title }}</h2>
-                  <p v-for="(paragraph, index) in activeChapterParagraphs" :key="index">
-                    {{ paragraph }}
-                  </p>
-                  <p v-if="activeChapterParagraphs.length === 0" class="empty-paragraph">这一章还没有正文。</p>
+                  <template v-if="readerPageMode === 'page'">
+                    <h2>{{ activeChapter.title }}</h2>
+                    <div ref="readerPageAreaRef" class="reader-page-area">
+                      <p v-for="(paragraph, index) in currentReaderPage()" :key="`${readerPageIndex}-${index}`">
+                        {{ paragraph }}
+                      </p>
+                      <p v-if="currentReaderPage().length === 0" class="empty-paragraph">这一章还没有正文。</p>
+                    </div>
+                    <div class="reader-page-meta">{{ readerPageIndex + 1 }} / {{ Math.max(1, readerPages.length) }} 页</div>
+                  </template>
+                  <template v-else>
+                    <h2>{{ activeChapter.title }}</h2>
+                    <p v-for="(paragraph, index) in activeChapterParagraphs" :key="index">
+                      {{ paragraph }}
+                    </p>
+                    <p v-if="activeChapterParagraphs.length === 0" class="empty-paragraph">这一章还没有正文。</p>
+                  </template>
                 </div>
                 <el-input
                   v-else
@@ -5685,6 +5840,17 @@ onUnmounted(() => {
               >
                 <el-button size="small" @click="novelTocVisible = true">目录</el-button>
                 <el-button size="small" @click="novelSettingsVisible = true">阅读设置</el-button>
+                <template v-if="readerPageMode === 'page'">
+                  <el-button size="small" :disabled="readerPageIndex <= 0" @click="readerPagePrev">
+                    上一页
+                  </el-button>
+                  <span class="immersive-chapter">
+                    {{ readerPageIndex + 1 }} / {{ Math.max(1, readerPages.length) }} 页
+                  </span>
+                  <el-button size="small" :disabled="readerPageIndex >= readerPages.length - 1" @click="readerPageNext">
+                    下一页
+                  </el-button>
+                </template>
                 <el-button
                   size="small"
                   :disabled="activeChapterIndex <= 0"
@@ -5792,6 +5958,11 @@ onUnmounted(() => {
               size="70%"
             >
               <div class="shelf-settings">
+                <label>阅读方式</label>
+                <el-radio-group v-model="readerPageMode" @change="changeReaderPageMode">
+                  <el-radio-button value="scroll">滚动</el-radio-button>
+                  <el-radio-button value="page">翻页</el-radio-button>
+                </el-radio-group>
                 <label>字号</label>
                 <el-slider
                   v-model="readerFontSize"
