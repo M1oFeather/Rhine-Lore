@@ -5464,6 +5464,26 @@ body {
   font-weight: 600;
 }
 
+.character-card-name {
+  font-size: 16px;
+  font-weight: 800;
+  color: #172554;
+}
+
+.character-card-type {
+  color: #5b6b7c;
+  font-size: 12px;
+}
+
+.card-readonly-text {
+  margin: 0;
+  color: #33475c;
+  font-size: 13px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 @media (max-width: 720px) {
   .feature-map-grid {
     grid-template-columns: minmax(0, 1fr);

@@ -278,9 +278,20 @@ const evolutionCharacterDialogVisible = ref(false);
 const evolutionNewCharacter = ref({name: "", role: "配角", drive: "", secret: ""});
 const ignoredCharacterPromptProjects = ref<string[]>([]);
 const evolutionTimelineLimit = ref(30);
-const characterEditorMode = ref<"simple" | "full">(
-  localStorage.getItem("rhine-lore-character-mode") === "full" ? "full" : "simple",
-);
+const worldEditVisible = ref(false);
+const worldDraft = ref<WorldCard>({
+  id: "",
+  name: "",
+  type: "地点",
+  summary: "",
+  details: "",
+  significance: "",
+  tags: "",
+});
+const worldEditIndex = ref(-1);
+const characterEditVisible = ref(false);
+const characterDraft = ref<CharacterCard | null>(null);
+const characterEditIndex = ref(-1);
 const mapSelectedNodeId = ref("");
 const mapSelectedEdgeId = ref("");
 const mapConnectMode = ref(false);
@@ -1688,18 +1699,7 @@ function continueSetup(): void {
 }
 
 function addLoreItem(): void {
-  const project = activeProject.value;
-  const item: WorldCard = {
-    id: uid("world"),
-    name: "新设定",
-    type: "地点",
-    summary: "",
-    details: "",
-    significance: "",
-    tags: "",
-  };
-  project.world.push(item);
-  saveProjects();
+  openWorldEditor(-1);
 }
 
 function removeWorldItem(item: WorldCard): void {
@@ -1712,34 +1712,7 @@ function removeWorldItem(item: WorldCard): void {
 }
 
 function addCharacter(): void {
-  const project = activeProject.value;
-  const card: CharacterCard = {
-    id: uid("character"),
-    name: "新角色",
-    identity: "",
-    role: "配角",
-    age: "",
-    stance: "",
-    drive: "",
-    fear: "",
-    traits: "",
-    abilities: "",
-    weakness: "",
-    secret: "",
-    speech: "",
-    appearance: "",
-    background: "",
-    relationships: [],
-    status: "正常",
-    notes: "",
-  };
-  project.characters.push(card);
-  saveProjects();
-}
-
-function setCharacterEditorMode(mode: "simple" | "full"): void {
-  characterEditorMode.value = mode;
-  localStorage.setItem("rhine-lore-character-mode", mode);
+  openCharacterEditor(-1);
 }
 
 function hasTag(text: string, tag: string): boolean {
@@ -1829,6 +1802,84 @@ function removeCharacter(card: CharacterCard): void {
     project.characters.splice(index, 1);
     saveProjects();
   }
+}
+
+function splitTags(tags: string): string[] {
+  return String(tags || "")
+    .split(/[，,、;；\s]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function openWorldEditor(index: number): void {
+  const item = index >= 0 ? activeProject.value.world[index] : null;
+  worldEditIndex.value = index;
+  worldDraft.value = item
+    ? {...item}
+    : {id: uid("world"), name: "", type: "地点", summary: "", details: "", significance: "", tags: ""};
+  worldEditVisible.value = true;
+}
+
+function saveWorldEditor(): void {
+  const draft = worldDraft.value;
+  if (!draft.name.trim()) {
+    toastError("名称不能为空");
+    return;
+  }
+  if (worldEditIndex.value >= 0) {
+    Object.assign(activeProject.value.world[worldEditIndex.value], draft);
+  } else {
+    activeProject.value.world.push({...draft});
+  }
+  saveProjects();
+  worldEditVisible.value = false;
+  toastSuccess(worldEditIndex.value >= 0 ? "设定已更新" : "设定已添加");
+}
+
+function createEmptyCharacterDraft(): CharacterCard {
+  return {
+    id: uid("character"),
+    name: "",
+    identity: "",
+    role: "配角",
+    age: "",
+    stance: "",
+    drive: "",
+    fear: "",
+    traits: "",
+    abilities: "",
+    weakness: "",
+    secret: "",
+    speech: "",
+    appearance: "",
+    background: "",
+    relationships: [],
+    status: "正常",
+    notes: "",
+  };
+}
+
+function openCharacterEditor(index: number): void {
+  const card = index >= 0 ? activeProject.value.characters[index] : null;
+  characterEditIndex.value = index;
+  characterDraft.value = card ? JSON.parse(JSON.stringify(card)) : createEmptyCharacterDraft();
+  characterEditVisible.value = true;
+}
+
+function saveCharacterEditor(): void {
+  const draft = characterDraft.value;
+  if (!draft || !draft.name.trim()) {
+    toastError("姓名不能为空");
+    return;
+  }
+  if (characterEditIndex.value >= 0) {
+    Object.assign(activeProject.value.characters[characterEditIndex.value], draft);
+  } else {
+    activeProject.value.characters.push({...draft});
+  }
+  saveProjects();
+  characterEditVisible.value = false;
+  toastSuccess(characterEditIndex.value >= 0 ? "角色已更新" : "角色已添加");
 }
 
 function addRelationship(card: CharacterCard): void {
@@ -4373,52 +4424,73 @@ onUnmounted(() => {
                 <el-button @click="activity = 'map'">看看地图</el-button>
               </EmptyState>
               <div class="world-card-grid">
-                <div v-for="item in activeProject.world" :key="item.id" class="character-card world-card">
+                <div v-for="(item, index) in activeProject.world" :key="item.id" class="character-card world-card">
                   <div class="character-card-head">
                     <div class="character-card-avatar">{{ (item.name || "?").slice(0, 1) }}</div>
                     <div class="character-card-title">
-                      <el-input v-model="item.name" class="character-name-input" placeholder="名称，如：雾港" @input="saveProjects" />
-                      <el-select v-model="item.type" size="small" style="width: 140px" @change="saveProjects">
-                        <el-option v-for="type in worldTypes" :key="type" :label="type" :value="type" />
-                      </el-select>
+                      <strong class="character-card-name">{{ item.name || "未命名" }}</strong>
+                      <span class="character-card-type">{{ item.type }}</span>
                     </div>
-                    <el-button size="small" type="danger" plain @click="removeWorldItem(item)">删除</el-button>
+                    <el-button size="small" @click="openWorldEditor(index)">编辑</el-button>
                   </div>
                   <div class="character-card-section">
                     <label>一句话概述</label>
-                    <el-input v-model="item.summary" placeholder="这里是什么？它为什么存在？" @input="saveProjects" />
+                    <p class="card-readonly-text">{{ item.summary || "（空）" }}</p>
                   </div>
                   <div class="character-card-section">
                     <label>详细描述</label>
-                    <el-input v-model="item.details" type="textarea" :rows="4" placeholder="环境、氛围、规则细节……" @input="saveProjects" />
+                    <p class="card-readonly-text">{{ item.details || "（空）" }}</p>
                   </div>
                   <div class="character-card-section">
                     <label>对故事的意义</label>
-                    <el-input v-model="item.significance" type="textarea" :rows="2" placeholder="它如何影响角色和剧情？" @input="saveProjects" />
+                    <p class="card-readonly-text">{{ item.significance || "（空）" }}</p>
                   </div>
                   <div class="character-card-section">
                     <label>标签</label>
-                    <el-input v-model="item.tags" placeholder="例如：港口、海雾、禁行（逗号分隔）" @input="saveProjects" />
-                    <div class="preset-chips">
-                      <button
-                        v-for="tag in worldTagPresets[item.type] || worldTagPresets['其他']"
-                        :key="tag"
-                        type="button"
-                        class="preset-chip"
-                        :class="{used: hasTag(item.tags, tag)}"
-                        @click="fillWorldTags(item, tag)"
-                      >
-                        {{ tag }}
-                      </button>
+                    <div class="cast-trait-chips">
+                      <span v-for="tag in splitTags(item.tags)" :key="tag">{{ tag }}</span>
                     </div>
                   </div>
                   <div class="character-card-actions">
                     <el-button size="small" @click="submitLoreItem('world', item)">同步到资料库</el-button>
                     <el-button size="small" type="primary" @click="placeWorldOnMap(item)">放置到地图</el-button>
+                    <el-button size="small" type="danger" plain @click="removeWorldItem(item)">删除</el-button>
                   </div>
                 </div>
               </div>
             </el-card>
+
+            <el-drawer v-model="worldEditVisible" title="编辑设定" direction="btt" size="82%">
+              <div class="shelf-settings">
+                <label>名称</label>
+                <el-input v-model="worldDraft.name" placeholder="如：雾港" />
+                <label>类型</label>
+                <el-select v-model="worldDraft.type" style="width: 100%">
+                  <el-option v-for="type in worldTypes" :key="type" :label="type" :value="type" />
+                </el-select>
+                <label>一句话概述</label>
+                <el-input v-model="worldDraft.summary" type="textarea" :rows="2" />
+                <label>详细描述</label>
+                <el-input v-model="worldDraft.details" type="textarea" :rows="5" />
+                <label>对故事的意义</label>
+                <el-input v-model="worldDraft.significance" type="textarea" :rows="2" />
+                <label>标签</label>
+                <el-input v-model="worldDraft.tags" placeholder="港口、海雾（逗号分隔）" />
+                <div class="preset-chips">
+                  <button
+                    v-for="tag in worldTagPresets[worldDraft.type] || worldTagPresets['其他']"
+                    :key="tag"
+                    type="button"
+                    class="preset-chip"
+                    :class="{used: hasTag(worldDraft.tags, tag)}"
+                    @click="fillWorldTags(worldDraft, tag)"
+                  >
+                    {{ tag }}
+                  </button>
+                </div>
+                <el-button type="primary" @click="saveWorldEditor">保存设定</el-button>
+              </div>
+            </el-drawer>
           </section>
 
           <section v-else-if="activity === 'map'" class="activity-panel map-panel">
@@ -4508,10 +4580,6 @@ onUnmounted(() => {
                 <div class="card-header">
                   <span>角色卡</span>
                   <el-space wrap>
-                    <el-radio-group v-model="characterEditorMode" size="small" @change="setCharacterEditorMode">
-                      <el-radio-button value="simple">简版</el-radio-button>
-                      <el-radio-button value="full">详版</el-radio-button>
-                    </el-radio-group>
                     <el-button size="small" type="primary" @click="addCharacter">添加角色</el-button>
                     <el-button size="small" @click="activity = 'evolution'">去演化沙盘</el-button>
                   </el-space>
@@ -4527,117 +4595,143 @@ onUnmounted(() => {
                 <el-button @click="activity = 'chat'">让 AI 生成一个</el-button>
               </EmptyState>
               <div class="character-card-grid">
-                <div v-for="card in activeProject.characters" :key="card.id" class="character-card">
+                <div v-for="(card, index) in activeProject.characters" :key="card.id" class="character-card">
                   <div class="character-card-head">
                     <div class="character-card-avatar">{{ (card.name || "?").slice(0, 1) }}</div>
                     <div class="character-card-title">
-                      <el-input v-model="card.name" class="character-name-input" placeholder="姓名" @input="saveProjects" />
-                      <div class="character-identity-row">
-                        <el-input v-model="card.identity" placeholder="身份 / 称号，如：雾港送信人" @input="saveProjects" />
-                        <el-select v-model="card.role" size="small" style="width: 130px" @change="saveProjects">
-                          <el-option v-for="role in characterRoles" :key="role" :label="role" :value="role" />
-                        </el-select>
-                      </div>
+                      <strong class="character-card-name">{{ card.name || "未命名" }}</strong>
+                      <span class="character-card-type">
+                        {{ card.role }}<template v-if="card.identity"> · {{ card.identity }}</template>
+                      </span>
                     </div>
-                    <el-button size="small" type="danger" plain @click="removeCharacter(card)">删除</el-button>
+                    <el-button size="small" @click="openCharacterEditor(index)">编辑</el-button>
                   </div>
 
-                  <div v-if="characterEditorMode === 'full'" class="character-card-section character-extra-row">
+                  <div class="character-card-section character-detail-grid">
                     <div>
-                      <label>年龄</label>
-                      <el-input v-model="card.age" placeholder="例如：19 岁" @input="saveProjects" />
+                      <label>欲望 / 目标</label>
+                      <p class="card-readonly-text">{{ card.drive || "（空）" }}</p>
                     </div>
                     <div>
-                      <label>立场 / 阵营</label>
-                      <el-input v-model="card.stance" placeholder="例如：中立、偏向主角、亦正亦邪" @input="saveProjects" />
+                      <label>恐惧</label>
+                      <p class="card-readonly-text">{{ card.fear || "（空）" }}</p>
                     </div>
-                  </div>
-
-                  <div class="character-card-section">
-                    <label>欲望 / 目标</label>
-                    <el-input v-model="card.drive" placeholder="他最想要什么？" @input="saveProjects" />
-                    <label>恐惧</label>
-                    <el-input v-model="card.fear" placeholder="他最怕失去什么？" @input="saveProjects" />
                   </div>
 
                   <div class="character-card-section">
                     <label>性格标签</label>
-                    <el-input v-model="card.traits" placeholder="例如：谨慎、毒舌、重情义（用逗号分隔）" @input="saveProjects" />
-                    <div class="preset-chips">
-                      <button
-                        v-for="tag in characterTraitPresets"
-                        :key="tag"
-                        type="button"
-                        class="preset-chip"
-                        :class="{used: hasTag(card.traits, tag)}"
-                        @click="fillCharacterTraits(card, tag)"
-                      >
-                        {{ tag }}
-                      </button>
+                    <div class="cast-trait-chips">
+                      <span v-for="tag in splitTags(card.traits)" :key="tag">{{ tag }}</span>
                     </div>
                   </div>
 
-                  <div v-if="characterEditorMode === 'full'" class="character-card-section character-detail-grid">
-                    <div>
-                      <label>能力 / 特长</label>
-                      <el-input v-model="card.abilities" placeholder="例如：认路、谈判（逗号分隔）" @input="saveProjects" />
-                    </div>
-                    <div>
-                      <label>弱点</label>
-                      <el-input v-model="card.weakness" placeholder="例如：怕水、易心软" @input="saveProjects" />
-                    </div>
-                  </div>
-
-                  <div v-if="characterEditorMode === 'full'" class="character-card-section">
+                  <div class="character-card-section">
                     <label>秘密（会成为演化伏笔）</label>
-                    <el-input v-model="card.secret" placeholder="只有这个角色知道的真相……" @input="saveProjects" />
-                  </div>
-
-                  <div v-if="characterEditorMode === 'full'" class="character-card-section">
-                    <label>说话风格 / 口头禅</label>
-                    <el-input v-model="card.speech" placeholder="例如：总是把话说到一半" @input="saveProjects" />
+                    <p class="card-readonly-text">{{ card.secret || "（空）" }}</p>
                   </div>
 
                   <div class="character-card-section">
                     <label>关系</label>
-                    <div v-for="(relation, index) in card.relationships" :key="index" class="relationship-row">
-                      <el-input v-model="relation.name" placeholder="对方姓名" size="small" @input="saveProjects" />
-                      <el-input v-model="relation.relation" placeholder="关系，如：恋人 / 死敌" size="small" @input="saveProjects" />
-                      <el-button size="small" @click="removeRelationship(card, index)">×</el-button>
-                    </div>
-                    <el-button size="small" @click="addRelationship(card)">添加关系</el-button>
+                    <p class="card-readonly-text">
+                      {{
+                        card.relationships.map((relation) => `${relation.name || "?"}（${relation.relation || "?"}）`).join("、") || "（无）"
+                      }}
+                    </p>
                   </div>
 
-                  <div v-if="characterEditorMode === 'full'" class="character-card-section character-detail-grid">
-                    <div>
-                      <label>外貌特征</label>
-                      <el-input v-model="card.appearance" type="textarea" :rows="3" placeholder="衣着、气质、标志性细节" @input="saveProjects" />
-                    </div>
-                    <div>
-                      <label>背景故事</label>
-                      <el-input v-model="card.background" type="textarea" :rows="3" placeholder="他来自哪里，经历过什么" @input="saveProjects" />
-                    </div>
-                  </div>
-
-                  <div class="character-card-section character-status-row">
-                    <div>
-                      <label>当前状态</label>
-                      <el-select v-model="card.status" size="small" @change="saveProjects">
-                        <el-option v-for="status in characterStatusOptions" :key="status" :label="status" :value="status" />
-                      </el-select>
-                    </div>
-                    <div class="character-notes-field">
-                      <label>备注</label>
-                      <el-input v-model="card.notes" type="textarea" :rows="2" placeholder="其他想记住的事" @input="saveProjects" />
-                    </div>
+                  <div class="character-card-section">
+                    <label>背景</label>
+                    <p class="card-readonly-text">{{ card.background || "（空）" }}</p>
                   </div>
 
                   <div class="character-card-actions">
                     <el-button size="small" @click="submitLoreItem('characters', card)">同步到资料库</el-button>
+                    <el-button size="small" type="danger" plain @click="removeCharacter(card)">删除</el-button>
                   </div>
                 </div>
               </div>
             </el-card>
+
+            <el-drawer v-model="characterEditVisible" title="编辑角色卡" direction="btt" size="88%">
+              <div v-if="characterDraft" class="shelf-settings">
+                <label>姓名</label>
+                <el-input v-model="characterDraft.name" />
+                <div class="character-identity-row">
+                  <el-input v-model="characterDraft.identity" placeholder="身份 / 称号" />
+                  <el-select v-model="characterDraft.role" style="width: 140px">
+                    <el-option v-for="role in characterRoles" :key="role" :label="role" :value="role" />
+                  </el-select>
+                </div>
+                <div class="character-detail-grid">
+                  <div>
+                    <label>年龄</label>
+                    <el-input v-model="characterDraft.age" />
+                  </div>
+                  <div>
+                    <label>立场 / 阵营</label>
+                    <el-input v-model="characterDraft.stance" />
+                  </div>
+                  <div>
+                    <label>能力 / 特长</label>
+                    <el-input v-model="characterDraft.abilities" />
+                  </div>
+                  <div>
+                    <label>弱点</label>
+                    <el-input v-model="characterDraft.weakness" />
+                  </div>
+                </div>
+                <label>欲望 / 目标</label>
+                <el-input v-model="characterDraft.drive" />
+                <label>恐惧</label>
+                <el-input v-model="characterDraft.fear" />
+                <label>性格标签</label>
+                <el-input v-model="characterDraft.traits" placeholder="谨慎、毒舌、重情义" />
+                <div class="preset-chips">
+                  <button
+                    v-for="tag in characterTraitPresets"
+                    :key="tag"
+                    type="button"
+                    class="preset-chip"
+                    :class="{used: hasTag(characterDraft.traits, tag)}"
+                    @click="fillCharacterTraits(characterDraft, tag)"
+                  >
+                    {{ tag }}
+                  </button>
+                </div>
+                <label>秘密（会成为演化伏笔）</label>
+                <el-input v-model="characterDraft.secret" type="textarea" :rows="2" />
+                <label>说话风格 / 口头禅</label>
+                <el-input v-model="characterDraft.speech" />
+                <label>外貌特征</label>
+                <el-input v-model="characterDraft.appearance" type="textarea" :rows="3" />
+                <label>背景故事</label>
+                <el-input v-model="characterDraft.background" type="textarea" :rows="3" />
+                <label>关系</label>
+                <div
+                  v-for="(relation, index) in characterDraft.relationships"
+                  :key="index"
+                  class="relationship-row"
+                >
+                  <el-input v-model="relation.name" placeholder="对方姓名" size="small" />
+                  <el-input v-model="relation.relation" placeholder="关系，如：恋人 / 死敌" size="small" />
+                  <el-button size="small" @click="removeRelationship(characterDraft, index)">×</el-button>
+                </div>
+                <el-button size="small" @click="addRelationship(characterDraft)">添加关系</el-button>
+                <div class="character-status-row">
+                  <div>
+                    <label>当前状态</label>
+                    <el-select v-model="characterDraft.status" style="width: 100%">
+                      <el-option v-for="status in characterStatusOptions" :key="status" :label="status" :value="status" />
+                    </el-select>
+                  </div>
+                  <div class="character-notes-field">
+                    <label>备注</label>
+                    <el-input v-model="characterDraft.notes" type="textarea" :rows="2" />
+                  </div>
+                </div>
+                <el-button type="primary" @click="saveCharacterEditor">保存角色</el-button>
+              </div>
+            </el-drawer>
           </section>
 
           <section
