@@ -57,11 +57,3 @@
     <circle cx="212" cy="14" r="2" fill="#ffffff" opacity="0.4" />
   </svg>
 </template>
-
-<style scoped>
-.home-illustration {
-  width: 250px;
-  height: auto;
-  flex: 0 0 auto;
-}
-</style>
