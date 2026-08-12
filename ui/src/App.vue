@@ -261,6 +261,9 @@ const shelfAnalyzeBusy = ref(false);
 const shelfSaving = ref(false);
 const shelfImportInput = ref<HTMLInputElement | null>(null);
 const settingsTab = ref("basic");
+type ThemeMode = "light" | "dark" | "system";
+const themeMode = ref<ThemeMode>((localStorage.getItem("rhine-lore-theme") as ThemeMode) || "system");
+const systemDark = ref(false);
 const serverBaseInput = ref(getServerBase());
 const serverBaseCurrent = ref(getServerBase());
 const serverBaseBusy = ref(false);
@@ -836,6 +839,9 @@ const chapterNavigationLabel = computed(() => {
 });
 
 onMounted(async () => {
+  systemDark.value = window.matchMedia("(prefers-color-scheme: dark)").matches;
+  applyTheme();
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", handleSystemThemeChange);
   document.addEventListener("click", closeChatMore);
   window.addEventListener("scroll", updateReadingProgress, {passive: true});
   await initProjects();
@@ -851,6 +857,23 @@ onMounted(async () => {
 
 function closeChatMore(): void {
   chatMoreOpen.value = false;
+}
+
+function applyTheme(): void {
+  const dark = themeMode.value === "dark" || (themeMode.value === "system" && systemDark.value);
+  document.documentElement.classList.toggle("dark", dark);
+  document.documentElement.dataset.theme = dark ? "dark" : "light";
+  localStorage.setItem("rhine-lore-theme", themeMode.value);
+}
+
+function setThemeMode(mode: ThemeMode): void {
+  themeMode.value = mode;
+  applyTheme();
+}
+
+function handleSystemThemeChange(event: MediaQueryListEvent): void {
+  systemDark.value = event.matches;
+  applyTheme();
 }
 
 function createDefaultProject(): StoryProject {
@@ -4063,6 +4086,7 @@ async function pasteDeepSeekKey(): Promise<void> {
 }
 
 onUnmounted(() => {
+  window.matchMedia("(prefers-color-scheme: dark)").removeEventListener("change", handleSystemThemeChange);
   document.removeEventListener("click", closeChatMore);
   window.removeEventListener("scroll", updateReadingProgress);
   if (evolutionTimer) {
@@ -6910,6 +6934,21 @@ onUnmounted(() => {
                       </small>
                     </el-form>
                   </div>
+                </el-card>
+
+                <el-card shadow="never" class="theme-card">
+                  <template #header>
+                    <div class="card-header">
+                      <span>外观主题</span>
+                      <small>浅色、深色或跟随系统</small>
+                    </div>
+                  </template>
+                  <el-radio-group v-model="themeMode" @change="setThemeMode">
+                    <el-radio-button value="light">浅色</el-radio-button>
+                    <el-radio-button value="dark">深色</el-radio-button>
+                    <el-radio-button value="system">跟随系统</el-radio-button>
+                  </el-radio-group>
+                  <small class="chat-key-hint">深色模式会同步应用到阅读页与全部卡片，随设置持久保存。</small>
                 </el-card>
               </el-tab-pane>
 

@@ -58,3 +58,7 @@ jobs:
       - name: Run scroll audit (desktop + mobile)
         working-directory: ui
         run: node scripts/audit-scroll-ci.mjs http://127.0.0.1:8786
+
+      - name: Run scroll audit in dark mode
+        working-directory: ui
+        run: node scripts/audit-scroll-ci.mjs http://127.0.0.1:8786 --dark

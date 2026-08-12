@@ -15,8 +15,9 @@
   <path d="M38 20 H69 L74 25 V31 H38 Z" fill="url(#rl-r)"/>
   <path d="M62 31 H74 V50 H62 Z" fill="url(#rl-r)"/>
   <path d="M38 41 H62 V50 H38 Z" fill="url(#rl-r)"/>
-  <path d="M62 50 H74 L46 78 H34 Z" fill="url(#rl-r)"/>
-  <rect x="26" y="84" width="44" height="3.5" fill="#f4c95d"/>
+  <path d="M40 50 H52 L78 78 H66 Z" fill="url(#rl-r)"/>
+  <path d="M24 70 H78 V78 H24 Z" fill="url(#rl-r)"/>
+  <rect x="24" y="84" width="54" height="3.5" fill="#f4c95d"/>
   <g stroke="#f4c95d" stroke-width="2" stroke-linecap="butt">
     <path d="M80 12 V22"/>
     <path d="M75 17 H85"/>

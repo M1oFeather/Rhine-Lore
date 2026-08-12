@@ -26,6 +26,7 @@ import { ElTable, ElTableColumn } from "element-plus/es/components/table/index.m
 import { ElTabs, ElTabPane } from "element-plus/es/components/tabs/index.mjs";
 import { ElTag } from "element-plus/es/components/tag/index.mjs";
 import "element-plus/dist/index.css";
+import "element-plus/theme-chalk/dark/css-vars.css";
 
 import { createApp } from "vue";
 
