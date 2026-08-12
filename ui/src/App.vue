@@ -250,6 +250,9 @@ const readerLineHeight = ref(Number(localStorage.getItem("rhine-lore-reader-line
 const readerTheme = ref<"day" | "sepia" | "night">(
   (localStorage.getItem("rhine-lore-reader-theme") as "day" | "sepia" | "night") || "day",
 );
+const readerParagraphSpacing = ref(Number(localStorage.getItem("rhine-lore-reader-paragraph-spacing") || "1.1"));
+const readerJustify = ref(localStorage.getItem("rhine-lore-reader-justify") !== "0");
+const lastReaderAutoAdvance = ref(0);
 const shelfBooks = ref<BookMeta[]>([]);
 const shelfBookId = ref("");
 const shelfBook = ref<BookDetail | null>(null);
@@ -852,7 +855,8 @@ onMounted(async () => {
   applyTheme();
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", handleSystemThemeChange);
   document.addEventListener("click", closeChatMore);
-  window.addEventListener("scroll", updateReadingProgress, {passive: true});
+  window.addEventListener("scroll", handleReadingScroll, {passive: true});
+  readerScrollContainer()?.addEventListener("scroll", handleReadingScroll, {passive: true});
   await initProjects();
   await perform("初始化", async () => {
     await Promise.allSettled([updateBackendStatus(), refreshWorkspaces(), refreshNodes(), refreshReview()]);
@@ -1197,7 +1201,7 @@ async function openActivity(next: Activity): Promise<void> {
     if (evolutionNovelChapters.value.length > 0) {
       evolutionChapterIndex.value = evolutionNovelChapters.value.length - 1;
     }
-    requestAnimationFrame(() => window.scrollTo({top: 0, behavior: "auto"}));
+    requestAnimationFrame(resetReaderScroll);
   }
   if (next === "shelf") {
     await loadShelfBooks();
@@ -1232,10 +1236,34 @@ async function closeMobileNav(): Promise<void> {
 function persistReaderSettings(): void {
   localStorage.setItem("rhine-lore-reader-line-height", String(readerLineHeight.value));
   localStorage.setItem("rhine-lore-reader-theme", readerTheme.value);
+  localStorage.setItem("rhine-lore-reader-paragraph-spacing", String(readerParagraphSpacing.value));
+  localStorage.setItem("rhine-lore-reader-justify", readerJustify.value ? "1" : "0");
 }
 
 function readerThemeClass(): string {
   return `theme-${readerTheme.value}`;
+}
+
+function readerContentStyle(): Record<string, string> {
+  return {
+    fontSize: `${readerFontSize.value}px`,
+    lineHeight: String(readerLineHeight.value),
+    textAlign: readerJustify.value ? "justify" : "left",
+    "--reader-para-margin": `${readerParagraphSpacing.value}em`,
+  } as Record<string, string>;
+}
+
+function readerScrollContainer(): HTMLElement | null {
+  return document.querySelector<HTMLElement>(".workspace-main .el-scrollbar__wrap");
+}
+
+function resetReaderScroll(): void {
+  const wrap = readerScrollContainer();
+  if (wrap) {
+    wrap.scrollTop = 0;
+  } else {
+    window.scrollTo({top: 0});
+  }
 }
 
 async function loadShelfBooks(): Promise<void> {
@@ -1327,7 +1355,7 @@ async function openShelfBook(bookId: string): Promise<void> {
   if (targetId) {
     await loadShelfChapter(targetId);
   }
-  requestAnimationFrame(() => window.scrollTo({top: 0, behavior: "auto"}));
+  requestAnimationFrame(resetReaderScroll);
 }
 
 async function loadShelfChapter(chapterId: string): Promise<void> {
@@ -1344,7 +1372,7 @@ async function loadShelfChapter(chapterId: string): Promise<void> {
   shelfChapterIndex.value =
     shelfBook.value?.chapters.findIndex((item) => item.id === chapterId) ?? -1;
   localStorage.setItem(`rhine-shelf-pos-${shelfBookId.value}`, chapterId);
-  requestAnimationFrame(() => window.scrollTo({top: 0, behavior: "auto"}));
+  requestAnimationFrame(resetReaderScroll);
 }
 
 function openShelfAdjacentChapter(direction: -1 | 1): void {
@@ -1684,6 +1712,7 @@ function handleProjectChange(): void {
 function selectChapter(chapterId: string): void {
   activeChapterId.value = chapterId;
   localStorage.setItem(activeChapterKey, chapterId);
+  resetReaderScroll();
 }
 
 function duplicateProject(): void {
@@ -3023,17 +3052,63 @@ function openAdjacentChapter(direction: -1 | 1): void {
     return;
   }
   selectChapter(nextChapter.id);
-  window.scrollTo({top: 0});
+  resetReaderScroll();
 }
 
 function updateReadingProgress(): void {
   if (activity.value !== "novel" || readerMode.value !== "read") {
     return;
   }
-  const doc = document.documentElement;
-  const max = doc.scrollHeight - window.innerHeight;
+  const wrap = readerScrollContainer();
+  if (!wrap) {
+    return;
+  }
+  const max = wrap.scrollHeight - wrap.clientHeight;
   readingProgress.value =
-    max > 0 ? Math.min(100, Math.max(0, (window.scrollY / max) * 100)) : 100;
+    max > 0 ? Math.min(100, Math.max(0, (wrap.scrollTop / max) * 100)) : 100;
+}
+
+function maybeAutoAdvanceChapter(): void {
+  const now = Date.now();
+  if (now - lastReaderAutoAdvance.value < 900) {
+    return;
+  }
+  const wrap = readerScrollContainer();
+  if (!wrap) {
+    return;
+  }
+  const nearBottom = wrap.scrollTop + wrap.clientHeight >= wrap.scrollHeight - 140;
+  if (!nearBottom) {
+    return;
+  }
+  if (activity.value === "novel" && readerMode.value === "read") {
+    if (activeChapterIndex.value >= activeProject.value.chapters.length - 1) {
+      return;
+    }
+    lastReaderAutoAdvance.value = now;
+    openAdjacentChapter(1);
+    return;
+  }
+  if (activity.value === "read" && evolutionActiveChapter.value) {
+    if (evolutionChapterIndex.value >= evolutionNovelChapters.value.length - 1) {
+      return;
+    }
+    lastReaderAutoAdvance.value = now;
+    openEvolutionAdjacentChapter(1);
+    return;
+  }
+  if (activity.value === "shelf" && shelfChapter.value && shelfBook.value) {
+    if (shelfChapterIndex.value >= shelfBook.value.chapters.length - 1) {
+      return;
+    }
+    lastReaderAutoAdvance.value = now;
+    openShelfAdjacentChapter(1);
+  }
+}
+
+function handleReadingScroll(): void {
+  updateReadingProgress();
+  maybeAutoAdvanceChapter();
 }
 
 async function loadChapterContext(): Promise<void> {
@@ -4045,12 +4120,12 @@ function openEvolutionAdjacentChapter(direction: -1 | 1): void {
     return;
   }
   evolutionChapterIndex.value = next;
-  window.scrollTo({top: 0, behavior: "smooth"});
+  resetReaderScroll();
 }
 
 function selectReadingChapter(index: number): void {
   evolutionChapterIndex.value = index;
-  window.scrollTo({top: 0, behavior: "smooth"});
+  resetReaderScroll();
 }
 
 function setChapterTurns(turns: number): void {
@@ -4262,7 +4337,8 @@ async function pasteDeepSeekKey(): Promise<void> {
 onUnmounted(() => {
   window.matchMedia("(prefers-color-scheme: dark)").removeEventListener("change", handleSystemThemeChange);
   document.removeEventListener("click", closeChatMore);
-  window.removeEventListener("scroll", updateReadingProgress);
+  window.removeEventListener("scroll", handleReadingScroll);
+  readerScrollContainer()?.removeEventListener("scroll", handleReadingScroll);
   if (evolutionTimer) {
     window.clearInterval(evolutionTimer);
     evolutionTimer = undefined;
@@ -5519,59 +5595,12 @@ onUnmounted(() => {
                     <el-button size="small" @click="openNovelVersions">版本</el-button>
                     <el-button size="small" @click="novelTocVisible = true">目录</el-button>
                     <el-button size="small" @click="novelSettingsVisible = true">阅读设置</el-button>
-                    <span class="chapter-meter desktop-only-control">
-                      {{ chapterNavigationLabel }} · {{ chapterCharacterCount }} 字
-                    </span>
-                    <el-button
-                      size="small"
-                      class="desktop-only-control"
-                      :disabled="activeChapterIndex <= 0"
-                      @click="openAdjacentChapter(-1)"
-                    >
-                      上一章
-                    </el-button>
-                    <el-button
-                      size="small"
-                      class="desktop-only-control"
-                      :disabled="activeChapterIndex < 0 || activeChapterIndex >= activeProject.chapters.length - 1"
-                      @click="openAdjacentChapter(1)"
-                    >
-                      下一章
-                    </el-button>
                     <el-button :type="readerMode === 'read' ? 'primary' : 'default'" @click="readerMode = 'read'">
                       阅读
                     </el-button>
                     <el-button :type="readerMode === 'edit' ? 'primary' : 'default'" @click="readerMode = 'edit'">
                       编辑
                     </el-button>
-                    <el-input-number
-                      v-model="readerFontSize"
-                      :min="15"
-                      :max="26"
-                      size="small"
-                      class="desktop-only-control"
-                    />
-                    <el-input-number
-                      v-model="readerLineHeight"
-                      :min="1.4"
-                      :max="2.6"
-                      :step="0.1"
-                      size="small"
-                      title="行距"
-                      class="desktop-only-control"
-                      @change="persistReaderSettings"
-                    />
-                    <el-select
-                      v-model="readerTheme"
-                      size="small"
-                      style="width: 96px"
-                      class="desktop-only-control"
-                      @change="persistReaderSettings"
-                    >
-                      <el-option label="白" value="day" />
-                      <el-option label="米黄" value="sepia" />
-                      <el-option label="夜间" value="night" />
-                    </el-select>
                     <el-button class="desktop-only-control" @click="submitChapterExtract">
                       保存为资料
                     </el-button>
@@ -5584,6 +5613,23 @@ onUnmounted(() => {
                 class="reading-progress"
               >
                 <i :style="{width: `${readingProgress}%`}" />
+              </div>
+
+              <div v-if="readerMode === 'read' && activeChapter" class="reader-tap-zones">
+                <button
+                  type="button"
+                  class="reader-tap-zone left"
+                  :disabled="activeChapterIndex <= 0"
+                  aria-label="上一章"
+                  @click="openAdjacentChapter(-1)"
+                />
+                <button
+                  type="button"
+                  class="reader-tap-zone right"
+                  :disabled="activeChapterIndex >= activeProject.chapters.length - 1"
+                  aria-label="下一章"
+                  @click="openAdjacentChapter(1)"
+                />
               </div>
 
               <EmptyState
@@ -5608,7 +5654,7 @@ onUnmounted(() => {
                   v-if="readerMode === 'read'"
                   class="novel-reader"
                   :class="readerThemeClass()"
-                  :style="{fontSize: `${readerFontSize}px`, lineHeight: String(readerLineHeight)}"
+                  :style="readerContentStyle()"
                 >
                   <h2>{{ activeChapter.title }}</h2>
                   <p v-for="(paragraph, index) in activeChapterParagraphs" :key="index">
@@ -5762,6 +5808,20 @@ onUnmounted(() => {
                   <el-radio-button value="day">白</el-radio-button>
                   <el-radio-button value="sepia">米黄</el-radio-button>
                   <el-radio-button value="night">夜间</el-radio-button>
+                </el-radio-group>
+                <label>段距</label>
+                <el-slider
+                  v-model="readerParagraphSpacing"
+                  :min="0.8"
+                  :max="2.2"
+                  :step="0.1"
+                  show-input
+                  @change="persistReaderSettings"
+                />
+                <label>对齐</label>
+                <el-radio-group v-model="readerJustify" @change="persistReaderSettings">
+                  <el-radio-button :value="true">两端对齐</el-radio-button>
+                  <el-radio-button :value="false">左对齐</el-radio-button>
                 </el-radio-group>
               </div>
             </el-drawer>
@@ -6583,8 +6643,24 @@ onUnmounted(() => {
                   <article
                     class="evolution-chapter-reader reading-main"
                     :class="readerThemeClass()"
-                    :style="{fontSize: `${readerFontSize}px`, lineHeight: String(readerLineHeight)}"
+                    :style="readerContentStyle()"
                   >
+                    <div v-if="evolutionActiveChapter" class="reader-tap-zones">
+                      <button
+                        type="button"
+                        class="reader-tap-zone left"
+                        :disabled="evolutionChapterIndex <= 0"
+                        aria-label="上一章"
+                        @click="openEvolutionAdjacentChapter(-1)"
+                      />
+                      <button
+                        type="button"
+                        class="reader-tap-zone right"
+                        :disabled="evolutionChapterIndex >= evolutionNovelChapters.length - 1"
+                        aria-label="下一章"
+                        @click="openEvolutionAdjacentChapter(1)"
+                      />
+                    </div>
                     <h2>{{ evolutionActiveChapter.title }}</h2>
                     <p class="evolution-chapter-meta">
                       {{
@@ -6707,6 +6783,20 @@ onUnmounted(() => {
                   <el-radio-button value="sepia">米黄</el-radio-button>
                   <el-radio-button value="night">夜间</el-radio-button>
                 </el-radio-group>
+                <label>段距</label>
+                <el-slider
+                  v-model="readerParagraphSpacing"
+                  :min="0.8"
+                  :max="2.2"
+                  :step="0.1"
+                  show-input
+                  @change="persistReaderSettings"
+                />
+                <label>对齐</label>
+                <el-radio-group v-model="readerJustify" @change="persistReaderSettings">
+                  <el-radio-button :value="true">两端对齐</el-radio-button>
+                  <el-radio-button :value="false">左对齐</el-radio-button>
+                </el-radio-group>
               </div>
             </el-drawer>
           </section>
@@ -6807,8 +6897,24 @@ onUnmounted(() => {
                 <article
                   class="novel-reader shelf-reader"
                   :class="readerThemeClass()"
-                  :style="{fontSize: `${readerFontSize}px`, lineHeight: String(readerLineHeight)}"
+                  :style="readerContentStyle()"
                 >
+                  <div class="reader-tap-zones">
+                    <button
+                      type="button"
+                      class="reader-tap-zone left"
+                      :disabled="shelfChapterIndex <= 0"
+                      aria-label="上一章"
+                      @click="openShelfAdjacentChapter(-1)"
+                    />
+                    <button
+                      type="button"
+                      class="reader-tap-zone right"
+                      :disabled="shelfChapterIndex < 0 || shelfChapterIndex >= shelfBook.chapters.length - 1"
+                      aria-label="下一章"
+                      @click="openShelfAdjacentChapter(1)"
+                    />
+                  </div>
                   <h2>{{ shelfChapter.title }}</h2>
                   <p v-for="(paragraph, index) in shelfChapterParagraphs(shelfChapter)" :key="index">
                     {{ paragraph }}
@@ -7008,6 +7114,20 @@ onUnmounted(() => {
                     <el-radio-button value="day">白</el-radio-button>
                     <el-radio-button value="sepia">米黄</el-radio-button>
                     <el-radio-button value="night">夜间</el-radio-button>
+                  </el-radio-group>
+                  <label>段距</label>
+                  <el-slider
+                    v-model="readerParagraphSpacing"
+                    :min="0.8"
+                    :max="2.2"
+                    :step="0.1"
+                    show-input
+                    @change="persistReaderSettings"
+                  />
+                  <label>对齐</label>
+                  <el-radio-group v-model="readerJustify" @change="persistReaderSettings">
+                    <el-radio-button :value="true">两端对齐</el-radio-button>
+                    <el-radio-button :value="false">左对齐</el-radio-button>
                   </el-radio-group>
                 </div>
               </el-drawer>
