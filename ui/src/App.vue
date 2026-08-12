@@ -5556,7 +5556,11 @@ onUnmounted(() => {
             </el-card>
           </section>
 
-          <section v-else-if="activity === 'novel'" class="activity-panel novel-panel">
+          <section
+            v-else-if="activity === 'novel'"
+            class="activity-panel novel-panel"
+            :class="{'novel-immersive': readerMode === 'read' && activeChapter}"
+          >
             <el-card shadow="never" class="novel-index-card">
               <template #header>
                 <div class="card-header">
