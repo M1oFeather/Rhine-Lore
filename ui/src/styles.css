@@ -39,6 +39,20 @@ body {
   letter-spacing: 0;
 }
 
+:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.sidebar :focus-visible {
+  outline-color: #7dd3fc;
+}
+
+[tabindex="-1"]:focus {
+  outline: none;
+}
+
 .app-shell {
   min-height: 100vh;
   display: grid;
@@ -1636,12 +1650,27 @@ body {
   width: 100%;
 }
 
+.server-connect-card {
+  margin-top: 14px;
+}
+
+.server-connect-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.72fr) minmax(0, 1.28fr);
+  gap: 16px;
+  align-items: start;
+}
+
 @media (max-width: 920px) {
   .vault-deploy-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 
   .vault-web-card {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .server-connect-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 }

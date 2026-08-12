@@ -1,0 +1,60 @@
+name: UI Checks
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install frontend dependencies
+        working-directory: ui
+        run: npm ci
+
+      - name: Build UI
+        working-directory: ui
+        run: npm run build
+
+      - name: Install Chromium
+        working-directory: ui
+        run: npx playwright install --with-deps chromium
+
+      - name: Start Rhine-Lore server
+        shell: bash
+        run: |
+          python main.py --host 127.0.0.1 --port 8786 > /tmp/rhine-lore.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:8786/ > /dev/null; then
+              echo "server ready"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "server did not start"
+          cat /tmp/rhine-lore.log
+          exit 1
+
+      - name: Run scroll audit (desktop + mobile)
+        working-directory: ui
+        run: node scripts/audit-scroll-ci.mjs http://127.0.0.1:8786

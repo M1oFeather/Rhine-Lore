@@ -50,6 +50,7 @@ import {
   getLlmServerConfig,
   getBook,
   getBookChapter,
+  getServerBase,
   getServerProject,
   getVaultRuntimeStatus,
   getVaultWebStatus,
@@ -76,7 +77,9 @@ import {
   saveBookChapter,
   saveLlmServerConfig,
   saveServerProject,
+  setServerBase,
   setWorkspaceId,
+  pingServerBase,
   stageProposal,
   startEvolutionRun,
   startVaultRuntime,
@@ -161,6 +164,9 @@ const activities: {id: Activity; label: string; icon: GameIconName; description:
 const activity = ref<Activity>("studio");
 const sidebarCollapsed = ref(localStorage.getItem("rhine-lore-sidebar-collapsed") === "1");
 const mobileNavOpen = ref(false);
+const contentMainRef = ref<HTMLElement | null>(null);
+const mobileMenuBtnRef = ref<HTMLButtonElement | null>(null);
+const mobileCloseBtnRef = ref<HTMLButtonElement | null>(null);
 const showAllProjects = ref(false);
 const storyStyleOpen = ref(false);
 const novelTocVisible = ref(false);
@@ -255,6 +261,10 @@ const shelfAnalyzeBusy = ref(false);
 const shelfSaving = ref(false);
 const shelfImportInput = ref<HTMLInputElement | null>(null);
 const settingsTab = ref("basic");
+const serverBaseInput = ref(getServerBase());
+const serverBaseCurrent = ref(getServerBase());
+const serverBaseBusy = ref(false);
+const serverBaseMessage = ref("");
 const saveNotice = ref("");
 const lastSavedAt = ref("");
 let saveNoticeTimer: number | undefined;
@@ -341,7 +351,11 @@ const activeTabMeta = computed(() => {
 });
 
 const activeProject = computed(() => {
-  return projects.value.find((project) => project.id === activeProjectId.value) ?? projects.value[0];
+  return (
+    projects.value.find((project) => project.id === activeProjectId.value) ??
+    projects.value[0] ??
+    createDefaultProject()
+  );
 });
 
 const activeChapter = computed(() => {
@@ -1162,11 +1176,25 @@ async function openActivity(next: Activity): Promise<void> {
   if (next === "settings") {
     await Promise.allSettled([refreshWorkspaces(), refreshReview()]);
   }
+  await nextTick();
+  contentMainRef.value?.focus({preventScroll: true});
 }
 
 function toggleSidebar(): void {
   sidebarCollapsed.value = !sidebarCollapsed.value;
   localStorage.setItem("rhine-lore-sidebar-collapsed", sidebarCollapsed.value ? "1" : "0");
+}
+
+async function openMobileNav(): Promise<void> {
+  mobileNavOpen.value = true;
+  await nextTick();
+  mobileCloseBtnRef.value?.focus({preventScroll: true});
+}
+
+async function closeMobileNav(): Promise<void> {
+  mobileNavOpen.value = false;
+  await nextTick();
+  mobileMenuBtnRef.value?.focus({preventScroll: true});
 }
 
 function persistReaderSettings(): void {
@@ -3079,6 +3107,34 @@ async function testBackend(): Promise<void> {
   await perform("检查连接", refreshVaultRuntime, {collapseOutput: true});
 }
 
+async function testServerBaseConnection(): Promise<void> {
+  serverBaseBusy.value = true;
+  serverBaseMessage.value = "测试中…";
+  try {
+    const result = await pingServerBase(serverBaseInput.value);
+    serverBaseMessage.value = result.ok ? `✓ ${result.detail}` : `✗ ${result.detail}`;
+  } catch (error) {
+    serverBaseMessage.value = `✗ ${error instanceof Error ? error.message : String(error)}`;
+  } finally {
+    serverBaseBusy.value = false;
+  }
+}
+
+async function applyServerBase(): Promise<void> {
+  serverBaseBusy.value = true;
+  try {
+    setServerBase(serverBaseInput.value);
+    serverBaseCurrent.value = getServerBase();
+    await initProjects();
+    await Promise.allSettled([refreshWorkspaces(), refreshReview(), refreshNodes(), loadShelfBooks()]);
+    toastSuccess(serverBaseCurrent.value ? `已连接服务器 ${serverBaseCurrent.value}` : "已恢复内置服务器");
+  } catch (error) {
+    runState.value = {error: error instanceof Error ? error.message : String(error)};
+  } finally {
+    serverBaseBusy.value = false;
+  }
+}
+
 async function updateBackendStatus(): Promise<void> {
   backendStatus.value = "checking";
   try {
@@ -4043,7 +4099,13 @@ onUnmounted(() => {
       @change="handleChatAttach"
     />
     <aside class="sidebar">
-      <button class="sidebar-close mobile-only" type="button" @click="mobileNavOpen = false">
+      <button
+        ref="mobileCloseBtnRef"
+        class="sidebar-close mobile-only"
+        type="button"
+        aria-label="关闭菜单"
+        @click="closeMobileNav"
+      >
         ×
       </button>
       <div class="sidebar-project">
@@ -4061,7 +4123,7 @@ onUnmounted(() => {
           />
         </el-select>
       </div>
-      <nav class="sidebar-nav">
+      <nav class="sidebar-nav" aria-label="主导航">
         <el-button
           v-for="item in activities"
           :key="item.id"
@@ -4072,6 +4134,7 @@ onUnmounted(() => {
             'mobile-parent-active': isStudioChildActivity(item.id),
             'nav-chat': item.id === 'chat',
           }"
+          :aria-current="activity === item.id ? 'page' : undefined"
           @click="openActivity(item.id); mobileNavOpen = false"
           :title="sidebarCollapsed ? item.label : ''"
         >
@@ -4092,19 +4155,27 @@ onUnmounted(() => {
           v0.1.0
         </span>
       </div>
-      <el-button class="collapse-button" title="折叠/展开侧边栏" aria-label="折叠/展开侧边栏" @click="toggleSidebar">
+      <el-button
+        class="collapse-button"
+        title="折叠/展开侧边栏"
+        aria-label="折叠/展开侧边栏"
+        :aria-expanded="!sidebarCollapsed"
+        @click="toggleSidebar"
+      >
         {{ sidebarCollapsed ? "»" : "«" }}
       </el-button>
     </aside>
 
-    <div v-if="mobileNavOpen" class="sidebar-backdrop" @click="mobileNavOpen = false" />
+    <div v-if="mobileNavOpen" class="sidebar-backdrop" @click="closeMobileNav" />
 
     <section class="workspace" :class="{'no-topbar': activity === 'chat'}">
       <header v-if="activity !== 'chat'" class="workspace-topbar">
         <el-button
+          ref="mobileMenuBtnRef"
           class="mobile-menu-button"
           aria-label="打开菜单"
-          @click="mobileNavOpen = true"
+          :aria-expanded="mobileNavOpen"
+          @click="openMobileNav"
         >
           ☰
         </el-button>
@@ -4127,7 +4198,7 @@ onUnmounted(() => {
       </header>
 
       <el-scrollbar class="workspace-main">
-        <main class="content-grid">
+        <main ref="contentMainRef" tabindex="-1" class="content-grid" :aria-label="activeTabMeta.label">
           <section v-if="activity === 'studio'" class="activity-panel home-panel">
             <el-card shadow="never" class="home-hero">
               <div class="home-hero-copy">
@@ -4761,7 +4832,8 @@ onUnmounted(() => {
                 <el-button
                   class="mobile-menu-button"
                   aria-label="打开菜单"
-                  @click="mobileNavOpen = true"
+                  :aria-expanded="mobileNavOpen"
+                  @click="openMobileNav"
                 >
                   ☰
                 </el-button>
@@ -6195,7 +6267,7 @@ onUnmounted(() => {
             <template v-else>
               <div class="reading-toolbar">
                 <div class="reading-toolbar-title">
-                  <span class="section-icon"><GameIcon name="book" /></span>
+                  <span class="section-icon"><GameIcon name="book-open" /></span>
                   <div>
                     <strong>演化小说</strong>
                     <small>{{ evolutionView?.novel.viewpoint_name || "主角" }} 的视角</small>
@@ -6482,7 +6554,7 @@ onUnmounted(() => {
             <template v-else>
               <div class="reading-toolbar shelf-toolbar">
                 <div class="reading-toolbar-title">
-                  <span class="section-icon"><GameIcon name="book" /></span>
+                  <span class="section-icon"><GameIcon name="book-open" /></span>
                   <div>
                     <strong>{{ shelfBook.name }}</strong>
                     <small>
@@ -6765,7 +6837,7 @@ onUnmounted(() => {
                       <template #header>当前状态</template>
                       <el-descriptions :column="1" border>
                         <el-descriptions-item label="故事">{{ activeProject.name }}</el-descriptions-item>
-                        <el-descriptions-item label="本地草稿">已保存在浏览器</el-descriptions-item>
+                        <el-descriptions-item label="本地草稿">已保存到本机服务端 data/</el-descriptions-item>
                         <el-descriptions-item label="资料库">{{ selectedWorkspaceId }}</el-descriptions-item>
                         <el-descriptions-item label="状态">{{ notice }}</el-descriptions-item>
                         <el-descriptions-item label="局域网访问">
@@ -6800,6 +6872,45 @@ onUnmounted(() => {
                     </el-card>
                   </el-col>
                 </el-row>
+
+                <el-card shadow="never" class="server-connect-card">
+                  <template #header>
+                    <div class="card-header">
+                      <span>服务器连接</span>
+                      <small>内置服务器仅本机可用；局域网模式让手机直接连电脑上的数据</small>
+                    </div>
+                  </template>
+                  <div class="server-connect-grid">
+                    <div class="vault-status-card">
+                      <strong>当前模式：{{ serverBaseCurrent ? "局域网服务器" : "内置服务器（本机）" }}</strong>
+                      <span>{{ serverBaseCurrent || "数据与本页面同机（Android 内嵌 / 本机 8786）" }}</span>
+                      <small v-if="serverBaseMessage">{{ serverBaseMessage }}</small>
+                    </div>
+                    <el-form label-position="top" class="vault-deploy-form">
+                      <el-form-item label="局域网服务器地址">
+                        <el-input
+                          v-model="serverBaseInput"
+                          placeholder="http://192.168.2.18:8786"
+                          @keydown.enter.prevent="applyServerBase"
+                        />
+                      </el-form-item>
+                      <el-space wrap>
+                        <el-button :loading="serverBaseBusy" @click="testServerBaseConnection">
+                          测试连接
+                        </el-button>
+                        <el-button type="primary" :loading="serverBaseBusy" @click="applyServerBase">
+                          应用并加载
+                        </el-button>
+                        <el-button :disabled="!serverBaseCurrent" @click="serverBaseInput = ''; applyServerBase()">
+                          恢复内置
+                        </el-button>
+                      </el-space>
+                      <small class="chat-key-hint">
+                        手机与电脑需在同一网络；电脑端以 --host 0.0.0.0 启动，并放行 Windows 防火墙。
+                      </small>
+                    </el-form>
+                  </div>
+                </el-card>
               </el-tab-pane>
 
               <el-tab-pane label="高级设置" name="advanced">

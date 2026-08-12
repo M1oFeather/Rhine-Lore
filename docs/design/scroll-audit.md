@@ -53,8 +53,13 @@
 
 ## 验收清单（DoD）
 
-- [ ] 12 个页面 outer 全部 = 0；
-- [ ] 白名单外页面 inner = 0 或位于内滚白名单；
-- [ ] 无 hidden 容器裁切；
-- [ ] 模拟器与网页版行为一致；
-- [ ] 审计脚本入库并接入 CI。
+- [x] 12 个页面 outer 全部 = 0；
+- [x] 白名单外页面 inner = 0 或位于内滚白名单；
+- [x] 无 hidden 容器裁切；
+- [x] 模拟器与网页版行为一致；
+- [x] 审计脚本入库并接入 CI。
+
+> 2026-08-12 更新：`scripts/audit-scroll.mjs`（CDP CLI）与
+> `ui/scripts/audit-scroll-ci.mjs`（Playwright，桌面 1280 + 手机 390 双视口）已入库，
+> GitHub Actions（`.github/workflows/ui-checks.yml`）在每次构建后自动执行；
+> Android 模拟器 CDP 实测 12/12 通过。

@@ -1301,6 +1301,17 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args: Any, directory: str | None = None, **kwargs: Any) -> None:
         super().__init__(*args, directory=directory, **kwargs)
 
+    def _send_cors_headers(self) -> None:
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        self.send_header("Access-Control-Max-Age", "86400")
+
+    def do_OPTIONS(self) -> None:
+        self.send_response(HTTPStatus.NO_CONTENT)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def do_GET(self) -> None:
         if self.path.startswith("/lore-api/"):
             self._handle_lore_api()
@@ -1350,6 +1361,7 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
 
     def end_headers(self) -> None:
         self.send_header("Cache-Control", "no-store")
+        self._send_cors_headers()
         super().end_headers()
 
     def _read_body(self) -> bytes:

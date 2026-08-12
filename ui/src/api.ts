@@ -340,8 +340,47 @@ export function setWorkspaceId(nextWorkspaceId: string): void {
   localStorage.setItem(workspaceIdKey, nextWorkspaceId);
 }
 
+const serverBaseKey = "rhine-lore-server-base";
+let serverBase = localStorage.getItem(serverBaseKey) || "";
+
+export function setServerBase(next: string): void {
+  serverBase = next.trim().replace(/\/+$/, "");
+  if (serverBase) {
+    localStorage.setItem(serverBaseKey, serverBase);
+  } else {
+    localStorage.removeItem(serverBaseKey);
+  }
+}
+
+export function getServerBase(): string {
+  return serverBase;
+}
+
+export async function pingServerBase(base: string): Promise<{ok: boolean; detail: string}> {
+  const clean = base.trim().replace(/\/+$/, "");
+  if (!clean) {
+    return {ok: false, detail: "服务器地址为空"};
+  }
+  try {
+    const response = await fetch(`${clean}/api/health`, {signal: AbortSignal.timeout(4000)});
+    if (!response.ok) {
+      return {ok: false, detail: `HTTP ${response.status}`};
+    }
+    return {ok: true, detail: "连接正常"};
+  } catch (error) {
+    return {ok: false, detail: error instanceof Error ? error.message : String(error)};
+  }
+}
+
+export function apiUrl(path: string): string {
+  if (!serverBase) {
+    return path;
+  }
+  return `${serverBase}${path}`;
+}
+
 export async function getJson<T>(url: string): Promise<T> {
-  const response = await fetch(url);
+  const response = await fetch(apiUrl(url));
   if (!response.ok) {
     throw new Error(await response.text());
   }
@@ -349,7 +388,7 @@ export async function getJson<T>(url: string): Promise<T> {
 }
 
 export async function postJson<T>(url: string, body: unknown): Promise<T> {
-  const response = await fetch(url, {
+  const response = await fetch(apiUrl(url), {
     method: "POST",
     headers: {"Content-Type": "application/json"},
     body: JSON.stringify(body),
@@ -722,7 +761,7 @@ export function getBook(bookId: string): Promise<{book: BookDetail}> {
 }
 
 export function deleteBook(bookId: string): Promise<{ok: boolean}> {
-  return fetch(`/lore-api/books/${encodeURIComponent(bookId)}`, {method: "DELETE"}).then((response) => {
+  return fetch(apiUrl(`/lore-api/books/${encodeURIComponent(bookId)}`), {method: "DELETE"}).then((response) => {
     if (!response.ok) {
       return response.text().then((text) => {
         throw new Error(text);
