@@ -1,11 +1,17 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { ElMessage } from "element-plus/es/components/message/index.mjs";
+import { ElMessageBox } from "element-plus/es/components/message-box/index.mjs";
 
 import {
   type ApiRecord,
   type AgentToolAction,
   type BookAnalysis,
+  type BookAnalysisMode,
+  type BookAnalysisPlan,
+  type BookAnalysisStatus,
+  type BookBranch,
+  type BookBranchPath,
   type BookChapter,
   type BookChapterMeta,
   type BookDetail,
@@ -20,6 +26,7 @@ import {
   type LanInfo,
   type LlmChatMessage,
   type LoreItem,
+  type KnowledgeExtractCandidate,
   type ManuscriptIssue,
   type ProjectBackupRow,
   type StoryMap,
@@ -36,20 +43,26 @@ import {
   addEvolutionCharacter,
   approveStaging,
   aiWriteBook,
-  analyzeBook,
   buildContextBundle,
+  cancelBookAnalysis,
   connectVaultRuntime,
+  convertBookToProject,
+  createBookBranch,
+  deleteBookBranch,
   createManualProposal,
   deleteBook,
   executeAgentTool,
+  extractConversationKnowledge,
   exportBackupZip,
   fakeCreativeAnswer,
   generateEvolutionProseApi,
   generateKnowledgeDocument,
   getEvolutionState,
+  getBookAnalysisStatus,
   getLanInfo,
   getLlmServerConfig,
   getBook,
+  getBookBranchPath,
   getBookChapter,
   getServerBase,
   getServerProject,
@@ -61,6 +74,7 @@ import {
   importBook,
   importBackupZip,
   listBooks,
+  listBookBranches,
   llmServerChat,
   llmServerChatStream,
   llmServerPing,
@@ -74,6 +88,7 @@ import {
   commitVersion,
   restoreVersion,
   registerWorkspace,
+  rejectProposal,
   regenerateEvolutionChapter,
   resetEvolutionRun,
   restoreProjectBackup,
@@ -83,26 +98,167 @@ import {
   setServerBase,
   setWorkspaceId,
   pingServerBase,
+  previewBookAnalysis,
   stageProposal,
   startEvolutionRun,
+  startBookAnalysis,
   startVaultRuntime,
   stopVaultRuntime,
+  updateProposalNode,
   workspaceId,
 } from "./api";
 import GameIcon from "./components/GameIcon.vue";
+import BranchTree from "./components/BranchTree.vue";
 import EmptyState from "./components/EmptyState.vue";
 import HomeIllustration from "./components/HomeIllustration.vue";
+import ReaderNavigator, {
+  type ReaderBookmarkItem,
+  type ReaderSearchItem,
+  type ReaderTocItem,
+} from "./components/ReaderNavigator.vue";
+import ReaderSettingsPanel from "./components/ReaderSettingsPanel.vue";
 import type { GameIconName } from "./icons/gameIconPack";
+import packageInfo from "../package.json";
+import {
+  createStoryProjectFromTemplate,
+  getStoryTemplate,
+  storyTemplates,
+  type StoryTemplateId,
+} from "./storyTemplates";
+import {
+  type DecodedTextFile,
+  type TextEncodingChoice,
+  decodeTextBytes,
+  detectAndDecodeText,
+  textEncodingLabel,
+  textEncodingOptions,
+} from "./textEncoding";
 import rhineLoreMark from "./assets/rhine-lore-mark.svg";
+
+const appVersion = packageInfo.version;
 
 type Activity = "studio" | "story" | "world" | "characters" | "chat" | "novel" | "context" | "evolution" | "read" | "shelf" | "map" | "settings";
 type WorkMode = "write" | "advanced";
 type BackendStatus = "checking" | "online" | "offline";
 type CreateDestination = "novel" | "chat";
+type ReaderSource = "novel" | "evolution" | "shelf";
+type LlmLevel = "fast" | "balanced" | "deep";
+type LlmReasoningEffort = "low" | "high" | "max";
+type DeepSeekLevelOption = {
+  value: LlmLevel;
+  label: string;
+  model: "deepseek-v4-flash" | "deepseek-v4-pro";
+  effort: "high" | "max";
+  description: string;
+};
+type ReaderPageParagraph = {
+  text: string;
+  continuation: boolean;
+};
+type ReaderPage =
+  | {kind: "title"}
+  | {kind: "content"; paragraphs: ReaderPageParagraph[]};
+type ReaderPosition = {
+  chapterId: string;
+  progress: number;
+  pageIndex: number;
+};
+
+const deepSeekLevelOptions: DeepSeekLevelOption[] = [
+  {
+    value: "fast",
+    label: "快速",
+    model: "deepseek-v4-flash",
+    effort: "high",
+    description: "V4 Flash，优先响应速度和调用成本",
+  },
+  {
+    value: "balanced",
+    label: "均衡",
+    model: "deepseek-v4-flash",
+    effort: "max",
+    description: "V4 Flash 最大推理，适合日常对话与续写",
+  },
+  {
+    value: "deep",
+    label: "深度",
+    model: "deepseek-v4-pro",
+    effort: "max",
+    description: "V4 Pro 最大推理，适合长篇分析和复杂分支",
+  },
+];
+type ReaderSwipeState = {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  startedAt: number;
+};
+type BranchSource = "shelf" | "project";
+type BranchKind = BookBranch["kind"];
+type BranchDraftContext = {
+  source: BranchSource;
+  chapterId: string;
+  chapterTitle: string;
+  offset: number;
+  progress: number;
+  anchor: string;
+  selectedText: string;
+  parentBranchId: string;
+  origin: "selection" | "paragraph" | "position" | "cursor" | "branch";
+};
 type EvolutionChatMessage = {
   id: string;
   role: "user" | "assistant";
   content: string;
+};
+type KnowledgeCandidateDraft = KnowledgeExtractCandidate & {
+  selected: boolean;
+  tagsText: string;
+};
+type KnowledgeReviewStage = "draft" | "ready" | "library";
+type KnowledgeConflictMode = "coexist" | "merge" | "replace";
+type KnowledgeReviewItem = {
+  key: string;
+  stage: KnowledgeReviewStage;
+  proposalId?: string;
+  temporaryId?: string;
+  entryId?: string;
+  nodeId?: string;
+  revision?: number;
+  baseRevision?: number;
+  title: string;
+  nodeType: string;
+  content: string;
+  authority: string;
+  tags: string[];
+  createdAt: string;
+};
+type KnowledgeSourceInfo = {
+  kind: string;
+  project: string;
+  projectId: string;
+  chapter: string;
+  chapterId: string;
+  messageIds: string[];
+  excerpts: string[];
+  metadata: string;
+};
+type KnowledgeSimilarity = {
+  item: KnowledgeReviewItem;
+  score: number;
+  reason: string;
+};
+type KnowledgeSourceTarget = {
+  project: StoryProject | null;
+  chapter: Chapter | null;
+  messageId: string;
+};
+type KnowledgeReviewForm = {
+  title: string;
+  nodeType: string;
+  body: string;
+  authority: string;
+  tagsText: string;
 };
 type RevisionResult = {
   revisions: {
@@ -116,6 +272,8 @@ type RevisionResult = {
 const projectKey = "rhine-lore-projects";
 const activeProjectKey = "rhine-lore-active-project";
 const activeChapterKey = "rhine-lore-active-chapter";
+const projectDraftIndexKey = "rhine-lore-pending-project-drafts";
+const projectDraftPrefix = "rhine-lore-project-draft:";
 const primaryActivityIds: Activity[] = ["studio", "chat", "novel", "context", "evolution", "map"];
 const storySetupActivities: Activity[] = ["story", "world", "characters"];
 const genreOptions = ["奇幻", "科幻", "悬疑", "都市", "历史", "爱情", "轻小说", "未分类"];
@@ -171,23 +329,45 @@ const workbenchActivities = activities.filter((item) => !["read", "shelf"].inclu
 const readerActivities = activities.filter((item) =>
   ["novel", "read", "shelf", "context", "settings"].includes(item.id),
 );
-const visibleActivities = computed(() =>
-  sidebarMode.value === "reader" ? readerActivities : workbenchActivities,
-);
+const visibleActivityGroups = computed(() => {
+  const groups: {label: string; ids: Activity[]}[] = sidebarMode.value === "reader"
+    ? [
+        {label: "阅读", ids: ["novel", "read", "shelf"]},
+        {label: "资料", ids: ["context"]},
+        {label: "系统", ids: ["settings"]},
+      ]
+    : [
+        {label: "创作", ids: ["chat", "studio", "novel"]},
+        {label: "故事资料", ids: ["story", "world", "characters", "map"]},
+        {label: "智能工具", ids: ["context", "evolution"]},
+        {label: "系统", ids: ["settings"]},
+      ];
+
+  return groups.map((group) => ({
+    label: group.label,
+    items: group.ids.flatMap((id) => {
+      const item = activities.find((activityItem) => activityItem.id === id);
+      return item ? [item] : [];
+    }),
+  }));
+});
 
 const activity = ref<Activity>("studio");
 const sidebarCollapsed = ref(localStorage.getItem("rhine-lore-sidebar-collapsed") === "1");
 const mobileNavOpen = ref(false);
+type NativeBackWindow = Window & {rhineLoreHandleBack?: () => boolean};
 const contentMainRef = ref<HTMLElement | null>(null);
 const mobileMenuBtnRef = ref<HTMLButtonElement | null>(null);
 const mobileCloseBtnRef = ref<HTMLButtonElement | null>(null);
 const showAllProjects = ref(false);
 const storyStyleOpen = ref(false);
-const novelTocVisible = ref(false);
-const novelSettingsVisible = ref(false);
 const readingProgress = ref(0);
-const readTocVisible = ref(false);
-const readSettingsVisible = ref(false);
+const readerNavigatorVisible = ref(false);
+const readerNavigatorTab = ref<"toc" | "search" | "bookmarks">("toc");
+const readerSearchQuery = ref("");
+const readerSearchResults = ref<ReaderSearchItem[]>([]);
+const readerSearching = ref(false);
+const readerSettingsVisible = ref(false);
 const novelVersionsVisible = ref(false);
 const shelfVersionsVisible = ref(false);
 const novelVersionMessage = ref("");
@@ -222,9 +402,11 @@ const activeProjectId = ref(localStorage.getItem(activeProjectKey) || "");
 const activeChapterId = ref(localStorage.getItem(activeChapterKey) || "");
 const projectImportInput = ref<HTMLInputElement | null>(null);
 const createDialogVisible = ref(false);
+const newProjectTemplate = ref<StoryTemplateId>("blank");
 const newProjectName = ref("");
-const newProjectGenre = ref("未分类");
+const newProjectGenre = ref("");
 const newProjectIdea = ref("");
+const selectedStoryTemplate = computed(() => getStoryTemplate(newProjectTemplate.value));
 const projects = ref<StoryProject[]>([]);
 const workspaces = ref<WorkspaceRecord[]>([]);
 const selectedWorkspaceId = ref(workspaceId);
@@ -240,13 +422,38 @@ const nodes = ref<ApiRecord[]>([]);
 const selectedKnowledgeIds = ref<string[]>([]);
 const proposals = ref<ApiRecord[]>([]);
 const stagingEntries = ref<ApiRecord[]>([]);
+const knowledgePageTab = ref<"review" | "library" | "tools">("review");
+const knowledgeQueueTab = ref<"draft" | "ready">("draft");
+const selectedKnowledgeDraftKeys = ref<string[]>([]);
+const selectedKnowledgeReadyIds = ref<string[]>([]);
+const knowledgeReviewVisible = ref(false);
+const activeKnowledgeReviewKey = ref("");
+const knowledgeReviewForm = ref<KnowledgeReviewForm>({
+  title: "",
+  nodeType: "Note",
+  body: "",
+  authority: "experimental",
+  tagsText: "",
+});
+const knowledgeConflictMode = ref<KnowledgeConflictMode>("coexist");
+const knowledgeConflictTargetKey = ref("");
+const knowledgeConflictModes = ref<Record<string, KnowledgeConflictMode>>({});
+const knowledgeConflictTargets = ref<Record<string, string>>({});
+const knowledgeCoexistNodeIds = ref<Record<string, string>>({});
+const highlightedKnowledgeMessageId = ref("");
 const chatInput = ref("");
 const chatThinking = ref(false);
 const streamingChatText = ref("");
 const chatThreadRef = ref<HTMLElement | null>(null);
-const chatSidebarOpen = ref(true);
+const chatSidebarOpen = ref(window.innerWidth > 720);
 const chatSideSections = ref({chapter: true, refs: true, issues: true});
 const chatMoreOpen = ref(false);
+const knowledgeExtractVisible = ref(false);
+const knowledgeExtractStep = ref<"select" | "review">("select");
+const knowledgeSelectedMessageIds = ref<string[]>([]);
+const knowledgeCandidates = ref<KnowledgeCandidateDraft[]>([]);
+const knowledgeExtractOffline = ref(false);
+const knowledgeExtractNote = ref("");
 const pendingAgentAction = ref<AgentToolAction | null>(null);
 const chatAttachment = ref<{name: string; kind: "txt" | "project" | "knowledge"; text: string} | null>(null);
 const chatAttachInput = ref<HTMLInputElement | null>(null);
@@ -254,23 +461,98 @@ const chatMode = ref<"chat" | "adjust">("chat");
 const adjustInput = ref("");
 const revisionBusy = ref(false);
 const revisionPreview = ref<RevisionResult | null>(null);
-const readerMode = ref<"read" | "edit">("read");
-const readerFontSize = ref(18);
-const readerLineHeight = ref(Number(localStorage.getItem("rhine-lore-reader-line-height") || "1.9"));
+const readerMode = ref<"read" | "edit">("edit");
+function storedNumber(key: string, fallback: number, min: number, max: number): number {
+  const value = Number(localStorage.getItem(key) || fallback);
+  return Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback;
+}
+
+function joinWrappedReaderLines(lines: string[]): string {
+  return lines.reduce((content, line) => {
+    if (!content) return line;
+    const previous = content.at(-1) ?? "";
+    const next = line.at(0) ?? "";
+    const needsSpace = /[A-Za-z0-9,.;:!?%)\]]/.test(previous) && /[A-Za-z0-9([{"']/.test(next);
+    return `${content}${needsSpace ? " " : ""}${line}`;
+  }, "");
+}
+
+function splitReaderParagraphs(content: string): string[] {
+  const normalized = content.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n").trim();
+  if (!normalized) return [];
+
+  const paragraphs: string[] = [];
+  const blocks = normalized.split(/\n[\t \u3000]*\n+/);
+  const sentenceEnding = /[。！？!?…][”’」』）】〕〉》]?$/;
+  const heading = /^第[\d零〇一二三四五六七八九十百千万两]+[章节卷回部篇集](?:\s|$)/;
+
+  const appendLines = (sourceLines: string[]) => {
+    const lines = sourceLines.map((line) => line.trim()).filter(Boolean);
+    if (lines.length <= 1) {
+      if (lines[0]) paragraphs.push(lines[0]);
+      return;
+    }
+
+    const lengths = lines.map((line) => Array.from(line).length).sort((a, b) => a - b);
+    const median = lengths[Math.floor(lengths.length / 2)] ?? 0;
+    const sentenceRatio = lines.filter((line) => sentenceEnding.test(line)).length / lines.length;
+    const nearWrapRatio = lines.length > 1
+      ? lines.slice(0, -1).filter((line) => Array.from(line).length >= Math.max(32, median * 0.82)).length / (lines.length - 1)
+      : 0;
+    const looksSoftWrapped = median >= 32 && sentenceRatio < 0.6 && nearWrapRatio >= 0.66;
+
+    if (looksSoftWrapped) {
+      paragraphs.push(joinWrappedReaderLines(lines));
+    } else {
+      paragraphs.push(...lines);
+    }
+  };
+
+  for (const block of blocks) {
+    const lines = block.split("\n").map((line) => line.trim()).filter(Boolean);
+    let pending: string[] = [];
+    for (const line of lines) {
+      if (line.length <= 40 && heading.test(line)) {
+        appendLines(pending);
+        pending = [];
+        paragraphs.push(line);
+      } else {
+        pending.push(line);
+      }
+    }
+    appendLines(pending);
+  }
+  return paragraphs;
+}
+
+function isReaderVolumeTitle(title: string): boolean {
+  return /^(?:第\s*[\d零〇一二三四五六七八九十百千万两]+\s*[卷部篇集]|卷[\d零〇一二三四五六七八九十百千万两首]|[上中下终序]卷)/i.test(title.trim());
+}
+
+const readerFontSize = ref(storedNumber("rhine-lore-reader-font-size", 18, 14, 32));
+const readerLineHeight = ref(storedNumber("rhine-lore-reader-line-height", 1.9, 1.4, 2.6));
 const readerTheme = ref<"day" | "sepia" | "night">(
   (localStorage.getItem("rhine-lore-reader-theme") as "day" | "sepia" | "night") || "day",
 );
-const readerParagraphSpacing = ref(Number(localStorage.getItem("rhine-lore-reader-paragraph-spacing") || "1.1"));
+const readerParagraphSpacing = ref(storedNumber("rhine-lore-reader-paragraph-spacing", 1.1, 0.6, 2.2));
 const readerJustify = ref(localStorage.getItem("rhine-lore-reader-justify") !== "0");
-const readerMeasure = ref(Number(localStorage.getItem("rhine-lore-reader-measure") || "900"));
+const readerIndent = ref(localStorage.getItem("rhine-lore-reader-indent") !== "0");
+const readerAutoAdvance = ref(localStorage.getItem("rhine-lore-reader-auto-advance") !== "0");
+const readerFontFamily = ref<"serif" | "sans" | "system">(
+  (localStorage.getItem("rhine-lore-reader-font-family") as "serif" | "sans" | "system") || "serif",
+);
+const readerBrightness = ref(storedNumber("rhine-lore-reader-brightness", 100, 55, 110));
+const readerMeasure = ref(storedNumber("rhine-lore-reader-measure", 700, 520, 920));
 const readerPageMode = ref<"scroll" | "page">(
   (localStorage.getItem("rhine-lore-reader-mode") as "scroll" | "page") || "scroll",
 );
-const readerPages = ref<string[][]>([]);
+const readerPages = ref<ReaderPage[]>([]);
 const readerPageIndex = ref(0);
 const readerPageAreaRef = ref<HTMLElement | null>(null);
 const readerOverlayPageAreaRef = ref<HTMLElement | null>(null);
 const readerOverlayOpen = ref(false);
+const readerChromeVisible = ref(true);
+const readerFullscreenActive = ref(false);
 const userScrolledReading = ref(false);
 const lastReaderAutoAdvance = ref(0);
 const shelfBooks = ref<BookMeta[]>([]);
@@ -278,16 +560,56 @@ const shelfBookId = ref("");
 const shelfBook = ref<BookDetail | null>(null);
 const shelfChapter = ref<BookChapter | null>(null);
 const shelfChapterIndex = ref(-1);
-const shelfTocVisible = ref(false);
-const shelfSettingsVisible = ref(false);
+const readerBookmarks = ref<ReaderBookmarkItem[]>(loadReaderBookmarks());
+let readerPositionTimer: number | undefined;
+let readerBoundScrollElement: HTMLElement | null = null;
+let readerResizeTimer: number | undefined;
+let readerSwipeState: ReaderSwipeState | null = null;
+let suppressReaderTapUntil = 0;
+let shelfAnalysisPollTimer: number | undefined;
 const shelfGuidance = ref("");
 const shelfAiMode = ref<"continue" | "rewrite" | "expand">("continue");
 const shelfAiResult = ref("");
 const shelfAiBusy = ref(false);
 const shelfAnalysis = ref<BookAnalysis | null>(null);
 const shelfAnalyzeBusy = ref(false);
+const shelfAnalysisStatus = ref<BookAnalysisStatus | null>(null);
+const shelfAnalysisMode = ref<BookAnalysisMode>(
+  (localStorage.getItem("rhine-lore-analysis-mode") as BookAnalysisMode) || "smart",
+);
+const shelfAnalysisPlan = ref<BookAnalysisPlan | null>(null);
+const shelfAnalysisAdvanced = ref(false);
+const shelfAnalysisForce = ref(false);
+const shelfAnalysisTab = ref("overview");
+const pendingShelfProjectBranchId = ref<string | null>(null);
+const shelfBranches = ref<BookBranch[]>([]);
+const branchTreeVisible = ref(false);
+const selectedShelfBranchId = ref("");
+const selectedBranchPath = ref<BookBranchPath | null>(null);
+const branchPathBusy = ref(false);
+const branchPathVisible = ref(false);
+const branchDialogVisible = ref(false);
+const branchContext = ref<BranchDraftContext | null>(null);
+const branchGuidance = ref("");
+const branchKind = ref<BranchKind>("free");
+const branchResult = ref("");
+const branchRecord = ref<BookBranch | null>(null);
+const branchBusy = ref(false);
+const branchProjectBusy = ref(false);
+const capturedBranchSelection = ref<BranchDraftContext | null>(null);
 const shelfSaving = ref(false);
 const shelfImportInput = ref<HTMLInputElement | null>(null);
+const shelfImportVisible = ref(false);
+const shelfImportBusy = ref(false);
+const shelfImportAdvanced = ref(false);
+const shelfImportName = ref("");
+const shelfImportFileName = ref("");
+const shelfImportFileSize = ref("");
+const shelfImportEncoding = ref<TextEncodingChoice>("auto");
+const shelfImportBytes = ref<Uint8Array | null>(null);
+const shelfImportDetected = ref<DecodedTextFile | null>(null);
+const shelfImportDecoded = ref<DecodedTextFile | null>(null);
+const shelfImportError = ref("");
 const settingsTab = ref("basic");
 type ThemeMode = "light" | "dark" | "system";
 const themeMode = ref<ThemeMode>((localStorage.getItem("rhine-lore-theme") as ThemeMode) || "system");
@@ -344,10 +666,16 @@ const mapConnectMode = ref(false);
 const mapPendingNodeId = ref("");
 const mapZoom = ref(1);
 const mapDragging = ref<{id: string; dx: number; dy: number} | null>(null);
-const llmBaseUrl = ref("https://api.deepseek.com/v1");
+const llmBaseUrl = ref("https://api.deepseek.com");
 const llmApiKey = ref("");
-const llmModel = ref("deepseek-chat");
+const llmModel = ref("deepseek-v4-flash");
 const llmPreset = ref("deepseek");
+const llmLevel = ref<LlmLevel>("balanced");
+const llmReasoningEffort = ref<LlmReasoningEffort>("max");
+const llmTemperature = ref(1);
+const llmTopP = ref(1);
+const llmMaxTokens = ref(8192);
+const llmAdvancedSections = ref<string[]>([]);
 const llmConfigured = ref(false);
 const llmMaskedKey = ref("");
 const aiProse = ref("");
@@ -359,7 +687,9 @@ const aiStatusDetail = ref("");
 const aiPanelOpen = ref(false);
 let evolutionTimer: number | undefined;
 let evolutionTurnRunning = false;
-let projectBackupTimer: number | undefined;
+const projectBackupTimers = new Map<string, number>();
+const projectDraftTimers = new Map<string, number>();
+const pendingProjectBackups = new Map<string, StoryProject>();
 const diskBackups = ref<ProjectBackupRow[]>([]);
 const restoreDialogVisible = ref(false);
 const restoreBusy = ref("");
@@ -372,6 +702,24 @@ const promptStarters = [
   "整理本章设定",
   "结合资料续写",
 ];
+const knowledgeTypeOptions: {value: KnowledgeExtractCandidate["node_type"]; label: string}[] = [
+  {value: "Character", label: "角色"},
+  {value: "Location", label: "地点"},
+  {value: "Rule", label: "规则"},
+  {value: "Event", label: "事件"},
+  {value: "Fact", label: "事实"},
+  {value: "Foreshadowing", label: "伏笔"},
+  {value: "Note", label: "资料"},
+];
+
+function loadReaderBookmarks(): ReaderBookmarkItem[] {
+  try {
+    const parsed = JSON.parse(localStorage.getItem("rhine-lore-reader-bookmarks") || "[]") as ReaderBookmarkItem[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
 
 if (!projects.value.some((project) => project.id === activeProjectId.value) && projects.value.length > 0) {
   activeProjectId.value = projects.value[0].id;
@@ -408,18 +756,53 @@ const stats = computed(() => [
   {label: "资料", value: nodes.value.length, tone: "gray"},
 ]);
 
+const knowledgeDraftItems = computed<KnowledgeReviewItem[]>(() =>
+  proposals.value.flatMap((proposal) => normalizeKnowledgeProposal(proposal)),
+);
+const knowledgeReadyItems = computed<KnowledgeReviewItem[]>(() =>
+  stagingEntries.value
+    .filter((entry) => !entry.status || String(entry.status) === "pending")
+    .map((entry) => normalizeKnowledgeStaging(entry)),
+);
+const knowledgeLibraryItems = computed<KnowledgeReviewItem[]>(() =>
+  nodes.value.map((node) => normalizeKnowledgeNode(node)),
+);
+const activeKnowledgeReviewItem = computed<KnowledgeReviewItem | null>(() => {
+  const items = [...knowledgeDraftItems.value, ...knowledgeReadyItems.value];
+  return items.find((item) => item.key === activeKnowledgeReviewKey.value) ?? null;
+});
+const activeKnowledgeSource = computed<KnowledgeSourceInfo>(() =>
+  parseKnowledgeSource(activeKnowledgeReviewItem.value?.content ?? ""),
+);
+const activeKnowledgeSimilarities = computed<KnowledgeSimilarity[]>(() => {
+  const active = activeKnowledgeReviewItem.value;
+  return active ? knowledgeSimilarities(active) : [];
+});
+const activeKnowledgeConflictTarget = computed<KnowledgeReviewItem | null>(() =>
+  knowledgeLibraryItems.value.find((item) => item.key === knowledgeConflictTargetKey.value) ?? null,
+);
+const activeKnowledgeRevisionTarget = computed<KnowledgeReviewItem | null>(() => {
+  const nodeId = activeKnowledgeReviewItem.value?.nodeId;
+  return nodeId
+    ? knowledgeLibraryItems.value.find((item) => item.nodeId === nodeId) ?? null
+    : null;
+});
+const activeKnowledgeSourceTarget = computed<KnowledgeSourceTarget>(() =>
+  resolveKnowledgeSourceTarget(activeKnowledgeSource.value),
+);
+
 const knowledgePipelineStats = computed(() => [
-  {label: "资料草稿", value: proposals.value.length, tone: "amber"},
-  {label: "待入库", value: stagingEntries.value.length, tone: "blue"},
+  {label: "待整理", value: knowledgeDraftItems.value.length, tone: "amber"},
+  {label: "待入库", value: knowledgeReadyItems.value.length, tone: "blue"},
   {label: "已入库", value: nodes.value.length, tone: "green"},
 ]);
 
 const knowledgePipelineHint = computed(() => {
-  if (proposals.value.length > 0) {
-    return `${proposals.value.length} 条资料草稿等待整理`;
+  if (knowledgeDraftItems.value.length > 0) {
+    return `${knowledgeDraftItems.value.length} 条资料草稿等待整理`;
   }
-  if (stagingEntries.value.length > 0) {
-    return `${stagingEntries.value.length} 条待确认资料可以入库`;
+  if (knowledgeReadyItems.value.length > 0) {
+    return `${knowledgeReadyItems.value.length} 条待确认资料可以入库`;
   }
   if (nodes.value.length > 0) {
     return `已有 ${nodes.value.length} 条资料可用于对话参考`;
@@ -434,7 +817,15 @@ const selectedKnowledgeNodes = computed(() => {
   return nodes.value.filter((node) => ids.has(recordId(node)));
 });
 
-const showAiFab = computed(() => !["chat", "novel", "read", "shelf"].includes(activity.value));
+const knowledgeExtractMessages = computed(() => activeProject.value.chat.slice(-40));
+const knowledgeSelectedMessages = computed(() => {
+  const selected = new Set(knowledgeSelectedMessageIds.value);
+  return knowledgeExtractMessages.value.filter((message) => selected.has(message.id));
+});
+const knowledgeSelectedCandidateCount = computed(
+  () => knowledgeCandidates.value.filter((candidate) => candidate.selected).length,
+);
+
 
 const agentImpactPreview = computed<{label: string; lines: string[]} | null>(() => {
   const action = pendingAgentAction.value;
@@ -810,10 +1201,7 @@ const backendStatusTone = computed(() => {
 
 const activeChapterParagraphs = computed(() => {
   const content = activeChapter.value?.content ?? "";
-  return content
-    .split(/\n{2,}/)
-    .map((paragraph) => paragraph.trim())
-    .filter(Boolean);
+  return splitReaderParagraphs(content);
 });
 
 const activeChapterIndex = computed(() => {
@@ -870,7 +1258,13 @@ const chapterNavigationLabel = computed(() => {
   return `${activeChapterIndex.value + 1} / ${total}`;
 });
 
+watch(shelfAnalysisMode, (mode) => {
+  localStorage.setItem("rhine-lore-analysis-mode", mode);
+  if (shelfBookId.value) void loadShelfAnalysisPlan(shelfBookId.value);
+});
+
 onMounted(async () => {
+  (window as NativeBackWindow).rhineLoreHandleBack = handleNativeBack;
   systemDark.value = window.matchMedia("(prefers-color-scheme: dark)").matches;
   applyTheme();
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", handleSystemThemeChange);
@@ -879,6 +1273,8 @@ onMounted(async () => {
   readerScrollContainer()?.addEventListener("scroll", handleReadingScroll, {passive: true});
   window.addEventListener("resize", handleReaderResize);
   window.addEventListener("keydown", handleReaderOverlayKeydown);
+  window.addEventListener("pagehide", handleProjectPageHide);
+  document.addEventListener("fullscreenchange", handleReaderFullscreenChange);
   await initProjects();
   await perform("初始化", async () => {
     await Promise.allSettled([updateBackendStatus(), refreshWorkspaces(), refreshNodes(), refreshReview()]);
@@ -892,6 +1288,72 @@ onMounted(async () => {
 
 function closeChatMore(): void {
   chatMoreOpen.value = false;
+}
+
+function handleNativeBack(): boolean {
+  const floatingControl = document.querySelector<HTMLElement>(".el-popper[aria-hidden='false']");
+  if (floatingControl && floatingControl.getBoundingClientRect().height > 0) {
+    const target = document.activeElement instanceof HTMLElement ? document.activeElement : document.body;
+    target.dispatchEvent(new KeyboardEvent("keydown", {key: "Escape", code: "Escape", bubbles: true}));
+    return true;
+  }
+  if (mobileNavOpen.value) {
+    mobileNavOpen.value = false;
+    return true;
+  }
+  if (chatMoreOpen.value) {
+    chatMoreOpen.value = false;
+    return true;
+  }
+  if (window.innerWidth <= 720 && chatSidebarOpen.value) {
+    chatSidebarOpen.value = false;
+    return true;
+  }
+  if (readerSettingsVisible.value) {
+    readerSettingsVisible.value = false;
+    return true;
+  }
+  if (readerNavigatorVisible.value) {
+    readerNavigatorVisible.value = false;
+    return true;
+  }
+  if (novelVersionsVisible.value || shelfVersionsVisible.value) {
+    novelVersionsVisible.value = false;
+    shelfVersionsVisible.value = false;
+    return true;
+  }
+  if (createDialogVisible.value || restoreDialogVisible.value) {
+    createDialogVisible.value = false;
+    restoreDialogVisible.value = false;
+    return true;
+  }
+  if (knowledgeReviewVisible.value || knowledgeExtractVisible.value) {
+    knowledgeReviewVisible.value = false;
+    knowledgeExtractVisible.value = false;
+    return true;
+  }
+  if (worldEditVisible.value || characterEditVisible.value || evolutionCharacterDialogVisible.value) {
+    worldEditVisible.value = false;
+    characterEditVisible.value = false;
+    evolutionCharacterDialogVisible.value = false;
+    return true;
+  }
+  if (storyStyleOpen.value || aiPanelOpen.value) {
+    storyStyleOpen.value = false;
+    aiPanelOpen.value = false;
+    return true;
+  }
+  if (readerOverlayOpen.value) {
+    exitReaderMode();
+    return true;
+  }
+  if (activity.value !== "studio") {
+    sidebarMode.value = "workbench";
+    localStorage.setItem("rhine-lore-sidebar-mode", "workbench");
+    void openActivity("studio");
+    return true;
+  }
+  return false;
 }
 
 function applyTheme(): void {
@@ -912,25 +1374,7 @@ function handleSystemThemeChange(event: MediaQueryListEvent): void {
 }
 
 function createDefaultProject(): StoryProject {
-  return {
-    id: `project-${Date.now()}`,
-    name: "我的故事",
-    genre: "未分类",
-    summary: "",
-    global_guidance: "",
-    chapter_turns: 4,
-    writing_style: "",
-    polish_writing: true,
-    style_example: "",
-    style_notes: "",
-    style_avoid: "",
-    world: [],
-    characters: [],
-    map: {nodes: [], edges: []},
-    chapters: [],
-    chat: [],
-    issues: [],
-  };
+  return createStoryProjectFromTemplate("gothic-fantasy", uid);
 }
 
 function loadLegacyProjects(): StoryProject[] {
@@ -946,9 +1390,89 @@ function loadLegacyProjects(): StoryProject[] {
   return [];
 }
 
+type PendingProjectDraft = {
+  saved_at: number;
+  project: StoryProject;
+};
+
+function projectDraftKey(projectId: string): string {
+  return `${projectDraftPrefix}${projectId}`;
+}
+
+function projectDraftIds(): string[] {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(projectDraftIndexKey) || "[]") as unknown;
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function rememberProjectDraftId(projectId: string): void {
+  const ids = new Set(projectDraftIds());
+  ids.add(projectId);
+  localStorage.setItem(projectDraftIndexKey, JSON.stringify([...ids]));
+}
+
+function persistProjectDraft(project: StoryProject): void {
+  try {
+    const draft: PendingProjectDraft = {
+      saved_at: Date.now(),
+      project: JSON.parse(JSON.stringify(project)) as StoryProject,
+    };
+    localStorage.setItem(projectDraftKey(project.id), JSON.stringify(draft));
+    rememberProjectDraftId(project.id);
+  } catch {
+    // The server-side save remains authoritative when browser storage is unavailable or full.
+  }
+}
+
+function clearProjectDraft(projectId: string): void {
+  try {
+    localStorage.removeItem(projectDraftKey(projectId));
+    const remaining = projectDraftIds().filter((id) => id !== projectId);
+    if (remaining.length > 0) {
+      localStorage.setItem(projectDraftIndexKey, JSON.stringify(remaining));
+    } else {
+      localStorage.removeItem(projectDraftIndexKey);
+    }
+  } catch {
+    // A stale recovery draft is harmless and will be compared with the server copy next time.
+  }
+}
+
+function loadPendingProjectDrafts(): PendingProjectDraft[] {
+  const drafts: PendingProjectDraft[] = [];
+  for (const projectId of projectDraftIds()) {
+    try {
+      const raw = localStorage.getItem(projectDraftKey(projectId));
+      if (!raw) continue;
+      const parsed = JSON.parse(raw) as Partial<PendingProjectDraft>;
+      if (!parsed.project?.id) {
+        clearProjectDraft(projectId);
+        continue;
+      }
+      drafts.push({
+        saved_at: Number(parsed.saved_at) || 0,
+        project: normalizeProject(parsed.project),
+      });
+    } catch {
+      clearProjectDraft(projectId);
+    }
+  }
+  return drafts;
+}
+
 async function initProjects(): Promise<void> {
+  let serverAvailable = false;
+  const serverUpdatedAt = new Map<string, number>();
   try {
     const metaResult = await listServerProjects();
+    serverAvailable = true;
+    for (const meta of metaResult.projects) {
+      const timestamp = Date.parse(meta.updated_at);
+      serverUpdatedAt.set(meta.project_id, Number.isFinite(timestamp) ? timestamp : 0);
+    }
     if (metaResult.projects.length > 0) {
       projects.value = await Promise.all(
         metaResult.projects.map((meta) =>
@@ -973,6 +1497,21 @@ async function initProjects(): Promise<void> {
     const legacy = loadLegacyProjects();
     projects.value = legacy.length > 0 ? legacy : [createDefaultProject()];
   }
+  const recoveredDrafts: StoryProject[] = [];
+  for (const draft of loadPendingProjectDrafts()) {
+    const index = projects.value.findIndex((project) => project.id === draft.project.id);
+    const serverTimestamp = serverUpdatedAt.get(draft.project.id) ?? 0;
+    if (index < 0 || !serverAvailable || draft.saved_at >= serverTimestamp) {
+      if (index >= 0) {
+        projects.value[index] = draft.project;
+      } else {
+        projects.value.push(draft.project);
+      }
+      recoveredDrafts.push(draft.project);
+    } else {
+      clearProjectDraft(draft.project.id);
+    }
+  }
   if (
     !projects.value.some((project) => project.id === activeProjectId.value) &&
     projects.value.length > 0
@@ -988,6 +1527,11 @@ async function initProjects(): Promise<void> {
   ) {
     activeChapterId.value = initialProject.chapters[0].id;
     localStorage.setItem(activeChapterKey, activeChapterId.value);
+  }
+  if (serverAvailable) {
+    for (const project of recoveredDrafts) {
+      queueProjectBackup(project, 80);
+    }
   }
 }
 
@@ -1089,6 +1633,8 @@ function normalizeProject(project: Partial<StoryProject>): StoryProject {
     name: project.name || "未命名故事",
     genre: project.genre || "未分类",
     summary: project.summary || "",
+    source_book_id: project.source_book_id || "",
+    source_branch_id: project.source_branch_id || "",
     global_guidance: project.global_guidance || "",
     chapter_turns: Math.min(8, Math.max(1, Number(project.chapter_turns) || 4)),
     writing_style: project.writing_style || "",
@@ -1109,25 +1655,65 @@ function saveProjects(): void {
   localStorage.setItem(activeProjectKey, activeProjectId.value);
   localStorage.setItem(activeChapterKey, activeChapterId.value);
   lastSavedAt.value = new Date().toLocaleTimeString("zh-CN", {hour: "2-digit", minute: "2-digit"});
-  if (projectBackupTimer) {
-    window.clearTimeout(projectBackupTimer);
+  const project = activeProject.value;
+  if (project?.id) {
+    queueProjectBackup(project);
   }
-  projectBackupTimer = window.setTimeout(() => {
-    void backupActiveProject();
-  }, 900);
 }
 
-async function backupActiveProject(): Promise<void> {
-  const project = activeProject.value;
-  if (!project?.id) {
-    return;
+function queueProjectBackup(project: StoryProject, delay = 900): void {
+  pendingProjectBackups.set(project.id, project);
+
+  const existingDraftTimer = projectDraftTimers.get(project.id);
+  if (existingDraftTimer) {
+    window.clearTimeout(existingDraftTimer);
   }
+  projectDraftTimers.set(
+    project.id,
+    window.setTimeout(() => {
+      projectDraftTimers.delete(project.id);
+      persistProjectDraft(project);
+    }, Math.min(delay, 180)),
+  );
+
+  const existingBackupTimer = projectBackupTimers.get(project.id);
+  if (existingBackupTimer) {
+    window.clearTimeout(existingBackupTimer);
+  }
+  projectBackupTimers.set(
+    project.id,
+    window.setTimeout(() => {
+      projectBackupTimers.delete(project.id);
+      void backupProject(project);
+    }, delay),
+  );
+}
+
+async function backupProject(project: StoryProject): Promise<void> {
+  const serializedProject = JSON.stringify(project);
+  const snapshot = JSON.parse(serializedProject) as StoryProject;
+  persistProjectDraft(snapshot);
   try {
-    await saveServerProject(project);
+    await saveServerProject(snapshot);
+    const current = pendingProjectBackups.get(project.id);
+    if (!current || JSON.stringify(current) === serializedProject) {
+      pendingProjectBackups.delete(project.id);
+      clearProjectDraft(project.id);
+    }
   } catch (error) {
     runState.value = {error: `自动保存失败：${error instanceof Error ? error.message : String(error)}`};
     toastError("自动保存失败，请检查本地服务");
   }
+}
+
+function flushPendingProjectDrafts(): void {
+  for (const project of pendingProjectBackups.values()) {
+    persistProjectDraft(project);
+  }
+}
+
+function handleProjectPageHide(): void {
+  flushPendingProjectDrafts();
 }
 
 async function loadDiskBackups(): Promise<void> {
@@ -1197,7 +1783,7 @@ async function perform<T>(
   notice.value = `${label}...`;
   try {
     const result = await task();
-    if (result !== undefined) {
+    if (result !== undefined && !options.collapseOutput) {
       runState.value = result as Record<string, unknown>;
     }
     notice.value = `${label}完成`;
@@ -1220,10 +1806,12 @@ async function openActivity(next: Activity): Promise<void> {
   }
   if (next === "read") {
     await loadEvolutionView();
-    if (evolutionNovelChapters.value.length > 0) {
-      evolutionChapterIndex.value = evolutionNovelChapters.value.length - 1;
-    }
-    requestAnimationFrame(resetReaderScroll);
+    const position = loadReaderPosition("evolution", activeProject.value.id);
+    const savedIndex = Number(position?.chapterId ?? "-1");
+    evolutionChapterIndex.value = savedIndex >= 0 && savedIndex < evolutionNovelChapters.value.length
+      ? savedIndex
+      : Math.max(0, evolutionNovelChapters.value.length - 1);
+    await restoreReaderProgress(position);
   }
   if (next === "shelf") {
     await loadShelfBooks();
@@ -1237,6 +1825,17 @@ async function openActivity(next: Activity): Promise<void> {
   await nextTick();
   contentMainRef.value?.focus({preventScroll: true});
 }
+
+watch(activity, async () => {
+  await nextTick();
+  window.scrollTo(0, 0);
+  document
+    .querySelectorAll<HTMLElement>(".workspace-main .el-scrollbar__wrap, .activity-panel")
+    .forEach((element) => {
+      element.scrollTop = 0;
+      element.scrollLeft = 0;
+    });
+});
 
 function toggleSidebar(): void {
   sidebarCollapsed.value = !sidebarCollapsed.value;
@@ -1269,12 +1868,20 @@ async function closeMobileNav(): Promise<void> {
 }
 
 function persistReaderSettings(): void {
+  localStorage.setItem("rhine-lore-reader-font-size", String(readerFontSize.value));
   localStorage.setItem("rhine-lore-reader-line-height", String(readerLineHeight.value));
   localStorage.setItem("rhine-lore-reader-theme", readerTheme.value);
   localStorage.setItem("rhine-lore-reader-paragraph-spacing", String(readerParagraphSpacing.value));
   localStorage.setItem("rhine-lore-reader-justify", readerJustify.value ? "1" : "0");
+  localStorage.setItem("rhine-lore-reader-indent", readerIndent.value ? "1" : "0");
+  localStorage.setItem("rhine-lore-reader-auto-advance", readerAutoAdvance.value ? "1" : "0");
+  localStorage.setItem("rhine-lore-reader-font-family", readerFontFamily.value);
+  localStorage.setItem("rhine-lore-reader-brightness", String(readerBrightness.value));
   localStorage.setItem("rhine-lore-reader-measure", String(readerMeasure.value));
   localStorage.setItem("rhine-lore-reader-mode", readerPageMode.value);
+  if (readerPageMode.value === "page") {
+    void repaginate();
+  }
 }
 
 function readerThemeClass(): string {
@@ -1282,13 +1889,36 @@ function readerThemeClass(): string {
 }
 
 function readerContentStyle(): Record<string, string> {
+  const fonts = {
+    serif: '"Noto Serif SC", "Source Han Serif SC", "Songti SC", SimSun, serif',
+    sans: 'Inter, "Segoe UI", "Microsoft YaHei", system-ui, sans-serif',
+    system: 'system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif',
+  };
   return {
     fontSize: `${readerFontSize.value}px`,
+    fontFamily: fonts[readerFontFamily.value],
     lineHeight: String(readerLineHeight.value),
     textAlign: readerJustify.value ? "justify" : "left",
     "--reader-para-margin": `${readerParagraphSpacing.value}em`,
     "--reader-measure": `${readerMeasure.value}px`,
+    "--reader-indent": readerIndent.value ? "2em" : "0",
+    "--reader-brightness": String(readerBrightness.value / 100),
   } as Record<string, string>;
+}
+
+function resetReaderSettings(): void {
+  readerPageMode.value = "scroll";
+  readerTheme.value = "day";
+  readerFontFamily.value = "serif";
+  readerFontSize.value = 18;
+  readerLineHeight.value = 1.9;
+  readerParagraphSpacing.value = 1.1;
+  readerMeasure.value = 700;
+  readerBrightness.value = 100;
+  readerJustify.value = true;
+  readerIndent.value = true;
+  readerAutoAdvance.value = true;
+  persistReaderSettings();
 }
 
 function readerScrollContainer(): HTMLElement | null {
@@ -1350,36 +1980,215 @@ function shelfCoverStyle(book: {name?: string}): Record<string, string> {
   } as Record<string, string>;
 }
 
-function handleShelfTxtImport(event: Event): void {
+const shelfImportPreview = computed(() => {
+  const text = shelfImportDecoded.value?.text.trim() ?? "";
+  return text.length > 2800 ? `${text.slice(0, 2800)}\n…` : text;
+});
+
+const shelfImportConfidenceLabel = computed(() => {
+  if (shelfImportEncoding.value !== "auto") return "手动选择";
+  return {
+    high: "高可信",
+    medium: "建议确认",
+    low: "需要确认",
+  }[shelfImportDecoded.value?.confidence ?? "low"];
+});
+
+const shelfImportNeedsAttention = computed(
+  () =>
+    shelfImportDecoded.value?.confidence === "low" ||
+    Boolean(shelfImportDecoded.value?.replacementCount),
+);
+
+function resetShelfImportDialog(): void {
+  shelfImportBusy.value = false;
+  shelfImportAdvanced.value = false;
+  shelfImportName.value = "";
+  shelfImportFileName.value = "";
+  shelfImportFileSize.value = "";
+  shelfImportEncoding.value = "auto";
+  shelfImportBytes.value = null;
+  shelfImportDetected.value = null;
+  shelfImportDecoded.value = null;
+  shelfImportError.value = "";
+}
+
+function updateShelfImportDecoding(): void {
+  const bytes = shelfImportBytes.value;
+  const detected = shelfImportDetected.value;
+  if (!bytes || !detected) return;
+  shelfImportError.value = "";
+  try {
+    shelfImportDecoded.value = shelfImportEncoding.value === "auto"
+      ? detected
+      : decodeTextBytes(bytes, shelfImportEncoding.value);
+    if (!shelfImportDecoded.value.text.trim()) {
+      shelfImportError.value = "当前编码下没有可导入的文字";
+    }
+  } catch (error) {
+    shelfImportError.value = `无法使用这个编码读取文件：${error instanceof Error ? error.message : String(error)}`;
+  }
+}
+
+async function handleShelfTxtImport(event: Event): Promise<void> {
   const input = event.target as HTMLInputElement;
   const file = input.files?.[0];
   if (!file) {
     return;
   }
-  const reader = new FileReader();
-  reader.onload = async () => {
-    const text = String(reader.result ?? "");
-    if (!text.trim()) {
-      runState.value = {error: "文件内容为空"};
-      return;
-    }
-    await perform("导入 TXT", async () => {
-      const book = await importBook({
-        name: file.name.replace(/\.(txt|text)$/i, ""),
-        genre: "TXT 导入",
-        text,
-      });
-      shelfBooks.value = (await listBooks()).books;
-      await openShelfBook(book.book_id);
-      toastSuccess("TXT 导入完成");
-      return {book_id: book.book_id, chapters: book.chapter_count, chars: book.total_chars};
-    });
-  };
-  reader.readAsText(file, "utf-8");
   input.value = "";
+  try {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const detected = detectAndDecodeText(bytes);
+    if (!detected.text.trim()) {
+      throw new Error("文件内容为空");
+    }
+    shelfImportName.value = file.name.replace(/\.(txt|text)$/i, "") || "未命名小说";
+    shelfImportFileName.value = file.name;
+    shelfImportFileSize.value = file.size >= 1024 * 1024
+      ? `${(file.size / 1024 / 1024).toFixed(1)} MB`
+      : `${Math.max(1, Math.round(file.size / 1024))} KB`;
+    shelfImportEncoding.value = "auto";
+    shelfImportBytes.value = bytes;
+    shelfImportDetected.value = detected;
+    shelfImportDecoded.value = detected;
+    shelfImportAdvanced.value = detected.confidence === "low" || detected.replacementCount > 0;
+    shelfImportError.value = "";
+    shelfImportVisible.value = true;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    runState.value = {error: message, action: "读取 TXT"};
+    toastError(message);
+  }
+}
+
+async function confirmShelfTxtImport(): Promise<void> {
+  const decoded = shelfImportDecoded.value;
+  if (!decoded?.text.trim()) {
+    shelfImportError.value = "没有可导入的文字";
+    return;
+  }
+  if (!shelfImportName.value.trim()) {
+    shelfImportError.value = "请填写书名";
+    return;
+  }
+  shelfImportBusy.value = true;
+  try {
+    const book = await perform("导入 TXT", () => importBook({
+      name: shelfImportName.value.trim(),
+      genre: "TXT 导入",
+      text: decoded.text,
+      source_encoding: decoded.encoding,
+    }));
+    if (!book) return;
+    shelfImportVisible.value = false;
+    shelfBooks.value = (await listBooks()).books;
+    await openShelfBook(book.book_id);
+    toastSuccess(`TXT 导入完成 · ${textEncodingLabel(decoded.encoding)}`);
+  } finally {
+    shelfImportBusy.value = false;
+  }
+}
+
+const shelfAnalysisRunning = computed(() =>
+  ["queued", "running"].includes(shelfAnalysisStatus.value?.state || ""),
+);
+
+const shelfAnalysisActionLabel = computed(() => {
+  if (shelfAnalysisRunning.value) return "分析进行中";
+  if (shelfAnalysisStatus.value?.can_resume) return "继续分析";
+  if (shelfAnalysis.value?.stale) return "更新档案";
+  if (shelfAnalysis.value) return "重新分析";
+  return "建立全书档案";
+});
+
+const selectedShelfBranch = computed(() =>
+  shelfBranches.value.find((branch) => branch.branch_id === selectedShelfBranchId.value) || null,
+);
+
+const shelfBranchEndingCount = computed(() =>
+  shelfBranches.value.filter((branch) => branch.is_leaf).length,
+);
+
+const branchKindLabels: Record<BranchKind, string> = {
+  choice: "关键选择",
+  relationship: "关系变化",
+  clue: "新线索",
+  free: "自由续写",
+};
+
+function analysisSourceLabel(chapters: number[] | undefined): string {
+  if (!chapters?.length) return "";
+  if (chapters.length === 1) return `第 ${chapters[0]} 项`;
+  return `第 ${chapters[0]} - ${chapters.at(-1)} 项`;
+}
+
+function clearShelfAnalysisPoll(): void {
+  if (shelfAnalysisPollTimer) {
+    window.clearTimeout(shelfAnalysisPollTimer);
+    shelfAnalysisPollTimer = undefined;
+  }
+}
+
+function closeShelfBook(): void {
+  clearShelfAnalysisPoll();
+  shelfBook.value = null;
+  shelfBookId.value = "";
+  shelfChapter.value = null;
+  shelfChapterIndex.value = -1;
+  shelfAnalysisStatus.value = null;
+  shelfAnalysisPlan.value = null;
+  pendingShelfProjectBranchId.value = null;
+}
+
+function scheduleShelfAnalysisPoll(bookId: string): void {
+  clearShelfAnalysisPoll();
+  if (!shelfAnalysisRunning.value || shelfBookId.value !== bookId) return;
+  shelfAnalysisPollTimer = window.setTimeout(() => {
+    void refreshShelfAnalysisStatus(bookId);
+  }, 1200);
+}
+
+async function loadShelfAnalysisPlan(bookId = shelfBookId.value): Promise<void> {
+  if (!bookId) return;
+  try {
+    const result = await previewBookAnalysis(bookId, shelfAnalysisMode.value);
+    if (shelfBookId.value === bookId) shelfAnalysisPlan.value = result.plan;
+  } catch {
+    if (shelfBookId.value === bookId) shelfAnalysisPlan.value = null;
+  }
+}
+
+async function refreshShelfAnalysisStatus(bookId = shelfBookId.value): Promise<void> {
+  if (!bookId) return;
+  try {
+    const previousState = shelfAnalysisStatus.value?.state;
+    const result = await getBookAnalysisStatus(bookId);
+    if (shelfBookId.value !== bookId) return;
+    shelfAnalysisStatus.value = result.status;
+    if (result.status.plan) shelfAnalysisPlan.value = result.status.plan;
+    if (result.status.state === "completed" && previousState !== "completed") {
+      const refreshed = await getBook(bookId);
+      if (shelfBookId.value !== bookId) return;
+      shelfBook.value = refreshed.book;
+      shelfAnalysis.value = refreshed.book.analysis ?? null;
+      markSaved(result.status.message);
+      const branchId = pendingShelfProjectBranchId.value;
+      if (branchId !== null) {
+        pendingShelfProjectBranchId.value = null;
+        void materializeShelfProject(branchId);
+      }
+    } else if (result.status.state === "failed" && previousState !== "failed") {
+      toastError(result.status.error || "全书分析暂停，可稍后继续");
+    }
+    scheduleShelfAnalysisPoll(bookId);
+  } catch {
+    clearShelfAnalysisPoll();
+  }
 }
 
 async function openShelfBook(bookId: string): Promise<void> {
+  clearShelfAnalysisPoll();
   const result = await perform("打开书", () => getBook(bookId));
   if (!result) {
     return;
@@ -1390,7 +2199,11 @@ async function openShelfBook(bookId: string): Promise<void> {
   shelfChapterIndex.value = -1;
   shelfAiResult.value = "";
   shelfAnalysis.value = result.book.analysis ?? null;
-  const saved = localStorage.getItem(`rhine-shelf-pos-${bookId}`);
+  shelfAnalysisStatus.value = null;
+  shelfAnalysisPlan.value = null;
+  pendingShelfProjectBranchId.value = null;
+  const position = loadReaderPosition("shelf", bookId);
+  const saved = position?.chapterId || localStorage.getItem(`rhine-shelf-pos-${bookId}`);
   const targetId =
     saved && result.book.chapters.some((item) => item.id === saved)
       ? saved
@@ -1398,7 +2211,9 @@ async function openShelfBook(bookId: string): Promise<void> {
   if (targetId) {
     await loadShelfChapter(targetId);
   }
-  requestAnimationFrame(resetReaderScroll);
+  await restoreReaderProgress(position);
+  void refreshShelfAnalysisStatus(bookId);
+  void loadShelfAnalysisPlan(bookId);
 }
 
 async function loadShelfChapter(chapterId: string): Promise<void> {
@@ -1415,7 +2230,28 @@ async function loadShelfChapter(chapterId: string): Promise<void> {
   shelfChapterIndex.value =
     shelfBook.value?.chapters.findIndex((item) => item.id === chapterId) ?? -1;
   localStorage.setItem(`rhine-shelf-pos-${shelfBookId.value}`, chapterId);
+  capturedBranchSelection.value = null;
+  await loadShelfBranches(chapterId);
   requestAnimationFrame(resetReaderScroll);
+}
+
+async function loadShelfBranches(chapterId = shelfChapter.value?.id || ""): Promise<void> {
+  if (!shelfBookId.value) {
+    shelfBranches.value = [];
+    return;
+  }
+  try {
+    shelfBranches.value = (await listBookBranches(shelfBookId.value, chapterId)).branches;
+    if (
+      selectedShelfBranchId.value &&
+      !shelfBranches.value.some((branch) => branch.branch_id === selectedShelfBranchId.value)
+    ) {
+      selectedShelfBranchId.value = "";
+      selectedBranchPath.value = null;
+    }
+  } catch {
+    shelfBranches.value = [];
+  }
 }
 
 function openShelfAdjacentChapter(direction: -1 | 1): void {
@@ -1478,22 +2314,39 @@ async function runShelfAiWrite(): Promise<void> {
 }
 
 async function runShelfAnalysis(): Promise<void> {
-  if (!shelfBookId.value || shelfAnalyzeBusy.value) {
+  const bookId = shelfBookId.value;
+  if (!bookId || shelfAnalyzeBusy.value || shelfAnalysisRunning.value) {
     return;
   }
   shelfAnalyzeBusy.value = true;
   try {
-    const result = await analyzeBook(shelfBookId.value);
-    shelfAnalysis.value = result.analysis;
-    markSaved(
-      result.offline
-        ? "离线分析完成（高频角色提取，配置 AI 后可获得完整档案）"
-        : "全书分析完成：角色 / 设定 / 事实 / 伏笔已建立",
-    );
+    localStorage.setItem("rhine-lore-analysis-mode", shelfAnalysisMode.value);
+    const result = await startBookAnalysis(bookId, {
+      mode: shelfAnalysisMode.value,
+      force: shelfAnalysisForce.value,
+    });
+    if (shelfBookId.value !== bookId) return;
+    shelfAnalysisStatus.value = result.status;
+    if (result.status.plan) shelfAnalysisPlan.value = result.status.plan;
+    shelfAnalysisForce.value = false;
+    markSaved(result.status.offline ? "正在建立本地基础索引" : "全书分析已在后台开始");
+    scheduleShelfAnalysisPoll(bookId);
   } catch (error) {
     runState.value = {error: error instanceof Error ? error.message : String(error)};
   } finally {
     shelfAnalyzeBusy.value = false;
+  }
+}
+
+async function pauseShelfAnalysis(): Promise<void> {
+  const bookId = shelfBookId.value;
+  if (!bookId || !shelfAnalysisRunning.value) return;
+  try {
+    const result = await cancelBookAnalysis(bookId);
+    if (shelfBookId.value === bookId) shelfAnalysisStatus.value = result.status;
+    scheduleShelfAnalysisPoll(bookId);
+  } catch (error) {
+    toastError(error instanceof Error ? error.message : "暂停失败");
   }
 }
 
@@ -1511,22 +2364,469 @@ function applyShelfAiResult(): void {
   markSaved("AI 正文已应用到本章，请保存");
 }
 
+function normalizeSelectionText(value: string): {text: string; offsets: number[]} {
+  let text = "";
+  const offsets: number[] = [];
+  let inWhitespace = false;
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+    if (/\s/.test(character)) {
+      if (!inWhitespace && text) {
+        text += " ";
+        offsets.push(index + 1);
+      }
+      inWhitespace = true;
+      continue;
+    }
+    text += character;
+    offsets.push(index + 1);
+    inWhitespace = false;
+  }
+  return {text: text.trim(), offsets};
+}
+
+function selectedTextEndOffset(content: string, selectedText: string, approximate: number): number | null {
+  const normalizedContent = normalizeSelectionText(content);
+  const needle = selectedText.replace(/\s+/g, " ").trim();
+  if (!needle) return null;
+  const candidates: number[] = [];
+  let cursor = 0;
+  while (cursor < normalizedContent.text.length) {
+    const found = normalizedContent.text.indexOf(needle, cursor);
+    if (found < 0) break;
+    const normalizedEnd = found + needle.length - 1;
+    candidates.push(normalizedContent.offsets[normalizedEnd] ?? approximate);
+    cursor = found + 1;
+  }
+  if (candidates.length === 0) return null;
+  return candidates.reduce((best, candidate) =>
+    Math.abs(candidate - approximate) < Math.abs(best - approximate) ? candidate : best,
+  );
+}
+
+function branchSourceContent(source: BranchSource): string {
+  if (source === "shelf") return shelfChapter.value?.content || "";
+  return activeChapter.value?.content || "";
+}
+
+function buildBranchContext(
+  source: BranchSource,
+  offset: number,
+  origin: BranchDraftContext["origin"],
+  selectedText = "",
+): BranchDraftContext | null {
+  const chapter = source === "shelf" ? shelfChapter.value : activeChapter.value;
+  if (!chapter) return null;
+  const content = String(chapter.content || "");
+  const safeOffset = Math.min(content.length, Math.max(0, Math.round(offset)));
+  return {
+    source,
+    chapterId: chapter.id,
+    chapterTitle: chapter.title,
+    offset: safeOffset,
+    progress: Math.round((safeOffset / Math.max(1, content.length)) * 100),
+    anchor: content.slice(Math.max(0, safeOffset - 180), safeOffset),
+    selectedText: selectedText.trim(),
+    parentBranchId: "",
+    origin,
+  };
+}
+
+function captureBranchSelection(event: MouseEvent | TouchEvent): void {
+  const source: BranchSource | null = readerSource.value === "shelf"
+    ? "shelf"
+    : readerSource.value === "novel"
+      ? "project"
+      : null;
+  if (!source) return;
+  const selection = window.getSelection();
+  const root = event.currentTarget as HTMLElement | null;
+  if (!selection || selection.isCollapsed || !root || !selection.rangeCount) return;
+  const range = selection.getRangeAt(0);
+  if (!root.contains(range.commonAncestorContainer)) return;
+  const selected = selection.toString().trim();
+  if (!selected) return;
+  const content = branchSourceContent(source);
+  const approximate = Math.round(content.length * readingProgress.value / 100);
+  const offset = selectedTextEndOffset(content, selected, approximate);
+  if (offset === null) return;
+  capturedBranchSelection.value = buildBranchContext(source, offset, "selection", selected);
+}
+
+function openBranchDialog(context: BranchDraftContext | null): void {
+  if (!context) return;
+  branchContext.value = context;
+  branchGuidance.value = "";
+  branchKind.value = "free";
+  branchResult.value = "";
+  branchRecord.value = null;
+  branchDialogVisible.value = true;
+}
+
+function currentReaderBranchContext(): BranchDraftContext | null {
+  const source: BranchSource | null = readerSource.value === "shelf"
+    ? "shelf"
+    : readerSource.value === "novel"
+      ? "project"
+      : null;
+  if (!source) return null;
+  const captured = capturedBranchSelection.value;
+  const chapterId = source === "shelf" ? shelfChapter.value?.id : activeChapter.value?.id;
+  if (captured && captured.source === source && captured.chapterId === chapterId) {
+    return captured;
+  }
+
+  const content = branchSourceContent(source);
+  let approximate = Math.round(content.length * readingProgress.value / 100);
+  let anchor = "";
+  if (readerPageMode.value === "page" && !currentReaderPageIsTitle()) {
+    const paragraph = currentReaderPage().at(-1);
+    if (paragraph?.text) {
+      anchor = paragraph.text.slice(-180);
+      approximate = selectedTextEndOffset(content, anchor, approximate) ?? approximate;
+    }
+  } else if (content) {
+    const nearby = content.slice(approximate, Math.min(content.length, approximate + 260));
+    const sentenceEnd = nearby.search(/[。！？!?…](?:[”’」』）】])?/);
+    approximate = sentenceEnd >= 0 ? approximate + sentenceEnd + 1 : approximate;
+    anchor = content.slice(Math.max(0, approximate - 180), approximate);
+  }
+  const context = buildBranchContext(source, approximate, "position");
+  if (context && anchor) context.anchor = anchor;
+  return context;
+}
+
+function openReaderBranch(): void {
+  openBranchDialog(currentReaderBranchContext());
+}
+
+function openShelfParagraphBranch(paragraph: string, paragraphIndex: number): void {
+  const chapter = shelfChapter.value;
+  if (!chapter) return;
+  const paragraphs = shelfChapterParagraphs(chapter);
+  let cursor = 0;
+  let offset = chapter.content.length;
+  for (let index = 0; index <= paragraphIndex; index += 1) {
+    const value = paragraphs[index] || "";
+    const found = chapter.content.indexOf(value, cursor);
+    if (found >= 0) {
+      offset = found + value.length;
+      cursor = offset;
+    }
+  }
+  openBranchDialog(buildBranchContext("shelf", offset, "paragraph", paragraph));
+}
+
+function openProjectBranchFromCursor(): void {
+  const chapter = activeChapter.value;
+  if (!chapter) return;
+  const textarea = document.querySelector<HTMLTextAreaElement>(".novel-editor textarea");
+  const offset = textarea?.selectionEnd ?? chapter.content.length;
+  const selected = textarea && textarea.selectionStart !== textarea.selectionEnd
+    ? chapter.content.slice(textarea.selectionStart, textarea.selectionEnd)
+    : "";
+  openBranchDialog(buildBranchContext("project", offset, "cursor", selected));
+}
+
+function branchPositionLabel(): string {
+  const context = branchContext.value;
+  if (!context) return "";
+  const origin = {
+    selection: "选中文字后",
+    paragraph: "本段末尾",
+    position: "当前阅读位置",
+    cursor: context.selectedText ? "选中文字后" : "编辑光标处",
+    branch: `第 ${selectedShelfBranch.value ? selectedShelfBranch.value.depth + 2 : 2} 层分叉`,
+  }[context.origin];
+  return `${context.chapterTitle} · ${origin} · ${context.progress}%`;
+}
+
+function applyBranchPreset(kind: BranchKind, guidance: string): void {
+  branchKind.value = kind;
+  branchGuidance.value = guidance;
+}
+
+async function generateBranchDraft(): Promise<void> {
+  const context = branchContext.value;
+  if (!context || branchBusy.value) return;
+  branchBusy.value = true;
+  branchResult.value = "";
+  branchRecord.value = null;
+  try {
+    if (context.source === "shelf") {
+      if (!shelfBookId.value) return;
+      const result = await createBookBranch({
+        book_id: shelfBookId.value,
+        chapter_id: context.chapterId,
+        offset: context.offset,
+        anchor: context.anchor,
+        guidance: branchGuidance.value.trim(),
+        parent_branch_id: context.parentBranchId,
+        kind: branchKind.value,
+      });
+      branchRecord.value = result.branch;
+      branchResult.value = result.branch.text;
+      await loadShelfBranches(context.chapterId);
+      selectedShelfBranchId.value = result.branch.branch_id;
+      if (branchTreeVisible.value) await selectShelfBranch(result.branch);
+      markSaved(result.offline ? "分支点已保存，配置 AI 后即可生成正文" : "新分支已生成并保存");
+      return;
+    }
+
+    if (!llmConfigured.value) {
+      toastError("请先在设置中连接 AI，再生成分支正文");
+      return;
+    }
+    const project = activeProject.value;
+    const chapterIndex = project.chapters.findIndex((item) => item.id === context.chapterId);
+    const chapter = project.chapters[chapterIndex];
+    if (!chapter) return;
+    const previous = project.chapters
+      .slice(Math.max(0, chapterIndex - 3), chapterIndex)
+      .map((item) => `《${item.title}》末尾：${item.content.slice(-700)}`)
+      .join("\n\n");
+    const characters = project.characters
+      .slice(0, 24)
+      .map((item) => `${item.name}（${item.role}）：${item.background || item.notes || item.drive}`)
+      .join("\n");
+    const world = project.world
+      .slice(0, 18)
+      .map((item) => `${item.name}（${item.type}）：${item.summary || item.details}`)
+      .join("\n");
+    const result = await llmServerChat([
+      {
+        role: "system",
+        content:
+          "你是中文长篇小说作者。请从指定锚点写一条新的平行分支，只输出新正文，不复述锚点前的文字，不写解释。" +
+          WRITING_QUALITY_GUIDE,
+      },
+      {
+        role: "user",
+        content: [
+          `项目：《${project.name}》`,
+          `概要：${project.summary || "无"}`,
+          characters ? `角色：\n${characters}` : "",
+          world ? `世界设定：\n${world}` : "",
+          previous ? `此前章节：\n${previous}` : "",
+          `当前章节：《${chapter.title}》`,
+          `锚点前正文：\n${chapter.content.slice(0, context.offset).slice(-4200)}`,
+          `分支引导：${branchGuidance.value.trim() || "按故事自然走向继续"}`,
+        ].filter(Boolean).join("\n\n"),
+      },
+    ]);
+    branchResult.value = String(result.answer || "").trim();
+    if (!branchResult.value) throw new Error("AI 没有返回分支正文");
+    markSaved("工作台分支草稿已生成");
+  } catch (error) {
+    runState.value = {error: error instanceof Error ? error.message : String(error)};
+    toastError(error instanceof Error ? error.message : "分支生成失败");
+  } finally {
+    branchBusy.value = false;
+  }
+}
+
+async function materializeShelfProject(branchId = ""): Promise<void> {
+  if (!shelfBookId.value || branchProjectBusy.value) return;
+  branchProjectBusy.value = true;
+  try {
+    const needsFullAnalysis =
+      !shelfAnalysis.value ||
+      shelfAnalysis.value.stale ||
+      (shelfAnalysis.value.offline && llmConfigured.value);
+    if (needsFullAnalysis && llmConfigured.value) {
+      pendingShelfProjectBranchId.value = branchId;
+      await runShelfAnalysis();
+      toastSuccess("正在先建立全书档案，完成后会自动进入工作台");
+      return;
+    }
+    const result = await convertBookToProject(shelfBookId.value, branchId);
+    const project = normalizeProject(result.project);
+    const existing = projects.value.findIndex((item) => item.id === project.id);
+    if (existing >= 0) projects.value[existing] = project;
+    else projects.value.push(project);
+    activeProjectId.value = project.id;
+    activeChapterId.value = branchId
+      ? project.chapters.at(-1)?.id || project.chapters[0]?.id || ""
+      : project.chapters[0]?.id || "";
+    saveProjects();
+    branchDialogVisible.value = false;
+    branchTreeVisible.value = false;
+    branchPathVisible.value = false;
+    readerOverlayOpen.value = false;
+    sidebarMode.value = "workbench";
+    localStorage.setItem("rhine-lore-sidebar-mode", sidebarMode.value);
+    activity.value = "studio";
+    toastSuccess(
+      `已进入工作台：${result.imported.chapters} 章、${result.imported.characters} 个角色、${result.imported.world} 项设定`,
+    );
+  } catch (error) {
+    runState.value = {error: error instanceof Error ? error.message : String(error)};
+    toastError(error instanceof Error ? error.message : "导入工作台失败");
+  } finally {
+    branchProjectBusy.value = false;
+  }
+}
+
+function materializeProjectBranch(): void {
+  const context = branchContext.value;
+  const source = activeProject.value;
+  if (!context || context.source !== "project" || !branchResult.value.trim()) return;
+  const sourceIndex = source.chapters.findIndex((item) => item.id === context.chapterId);
+  if (sourceIndex < 0) return;
+  const copy = normalizeProject(JSON.parse(JSON.stringify(source)) as Partial<StoryProject>);
+  copy.id = uid("project");
+  copy.name = `${source.name} · 分支`;
+  copy.source_branch_id = uid("branch");
+  copy.chapters = copy.chapters.slice(0, sourceIndex + 1).map((chapter, index) => ({
+    ...chapter,
+    id: uid("chapter"),
+    content: index === sourceIndex
+      ? [chapter.content.slice(0, context.offset).trimEnd(), branchResult.value.trim()].filter(Boolean).join("\n\n")
+      : chapter.content,
+    title: index === sourceIndex ? `${chapter.title} · 分支` : chapter.title,
+  }));
+  copy.chat = [];
+  projects.value.push(copy);
+  activeProjectId.value = copy.id;
+  activeChapterId.value = copy.chapters.at(-1)?.id || "";
+  saveProjects();
+  branchDialogVisible.value = false;
+  readerOverlayOpen.value = false;
+  sidebarMode.value = "workbench";
+  activity.value = "novel";
+  readerMode.value = "edit";
+  toastSuccess("已创建独立分支项目，原项目保持不变");
+}
+
+async function selectShelfBranch(branch: BookBranch): Promise<void> {
+  if (!shelfBookId.value) return;
+  selectedShelfBranchId.value = branch.branch_id;
+  branchPathBusy.value = true;
+  try {
+    const result = await getBookBranchPath(shelfBookId.value, branch.branch_id);
+    if (selectedShelfBranchId.value === branch.branch_id) selectedBranchPath.value = result.path;
+  } catch (error) {
+    selectedBranchPath.value = null;
+    toastError(error instanceof Error ? error.message : "分支路径加载失败");
+  } finally {
+    branchPathBusy.value = false;
+  }
+}
+
+async function openShelfBranchTree(): Promise<void> {
+  branchTreeVisible.value = true;
+  await loadShelfBranches();
+  const selected = selectedShelfBranch.value || shelfBranches.value[0];
+  if (selected) await selectShelfBranch(selected);
+}
+
+function createBranchFromTree(): void {
+  branchTreeVisible.value = false;
+  openReaderBranch();
+}
+
+async function openSelectedBranchPath(): Promise<void> {
+  const branch = selectedShelfBranch.value;
+  if (!branch) return;
+  if (selectedBranchPath.value?.branch.branch_id !== branch.branch_id) {
+    await selectShelfBranch(branch);
+  }
+  if (selectedBranchPath.value) branchPathVisible.value = true;
+}
+
+function continueShelfBranch(branch = selectedShelfBranch.value): void {
+  if (!branch) return;
+  branchPathVisible.value = false;
+  branchContext.value = {
+    source: "shelf",
+    chapterId: branch.chapter_id,
+    chapterTitle: branch.chapter_title,
+    offset: branch.text.length,
+    progress: 100,
+    anchor: branch.text.slice(-180),
+    selectedText: "",
+    parentBranchId: branch.branch_id,
+    origin: "branch",
+  };
+  branchGuidance.value = "";
+  branchKind.value = "free";
+  branchResult.value = "";
+  branchRecord.value = null;
+  branchDialogVisible.value = true;
+}
+
+async function removeSelectedShelfBranch(): Promise<void> {
+  const branch = selectedShelfBranch.value;
+  if (!branch || !shelfBookId.value) return;
+  const descendants = shelfBranches.value.filter((item) => {
+    if (item.branch_id === branch.branch_id) return false;
+    let current: BookBranch | undefined = item;
+    while (current?.parent_branch_id) {
+      if (current.parent_branch_id === branch.branch_id) return true;
+      current = shelfBranches.value.find((candidate) => candidate.branch_id === current?.parent_branch_id);
+    }
+    return false;
+  }).length;
+  try {
+    await ElMessageBox.confirm(
+      descendants
+        ? `这会同时删除它下面的 ${descendants} 条后续故事线。原作正文不会改变。`
+        : "删除这个故事节点？原作正文不会改变。",
+      "删除分支",
+      {confirmButtonText: "删除", cancelButtonText: "取消", type: "warning"},
+    );
+    const parentId = branch.parent_branch_id;
+    const result = await deleteBookBranch(shelfBookId.value, branch.branch_id);
+    await loadShelfBranches();
+    const next = shelfBranches.value.find((item) => item.branch_id === parentId) || shelfBranches.value[0];
+    if (next) await selectShelfBranch(next);
+    else {
+      selectedShelfBranchId.value = "";
+      selectedBranchPath.value = null;
+    }
+    toastSuccess(`已删除 ${result.deleted.count} 个故事节点`);
+  } catch (error) {
+    if (error === "cancel" || error === "close") return;
+    toastError(error instanceof Error ? error.message : "删除分支失败");
+  }
+}
+
+function openSavedShelfBranch(branch: BookBranch): void {
+  selectedShelfBranchId.value = branch.branch_id;
+  branchContext.value = {
+    source: "shelf",
+    chapterId: branch.chapter_id,
+    chapterTitle: branch.chapter_title,
+    offset: branch.offset,
+    progress: Math.round(branch.progress),
+    anchor: branch.anchor,
+    selectedText: "",
+    parentBranchId: branch.parent_branch_id || "",
+    origin: "position",
+  };
+  branchGuidance.value = branch.guidance;
+  branchKind.value = branch.kind || "free";
+  branchResult.value = branch.text;
+  branchRecord.value = branch;
+  branchDialogVisible.value = true;
+}
+
 async function removeShelfBook(bookId: string): Promise<void> {
   await perform("删除书", () => deleteBook(bookId));
   localStorage.removeItem(`rhine-shelf-pos-${bookId}`);
   if (shelfBookId.value === bookId) {
+    clearShelfAnalysisPoll();
     shelfBook.value = null;
     shelfBookId.value = "";
     shelfChapter.value = null;
+    shelfAnalysisStatus.value = null;
+    shelfAnalysisPlan.value = null;
   }
   await loadShelfBooks();
 }
 
 function shelfChapterParagraphs(chapter: BookChapter): string[] {
-  return (chapter.content ?? "")
-    .split(/\n{2,}/)
-    .map((paragraph) => paragraph.trim())
-    .filter(Boolean);
+  return splitReaderParagraphs(chapter.content ?? "");
 }
 
 function shelfProgressLabel(): string {
@@ -1700,40 +3000,27 @@ async function openKnowledgeIntake(): Promise<void> {
 }
 
 function createProject(): void {
+  newProjectTemplate.value = "blank";
   newProjectName.value = "";
-  newProjectGenre.value = "未分类";
+  newProjectGenre.value = "";
   newProjectIdea.value = "";
   createDialogVisible.value = true;
 }
 
 function confirmCreateProject(destination: CreateDestination): void {
-  const projectName = newProjectName.value.trim() || "我的故事";
-  const project: StoryProject = {
-    id: uid("project"),
-    name: projectName,
-    genre: newProjectGenre.value.trim() || "未分类",
-    summary: newProjectIdea.value.trim(),
-    global_guidance: "",
-    chapter_turns: 4,
-    writing_style: "",
-    polish_writing: true,
-    style_example: "",
-    style_notes: "",
-    style_avoid: "",
-    world: [],
-    characters: [],
-    map: {nodes: [], edges: []},
-    chapters: [{id: uid("chapter"), title: "第一章", content: ""}],
-    chat: [],
-    issues: [],
-  };
+  const project = createStoryProjectFromTemplate(newProjectTemplate.value, uid, {
+    name: newProjectName.value,
+    genre: newProjectGenre.value,
+    summary: newProjectIdea.value,
+  });
   projects.value.push(project);
   activeProjectId.value = project.id;
-  activeChapterId.value = project.chapters[0].id;
+  activeChapterId.value = project.chapters[0]?.id ?? "";
   createDialogVisible.value = false;
   saveProjects();
-  markSaved("故事已创建");
-  toastSuccess("故事已创建");
+  const createdMessage = newProjectTemplate.value === "gothic-fantasy" ? "奇幻演示已创建" : "故事已创建";
+  markSaved(createdMessage);
+  toastSuccess(createdMessage);
   if (destination === "novel") {
     readerMode.value = "edit";
   }
@@ -2564,7 +3851,9 @@ watch(
     readerFontSize,
     readerLineHeight,
     readerParagraphSpacing,
+    readerFontFamily,
     readerJustify,
+    readerIndent,
     readerMeasure,
     readerPageMode,
   ],
@@ -2572,17 +3861,30 @@ watch(
     if (readerPageMode.value !== "page") {
       return;
     }
-    readerPageIndex.value = 0;
     void repaginate();
   },
 );
 
 watch(readerOverlayOpen, async (open) => {
   await nextTick();
-  if (open) {
-    readerScrollContainer()?.addEventListener("scroll", handleReadingScroll, {passive: true});
-  }
+  bindReaderScrollListener(open ? readerScrollContainer() : null);
 });
+
+watch(readerSettingsVisible, async (open) => {
+  if (!open) return;
+  await nextTick();
+  requestAnimationFrame(() => {
+    const body = document.querySelector<HTMLElement>(".reader-settings-drawer .el-drawer__body");
+    if (body) body.scrollTop = 0;
+  });
+});
+
+function bindReaderScrollListener(element: HTMLElement | null): void {
+  if (readerBoundScrollElement === element) return;
+  readerBoundScrollElement?.removeEventListener("scroll", handleReadingScroll);
+  readerBoundScrollElement = element;
+  readerBoundScrollElement?.addEventListener("scroll", handleReadingScroll, {passive: true});
+}
 
 function upsertProject(project: StoryProject): void {
   const normalized = normalizeProject(project);
@@ -2874,13 +4176,353 @@ function recordTitle(record: ApiRecord): string {
 }
 
 function recordPreview(record: ApiRecord, length = 96): string {
-  return preview(record.content ?? record.summary ?? record.text ?? record.markdown ?? "", length);
+  const raw = String(record.content ?? record.summary ?? record.text ?? record.markdown ?? "");
+  return preview(splitKnowledgeEnvelope(raw, recordTitle(record)).body, length);
 }
 
-function draftPreview(record: ApiRecord, length = 96): string {
-  const proposedNodes = Array.isArray(record.proposed_nodes) ? record.proposed_nodes : [];
-  const firstNode = proposedNodes[0] as ApiRecord | undefined;
-  return recordPreview(firstNode ?? record, length) || "暂无预览";
+function normalizeTags(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.map((tag) => String(tag).trim()).filter(Boolean)
+    : [];
+}
+
+function normalizeKnowledgeProposal(proposal: ApiRecord): KnowledgeReviewItem[] {
+  const status = String(proposal.status ?? "draft").toLowerCase();
+  if (!["draft", "pending_review"].includes(status)) {
+    return [];
+  }
+  const proposalId = String(proposal.proposal_id ?? "");
+  const proposedNodes = Array.isArray(proposal.proposed_nodes) && proposal.proposed_nodes.length > 0
+    ? proposal.proposed_nodes as ApiRecord[]
+    : [proposal];
+  return proposedNodes.map((node, index) => {
+    const temporaryId = String(node.temporary_id ?? `node-${index}`);
+    return {
+      key: `draft:${proposalId}:${temporaryId}`,
+      stage: "draft",
+      proposalId,
+      temporaryId,
+      nodeId: String(node.node_id ?? "") || undefined,
+      title: String(node.title ?? proposal.title ?? "未命名草稿"),
+      nodeType: String(node.node_type ?? proposal.node_type ?? "Note"),
+      content: String(node.content ?? proposal.content ?? ""),
+      authority: String(node.authority ?? proposal.authority ?? "experimental"),
+      tags: normalizeTags(node.tags ?? proposal.tags),
+      createdAt: String(node.created_at ?? proposal.created_at ?? ""),
+    };
+  });
+}
+
+function normalizeKnowledgeStaging(entry: ApiRecord): KnowledgeReviewItem {
+  const entryId = String(entry.entry_id ?? entry.id ?? "");
+  const proposedNode = entry.proposed_node && typeof entry.proposed_node === "object"
+    ? entry.proposed_node as ApiRecord
+    : entry;
+  const baseRevision = entry.base_revision === null || entry.base_revision === undefined
+    ? Number.NaN
+    : Number(entry.base_revision);
+  return {
+    key: `ready:${entryId}`,
+    stage: "ready",
+    proposalId: String(entry.proposal_id ?? ""),
+    temporaryId: String(entry.source_temporary_id ?? ""),
+    entryId,
+    nodeId: String(proposedNode.node_id ?? entry.node_id ?? "") || undefined,
+    baseRevision: Number.isFinite(baseRevision) ? baseRevision : undefined,
+    title: String(proposedNode.title ?? entry.title ?? "未命名资料"),
+    nodeType: String(proposedNode.node_type ?? entry.node_type ?? "Note"),
+    content: String(proposedNode.content ?? entry.content ?? ""),
+    authority: String(proposedNode.authority ?? entry.authority ?? "experimental"),
+    tags: normalizeTags(proposedNode.tags ?? entry.tags),
+    createdAt: String(entry.created_at ?? ""),
+  };
+}
+
+function normalizeKnowledgeNode(node: ApiRecord): KnowledgeReviewItem {
+  const nodeId = recordId(node);
+  return {
+    key: `library:${nodeId}`,
+    stage: "library",
+    nodeId,
+    revision: Number(node.revision) || 1,
+    title: recordTitle(node),
+    nodeType: String(node.node_type ?? "Note"),
+    content: String(node.content ?? ""),
+    authority: String(node.authority ?? ""),
+    tags: normalizeTags(node.tags),
+    createdAt: String(node.updated_at ?? node.created_at ?? ""),
+  };
+}
+
+function splitKnowledgeEnvelope(content: string, title = ""): {body: string; metadata: string} {
+  const match = content.match(/\r?\n---\r?\n(?=来源[:：])/);
+  const main = match?.index === undefined ? content : content.slice(0, match.index);
+  const metadata = match?.index === undefined ? "" : content.slice(match.index + match[0].length).trim();
+  const heading = title.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const withoutHeading = heading
+    ? main.replace(new RegExp(`^\\s*#\\s+${heading}\\s*(?:\\r?\\n)+`, "i"), "")
+    : main;
+  return {body: withoutHeading.trim(), metadata};
+}
+
+function parseKnowledgeSource(content: string): KnowledgeSourceInfo {
+  const {metadata} = splitKnowledgeEnvelope(content);
+  const info: KnowledgeSourceInfo = {
+    kind: "",
+    project: "",
+    projectId: "",
+    chapter: "",
+    chapterId: "",
+    messageIds: [],
+    excerpts: [],
+    metadata,
+  };
+  if (!metadata) {
+    return info;
+  }
+  let readingExcerpts = false;
+  for (const rawLine of metadata.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (/^来源摘录[:：]?/.test(line)) {
+      readingExcerpts = true;
+      continue;
+    }
+    if (readingExcerpts && line.startsWith("- ")) {
+      info.excerpts.push(line.slice(2).trim());
+      continue;
+    }
+    readingExcerpts = false;
+    const value = (label: string) => line.replace(new RegExp(`^${label}[:：]\\s*`), "").trim();
+    if (/^来源[:：]/.test(line)) info.kind = value("来源");
+    if (/^项目 ID[:：]/.test(line)) info.projectId = value("项目 ID");
+    if (/^项目[:：]/.test(line)) info.project = value("项目");
+    if (/^章节 ID[:：]/.test(line)) info.chapterId = value("章节 ID");
+    if (/^章节[:：]/.test(line)) info.chapter = value("章节");
+    if (/^来源消息[:：]/.test(line)) {
+      info.messageIds = value("来源消息").split(/[,，]\s*/).filter(Boolean);
+    }
+  }
+  return info;
+}
+
+function resolveKnowledgeSourceTarget(source: KnowledgeSourceInfo): KnowledgeSourceTarget {
+  let project = projects.value.find((item) => item.id === source.projectId) ?? null;
+  if (!project && source.project) {
+    project = projects.value.find((item) => item.name === source.project) ?? null;
+  }
+  if (!project && source.messageIds.length > 0) {
+    project = projects.value.find((item) =>
+      item.chat.some((message) => source.messageIds.includes(message.id)),
+    ) ?? null;
+  }
+  const chapter = project
+    ? project.chapters.find((item) => item.id === source.chapterId)
+      ?? project.chapters.find((item) => item.title === source.chapter)
+      ?? null
+    : null;
+  const messageId = project
+    ? source.messageIds.find((id) => project?.chat.some((message) => message.id === id)) ?? ""
+    : "";
+  return {project, chapter, messageId};
+}
+
+async function jumpToKnowledgeSource(destination: "chat" | "chapter"): Promise<void> {
+  const target = activeKnowledgeSourceTarget.value;
+  if (!target.project) {
+    ElMessage.warning("原项目已不在当前设备，可以继续查看保留的来源摘录");
+    return;
+  }
+  if (destination === "chapter" && !target.chapter) {
+    ElMessage.warning("原章节已不存在，可以继续查看保留的来源摘录");
+    return;
+  }
+  if (destination === "chat" && !target.messageId) {
+    ElMessage.warning("原对话已不在当前设备，可以继续查看保留的来源摘录");
+    return;
+  }
+  activeProjectId.value = target.project.id;
+  const nextChapterId = target.chapter?.id ?? target.project.chapters[0]?.id ?? "";
+  activeChapterId.value = nextChapterId;
+  localStorage.setItem(activeProjectKey, target.project.id);
+  localStorage.setItem(activeChapterKey, nextChapterId);
+  knowledgeReviewVisible.value = false;
+  if (destination === "chapter") {
+    readerMode.value = "edit";
+    activity.value = "novel";
+    resetReaderScroll();
+    markSaved(`已打开《${target.chapter?.title || "原章节"}》`);
+    return;
+  }
+  activity.value = "chat";
+  await nextTick();
+  await nextTick();
+  const messageElement = Array.from(
+    chatThreadRef.value?.querySelectorAll<HTMLElement>("[data-message-id]") ?? [],
+  ).find((element) => element.dataset.messageId === target.messageId);
+  if (!messageElement) {
+    ElMessage.warning("已打开原项目，但没有找到对应消息");
+    return;
+  }
+  highlightedKnowledgeMessageId.value = target.messageId;
+  messageElement.scrollIntoView({behavior: "smooth", block: "center"});
+  window.setTimeout(() => {
+    if (highlightedKnowledgeMessageId.value === target.messageId) {
+      highlightedKnowledgeMessageId.value = "";
+    }
+  }, 3600);
+  markSaved("已定位到资料来源");
+}
+
+function knowledgeEditableBody(item: KnowledgeReviewItem): string {
+  return splitKnowledgeEnvelope(item.content, item.title).body;
+}
+
+function composeKnowledgeContent(item: KnowledgeReviewItem, title: string, body: string): string {
+  const {metadata} = splitKnowledgeEnvelope(item.content, item.title);
+  if (!metadata) {
+    return body.trim();
+  }
+  return [`# ${title.trim()}`, "", body.trim(), "", "---", metadata].join("\n");
+}
+
+function coexistNodeId(item: KnowledgeReviewItem): string {
+  const existing = knowledgeCoexistNodeIds.value[item.key];
+  if (existing) return existing;
+  const suffix = uid("lore").toLocaleLowerCase().replace(/[^a-z0-9-]+/g, "-");
+  const nodeId = `${workspaceId}.${suffix}`.slice(0, 126).replace(/[^a-z0-9]$/g, "0");
+  knowledgeCoexistNodeIds.value = {...knowledgeCoexistNodeIds.value, [item.key]: nodeId};
+  return nodeId;
+}
+
+function mergeKnowledgeBodies(target: KnowledgeReviewItem, draftTitle: string, draftBody: string): string {
+  const currentBody = knowledgeEditableBody(target).trim();
+  const addition = draftBody.trim();
+  if (!currentBody) return addition;
+  if (!addition || currentBody === addition || currentBody.includes(addition)) return currentBody;
+  return [currentBody, `## 补充：${draftTitle.trim()}`, addition].join("\n\n");
+}
+
+function selectKnowledgeConflictTarget(item: KnowledgeReviewItem): void {
+  if (item.stage !== "library") return;
+  knowledgeConflictTargetKey.value = item.key;
+  const activeKey = activeKnowledgeReviewItem.value?.key;
+  if (activeKey) {
+    knowledgeConflictTargets.value = {...knowledgeConflictTargets.value, [activeKey]: item.key};
+  }
+}
+
+function selectKnowledgeConflictMode(mode: KnowledgeConflictMode): void {
+  if (mode !== "coexist" && !activeKnowledgeConflictTarget.value) {
+    ElMessage.info("先从相似资料中选择一条已入库资料");
+    return;
+  }
+  knowledgeConflictMode.value = mode;
+  const activeKey = activeKnowledgeReviewItem.value?.key;
+  if (activeKey) {
+    knowledgeConflictModes.value = {...knowledgeConflictModes.value, [activeKey]: mode};
+  }
+}
+
+function knowledgeReviewPatch(item: KnowledgeReviewItem): {
+  node_id: string;
+  title: string;
+  node_type: string;
+  content: string;
+  authority: string;
+  tags: string[];
+} {
+  const form = knowledgeReviewForm.value;
+  const target = activeKnowledgeConflictTarget.value;
+  const mode = target ? knowledgeConflictMode.value : "coexist";
+  let title = form.title.trim();
+  let nodeType = form.nodeType;
+  let body = form.body.trim();
+  let nodeId = coexistNodeId(item);
+  if (mode === "merge" && target?.nodeId) {
+    title = target.title;
+    nodeType = target.nodeType;
+    body = mergeKnowledgeBodies(target, form.title, body);
+    nodeId = target.nodeId;
+  } else if (mode === "replace" && target?.nodeId) {
+    nodeId = target.nodeId;
+  }
+  let content = composeKnowledgeContent(item, title, body);
+  if (mode !== "coexist" && target) {
+    const action = mode === "merge" ? "合并" : "覆盖";
+    content = `${content}\n处理记录：${action}自 ${target.nodeId} rev ${target.revision ?? 1}`;
+  }
+  return {
+    node_id: nodeId,
+    title,
+    node_type: nodeType,
+    content,
+    authority: form.authority === "project" ? "approved" : form.authority || "experimental",
+    tags: parseKnowledgeReviewTags(),
+  };
+}
+
+function similarityTokens(value: string): Set<string> {
+  const clean = value.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+  const tokens = new Set(clean.split(/\s+/).filter((token) => token.length > 1));
+  const compact = clean.replace(/\s+/g, "");
+  for (let index = 0; index < compact.length - 1; index += 1) {
+    tokens.add(compact.slice(index, index + 2));
+  }
+  return tokens;
+}
+
+function setSimilarity(left: Set<string>, right: Set<string>): number {
+  if (left.size === 0 || right.size === 0) {
+    return 0;
+  }
+  let shared = 0;
+  for (const token of left) {
+    if (right.has(token)) shared += 1;
+  }
+  return shared / (left.size + right.size - shared);
+}
+
+function knowledgeSimilarities(target: KnowledgeReviewItem): KnowledgeSimilarity[] {
+  const candidates = [
+    ...knowledgeDraftItems.value,
+    ...knowledgeReadyItems.value,
+    ...knowledgeLibraryItems.value,
+  ];
+  const targetBody = knowledgeEditableBody(target);
+  const targetTokens = similarityTokens(`${target.title} ${targetBody}`);
+  const targetTitle = similarityTokens(target.title);
+  const targetTags = new Set(target.tags.map((tag) => tag.toLocaleLowerCase()));
+  return candidates
+    .filter((candidate) => candidate.key !== target.key)
+    .map((candidate) => {
+      const contentScore = setSimilarity(
+        targetTokens,
+        similarityTokens(`${candidate.title} ${knowledgeEditableBody(candidate)}`),
+      );
+      const titleScore = setSimilarity(targetTitle, similarityTokens(candidate.title));
+      const tagScore = setSimilarity(targetTags, new Set(candidate.tags.map((tag) => tag.toLocaleLowerCase())));
+      const score = Math.min(1, contentScore * 0.68 + titleScore * 0.24 + tagScore * 0.08);
+      const location = candidate.stage === "library" ? "已入库资料" : candidate.stage === "ready" ? "待入库资料" : "另一条草稿";
+      return {item: candidate, score, reason: location};
+    })
+    .filter((match) => match.score >= 0.16)
+    .sort((left, right) => right.score - left.score)
+    .slice(0, 4);
+}
+
+function knowledgeDuplicateCount(item: KnowledgeReviewItem): number {
+  return knowledgeSimilarities(item).filter((match) => match.score >= 0.34).length;
+}
+
+function knowledgeTypeLabel(value: string): string {
+  return knowledgeTypeOptions.find((option) => option.value === value)?.label ?? "资料";
+}
+
+function formatKnowledgeDate(value: string): string {
+  if (!value) return "刚刚";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString("zh-CN", {month: "short", day: "numeric", hour: "2-digit", minute: "2-digit"});
 }
 
 function isKnowledgeSelected(record: ApiRecord): boolean {
@@ -2918,57 +4560,176 @@ async function refreshChatReferences(): Promise<void> {
   markSaved("资料列表已刷新");
 }
 
-async function saveMessageAsKnowledge(message: CreativeMessage): Promise<void> {
-  const result = await perform("保存资料", () =>
-    createManualProposal({
-      title: `创作资料：${activeProject.value.name}`,
-      node_type: "Note",
-      content: [
-        `# ${activeProject.value.name} 创作资料`,
-        "",
-        `来源：对话创作 / ${message.role === "user" ? "用户输入" : "助手回复"}`,
-        activeChapter.value ? `当前章节：${activeChapter.value.title}` : "",
-        "",
-        message.content,
-      ].filter(Boolean).join("\n"),
-      authority: "experimental",
-      tags: ["lore", "chat-extract", activeProject.value.id],
-    }),
-  );
-  if (result) {
-    markSaved("已保存为资料草稿，可在资料入库面板确认")
-    await refreshReview();
-  }
+function selectRecentKnowledgeMessages(): void {
+  knowledgeSelectedMessageIds.value = knowledgeExtractMessages.value.slice(-8).map((message) => message.id);
 }
 
-async function saveChatAsKnowledge(): Promise<void> {
-  if (activeProject.value.chat.length === 0) {
-    runState.value = {error: "还没有可保存的对话"};
+function selectAllKnowledgeMessages(): void {
+  knowledgeSelectedMessageIds.value = knowledgeExtractMessages.value.slice(-24).map((message) => message.id);
+}
+
+function toggleKnowledgeExtractMessage(messageId: string): void {
+  if (knowledgeSelectedMessageIds.value.includes(messageId)) {
+    knowledgeSelectedMessageIds.value = knowledgeSelectedMessageIds.value.filter((id) => id !== messageId);
     return;
   }
-  const content = activeProject.value.chat
-    .slice(-8)
-    .map((message) => `${message.role === "user" ? "我" : "Rhine-Lore"}：\n${message.content}`)
-    .join("\n\n");
-  const result = await perform("保存对话资料", () =>
-    createManualProposal({
-      title: `对话资料：${activeProject.value.name}`,
-      node_type: "Note",
-      content: [
-        `# ${activeProject.value.name} 对话资料`,
-        "",
-        activeChapter.value ? `当前章节：${activeChapter.value.title}` : "",
-        "",
-        content,
-      ].filter(Boolean).join("\n"),
-      authority: "experimental",
-      tags: ["lore", "conversation", activeProject.value.id],
-    }),
-  );
-  if (result) {
-    markSaved("最近对话已保存为资料草稿")
-    await refreshReview();
+  if (knowledgeSelectedMessageIds.value.length >= 24) {
+    ElMessage.warning("一次最多提炼 24 条消息");
+    return;
   }
+  knowledgeSelectedMessageIds.value = [...knowledgeSelectedMessageIds.value, messageId];
+}
+
+function openKnowledgeExtractor(messageIds?: string[]): void {
+  if (activeProject.value.chat.length === 0) {
+    runState.value = {error: "还没有可提炼的对话"};
+    ElMessage.warning("先进行一段创作对话，再提炼资料");
+    return;
+  }
+  knowledgeExtractStep.value = "select";
+  knowledgeCandidates.value = [];
+  knowledgeExtractOffline.value = false;
+  knowledgeExtractNote.value = "";
+  const available = new Set(knowledgeExtractMessages.value.map((message) => message.id));
+  const requested = (messageIds ?? []).filter((id) => available.has(id));
+  knowledgeSelectedMessageIds.value = requested.length > 0
+    ? requested
+    : knowledgeExtractMessages.value.slice(-8).map((message) => message.id);
+  knowledgeExtractVisible.value = true;
+}
+
+function saveMessageAsKnowledge(message: CreativeMessage): void {
+  openKnowledgeExtractor([message.id]);
+}
+
+function saveChatAsKnowledge(): void {
+  openKnowledgeExtractor();
+}
+
+async function runKnowledgeExtraction(): Promise<void> {
+  if (knowledgeSelectedMessages.value.length === 0) {
+    ElMessage.warning("至少选择一条对话");
+    return;
+  }
+  const result = await perform("提炼对话资料", () =>
+    extractConversationKnowledge({
+      project: {
+        id: activeProject.value.id,
+        name: activeProject.value.name,
+        genre: activeProject.value.genre,
+      },
+      chapter: activeChapter.value
+        ? {id: activeChapter.value.id, title: activeChapter.value.title}
+        : null,
+      messages: knowledgeSelectedMessages.value.map((message) => ({
+        id: message.id,
+        role: message.role,
+        content: message.content,
+        created_at: message.created_at,
+      })),
+    }),
+    {collapseOutput: true},
+  );
+  if (!result) {
+    return;
+  }
+  knowledgeCandidates.value = result.candidates.map((candidate) => ({
+    ...candidate,
+    selected: true,
+    tagsText: candidate.tags.join(", "),
+  }));
+  knowledgeExtractOffline.value = result.offline;
+  knowledgeExtractNote.value = result.note;
+  knowledgeExtractStep.value = "review";
+}
+
+function knowledgeCandidateSource(candidate: KnowledgeCandidateDraft): CreativeMessage[] {
+  const ids = new Set(candidate.source_message_ids);
+  const matched = knowledgeSelectedMessages.value.filter((message) => ids.has(message.id));
+  return matched.length > 0 ? matched : knowledgeSelectedMessages.value;
+}
+
+function knowledgeCandidateContent(candidate: KnowledgeCandidateDraft): string {
+  const sourceLines = knowledgeCandidateSource(candidate)
+    .slice(0, 4)
+    .map((message) => {
+      const role = message.role === "user" ? "我" : "Rhine-Lore";
+      return `- ${role}：${preview(message.content, 180)}`;
+    });
+  return [
+    `# ${candidate.title.trim()}`,
+    "",
+    candidate.content.trim(),
+    "",
+    "---",
+    "来源：Rhine-Lore 对话提炼",
+    `项目：${activeProject.value.name}`,
+    `项目 ID：${activeProject.value.id}`,
+    activeChapter.value ? `章节：${activeChapter.value.title}` : "章节：未选择",
+    activeChapter.value ? `章节 ID：${activeChapter.value.id}` : "章节 ID：",
+    `来源消息：${candidate.source_message_ids.join(", ")}`,
+    "来源摘录：",
+    ...sourceLines,
+  ].join("\n");
+}
+
+async function saveKnowledgeCandidates(): Promise<void> {
+  const selected = knowledgeCandidates.value.filter((candidate) => candidate.selected);
+  const invalid = selected.find((candidate) => !candidate.title.trim() || !candidate.content.trim());
+  if (selected.length === 0) {
+    ElMessage.warning("至少选择一条资料候选");
+    return;
+  }
+  if (invalid) {
+    ElMessage.warning("所选资料的标题和内容不能为空");
+    return;
+  }
+  const result = await perform("保存资料草稿", async () => {
+    const savedIds: string[] = [];
+    const failures: {candidateId: string; message: string}[] = [];
+    for (const candidate of selected) {
+      try {
+        const tags = candidate.tagsText
+          .split(/[,，、\s]+/)
+          .map((tag) => tag.trim())
+          .filter(Boolean);
+        await createManualProposal({
+          title: candidate.title.trim(),
+          node_type: candidate.node_type,
+          content: knowledgeCandidateContent(candidate),
+          authority: candidate.authority || "experimental",
+          tags: Array.from(new Set(["lore", "chat-extract", activeProject.value.id, ...tags])),
+        });
+        savedIds.push(candidate.candidate_id);
+      } catch (error) {
+        failures.push({
+          candidateId: candidate.candidate_id,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    if (savedIds.length === 0) {
+      throw new Error(failures[0]?.message || "资料草稿保存失败");
+    }
+    return {savedIds, failures};
+  }, {collapseOutput: true});
+  if (!result) {
+    return;
+  }
+  await refreshReview();
+  if (result.failures.length > 0) {
+    const failedIds = new Set(result.failures.map((failure) => failure.candidateId));
+    knowledgeCandidates.value = knowledgeCandidates.value.filter((candidate) => failedIds.has(candidate.candidate_id));
+    knowledgeCandidates.value.forEach((candidate) => {
+      candidate.selected = true;
+    });
+    markSaved(`${result.savedIds.length} 条已保存，${result.failures.length} 条需要重试`);
+    ElMessage.warning(`${result.savedIds.length} 条已进入草稿，${result.failures.length} 条保存失败并已保留`);
+    return;
+  }
+  knowledgeExtractVisible.value = false;
+  markSaved(`${result.savedIds.length} 条资料已进入草稿`);
+  toastSuccess(`${result.savedIds.length} 条资料已保存，审核后即可入库`);
 }
 
 async function submitLoreItem(kind: "world" | "characters", item: WorldCard | CharacterCard): Promise<void> {
@@ -3127,7 +4888,14 @@ function openAdjacentChapter(direction: -1 | 1): void {
 }
 
 function updateReadingProgress(): void {
-  if (activity.value !== "novel" || readerMode.value !== "read") {
+  if (!readerSource.value || (readerSource.value === "novel" && readerMode.value !== "read")) {
+    return;
+  }
+  if (readerPageMode.value === "page" && readerOverlayOpen.value) {
+    readingProgress.value = readerPages.value.length > 0
+      ? ((readerPageIndex.value + 1) / readerPages.value.length) * 100
+      : 100;
+    scheduleReaderPositionSave();
     return;
   }
   const wrap = readerScrollContainer();
@@ -3137,9 +4905,13 @@ function updateReadingProgress(): void {
   const max = wrap.scrollHeight - wrap.clientHeight;
   readingProgress.value =
     max > 0 ? Math.min(100, Math.max(0, (wrap.scrollTop / max) * 100)) : 100;
+  scheduleReaderPositionSave();
 }
 
 function maybeAutoAdvanceChapter(): void {
+  if (!readerOverlayOpen.value || !readerAutoAdvance.value || readerPageMode.value === "page") {
+    return;
+  }
   const now = Date.now();
   if (now - lastReaderAutoAdvance.value < 900) {
     return;
@@ -3194,7 +4966,6 @@ function handleReadingScroll(): void {
 
 function changeReaderPageMode(): void {
   persistReaderSettings();
-  readerPageIndex.value = 0;
   void repaginate();
 }
 
@@ -3207,114 +4978,318 @@ async function repaginate(): Promise<void> {
   if (!area) {
     return;
   }
-  const paragraphs = activeChapterParagraphs.value;
+  const previousPageCount = readerPages.value.length;
+  const previousPageProgress = previousPageCount > 1
+    ? readerPageIndex.value / (previousPageCount - 1)
+    : 0;
+  const paragraphs = readerCurrentParagraphs.value;
   const pageHeight = area.clientHeight;
   if (pageHeight < 100) {
     return;
   }
+  const areaStyle = getComputedStyle(area);
   const measure = document.createElement("div");
   measure.style.position = "fixed";
   measure.style.left = "-9999px";
   measure.style.top = "0";
   measure.style.visibility = "hidden";
+  measure.style.boxSizing = "border-box";
   measure.style.width = `${area.clientWidth}px`;
-  measure.style.fontSize = `${readerFontSize.value}px`;
-  measure.style.lineHeight = String(readerLineHeight.value);
-  measure.style.textAlign = readerJustify.value ? "justify" : "left";
+  measure.style.fontFamily = areaStyle.fontFamily;
+  measure.style.fontSize = areaStyle.fontSize;
+  measure.style.fontStyle = areaStyle.fontStyle;
+  measure.style.fontWeight = areaStyle.fontWeight;
+  measure.style.letterSpacing = areaStyle.letterSpacing;
+  measure.style.lineHeight = areaStyle.lineHeight;
+  measure.style.textAlign = areaStyle.textAlign;
+  measure.style.wordBreak = "normal";
+  measure.style.overflowWrap = "break-word";
+  measure.style.setProperty("line-break", "strict");
   document.body.appendChild(measure);
-  const heights: number[] = [];
-  for (const paragraph of paragraphs) {
-    const el = document.createElement("p");
-    el.textContent = paragraph;
-    el.style.textIndent = "2em";
-    el.style.marginBottom = `${Math.round(readerParagraphSpacing.value * readerFontSize.value)}px`;
-    measure.appendChild(el);
-    const margin = parseFloat(getComputedStyle(el).marginBottom) || 0;
-    heights.push(el.offsetHeight + margin);
-  }
-  const pages: string[][] = [];
-  let current: string[] = [];
+  const paragraphMeasure = document.createElement("p");
+  paragraphMeasure.style.boxSizing = "border-box";
+  paragraphMeasure.style.width = "100%";
+  paragraphMeasure.style.margin = `0 0 ${readerParagraphSpacing.value}em`;
+  paragraphMeasure.style.padding = "0";
+  paragraphMeasure.style.font = "inherit";
+  paragraphMeasure.style.lineHeight = "inherit";
+  paragraphMeasure.style.textAlign = "inherit";
+  paragraphMeasure.style.wordBreak = "normal";
+  paragraphMeasure.style.overflowWrap = "break-word";
+  paragraphMeasure.style.setProperty("line-break", "strict");
+  measure.appendChild(paragraphMeasure);
+
+  const paragraphHeight = (text: string, continuation: boolean): number => {
+    paragraphMeasure.textContent = text;
+    paragraphMeasure.style.textIndent = continuation || !readerIndent.value ? "0" : "2em";
+    const margin = parseFloat(getComputedStyle(paragraphMeasure).marginBottom) || 0;
+    return paragraphMeasure.getBoundingClientRect().height + margin;
+  };
+
+  const preferredBreak = (text: string, maximum: number): number => {
+    let safeMaximum = maximum;
+    const previousCode = text.charCodeAt(safeMaximum - 1);
+    const nextCode = text.charCodeAt(safeMaximum);
+    if (previousCode >= 0xd800 && previousCode <= 0xdbff && nextCode >= 0xdc00 && nextCode <= 0xdfff) {
+      safeMaximum -= 1;
+    }
+    const minimum = Math.max(1, Math.floor(safeMaximum * 0.72));
+    for (let index = safeMaximum - 1; index >= minimum; index -= 1) {
+      if (/[。！？!?…；;，,、：:）】》」』”’\s]/.test(text[index])) {
+        return index + 1;
+      }
+    }
+    return Math.max(1, safeMaximum);
+  };
+
+  const pages: ReaderPage[] = [{kind: "title"}];
+  let current: ReaderPageParagraph[] = [];
   let used = 0;
-  for (let i = 0; i < paragraphs.length; i++) {
-    const height = heights[i];
-    if (used + height > pageHeight && current.length > 0) {
-      pages.push(current);
+  const commitPage = () => {
+    if (current.length > 0) {
+      pages.push({kind: "content", paragraphs: current});
       current = [];
       used = 0;
     }
-    current.push(paragraphs[i]);
-    used += height;
+  };
+
+  try {
+    for (const paragraph of paragraphs) {
+      let remaining = paragraph.trim();
+      let continuation = false;
+      while (remaining) {
+        const available = pageHeight - used;
+        const fullHeight = paragraphHeight(remaining, continuation);
+        if (fullHeight <= available + 0.5) {
+          current.push({text: remaining, continuation});
+          used += fullHeight;
+          break;
+        }
+
+        const minimumFragmentHeight = readerFontSize.value * readerLineHeight.value * 2
+          + readerParagraphSpacing.value * readerFontSize.value;
+        if (current.length > 0 && available < minimumFragmentHeight) {
+          commitPage();
+          continue;
+        }
+
+        let low = 1;
+        let high = remaining.length;
+        let fittingLength = 0;
+        while (low <= high) {
+          const middle = Math.floor((low + high) / 2);
+          if (paragraphHeight(remaining.slice(0, middle), continuation) <= available + 0.5) {
+            fittingLength = middle;
+            low = middle + 1;
+          } else {
+            high = middle - 1;
+          }
+        }
+
+        if (fittingLength <= 0) {
+          if (current.length > 0) {
+            commitPage();
+            continue;
+          }
+          fittingLength = 1;
+        }
+
+        const splitAt = preferredBreak(remaining, fittingLength);
+        const fragment = remaining.slice(0, splitAt).trimEnd();
+        if (!fragment) {
+          remaining = remaining.slice(splitAt).trimStart();
+          continue;
+        }
+        current.push({text: fragment, continuation});
+        commitPage();
+        remaining = remaining.slice(splitAt).trimStart();
+        continuation = true;
+      }
+    }
+    commitPage();
+  } finally {
+    document.body.removeChild(measure);
   }
-  if (current.length > 0) {
-    pages.push(current);
-  }
-  document.body.removeChild(measure);
-  readerPages.value = pages.length > 0 ? pages : [[]];
-  if (readerPageIndex.value >= readerPages.value.length) {
+  readerPages.value = pages;
+  if (previousPageCount > 1 && readerPages.value.length > 1) {
+    readerPageIndex.value = Math.min(
+      readerPages.value.length - 1,
+      Math.max(0, Math.round(previousPageProgress * (readerPages.value.length - 1))),
+    );
+  } else if (readerPageIndex.value >= readerPages.value.length) {
     readerPageIndex.value = Math.max(0, readerPages.value.length - 1);
   }
+  updateReadingProgress();
+}
+
+function handleReaderPointerDown(event: PointerEvent): void {
+  if (readerPageMode.value !== "page" || event.pointerType !== "touch") return;
+  readerSwipeState = {
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    startedAt: performance.now(),
+  };
+}
+
+function handleReaderPointerUp(event: PointerEvent): void {
+  const swipe = readerSwipeState;
+  readerSwipeState = null;
+  if (!swipe || swipe.pointerId !== event.pointerId || readerPageMode.value !== "page") return;
+  const deltaX = event.clientX - swipe.startX;
+  const deltaY = event.clientY - swipe.startY;
+  const elapsed = performance.now() - swipe.startedAt;
+  if (elapsed > 900 || Math.abs(deltaX) < 54 || Math.abs(deltaX) < Math.abs(deltaY) * 1.25) return;
+  suppressReaderTapUntil = performance.now() + 360;
+  if (deltaX < 0) readerPageNext();
+  else readerPagePrev();
+}
+
+function cancelReaderSwipe(): void {
+  readerSwipeState = null;
+}
+
+function handleReaderTap(zone: "previous" | "chrome" | "next"): void {
+  if (performance.now() < suppressReaderTapUntil) return;
+  if (zone === "previous") readerPagePrev();
+  else if (zone === "next") readerPageNext();
+  else readerChromeVisible.value = !readerChromeVisible.value;
 }
 
 function readerPagePrev(): void {
   if (readerPageMode.value === "page") {
     if (readerPageIndex.value > 0) {
       readerPageIndex.value -= 1;
+      updateReadingProgress();
       return;
     }
-    if (activeChapterIndex.value > 0) {
-      openAdjacentChapter(-1);
-    }
+    void openReaderAdjacentChapter(-1);
     return;
   }
-  openAdjacentChapter(-1);
+  void openReaderAdjacentChapter(-1);
 }
 
 function readerPageNext(): void {
   if (readerPageMode.value === "page") {
     if (readerPageIndex.value < readerPages.value.length - 1) {
       readerPageIndex.value += 1;
+      updateReadingProgress();
       return;
     }
-    if (activeChapterIndex.value < activeProject.value.chapters.length - 1) {
-      openAdjacentChapter(1);
-    }
+    void openReaderAdjacentChapter(1);
     return;
   }
-  openAdjacentChapter(1);
+  void openReaderAdjacentChapter(1);
 }
 
-function currentReaderPage(): string[] {
-  return readerPages.value[readerPageIndex.value] ?? [];
+function currentReaderPage(): ReaderPageParagraph[] {
+  const page = readerPages.value[readerPageIndex.value];
+  return page?.kind === "content" ? page.paragraphs : [];
 }
 
-function enterReaderMode(): void {
-  readerMode.value = "read";
-  if (!activeChapter.value) {
+function currentReaderPageIsTitle(): boolean {
+  return readerPages.value[readerPageIndex.value]?.kind !== "content";
+}
+
+async function openReaderAdjacentChapter(direction: -1 | 1): Promise<void> {
+  const next = readerCurrentChapterIndex.value + direction;
+  const item = readerTocItems.value[next];
+  if (!item) return;
+  await selectReaderChapter(item.id, false);
+}
+
+async function seekReaderOverallProgress(value: number): Promise<void> {
+  const total = readerTocItems.value.length;
+  if (total <= 0) return;
+  const normalized = Math.min(0.9999, Math.max(0, value / 100));
+  const exact = normalized * total;
+  const chapterIndex = Math.min(total - 1, Math.floor(exact));
+  const chapterProgress = (exact - chapterIndex) * 100;
+  const chapter = readerTocItems.value[chapterIndex];
+  if (!chapter) return;
+  await selectReaderChapter(chapter.id, false);
+  await restoreReaderProgress({chapterId: chapter.id, progress: chapterProgress, pageIndex: 0});
+}
+
+async function enterReaderMode(): Promise<void> {
+  if (activity.value === "novel") readerMode.value = "read";
+  if (!readerCurrentChapterId.value) {
     return;
   }
   readerOverlayOpen.value = true;
+  readerChromeVisible.value = true;
   userScrolledReading.value = false;
-  requestAnimationFrame(() => {
-    resetReaderScroll();
-    void repaginate();
-  });
+  const position = loadReaderPosition();
+  if (position?.chapterId && position.chapterId !== readerCurrentChapterId.value) {
+    await selectReaderChapter(position.chapterId, false);
+  }
+  await nextTick();
+  await repaginate();
+  await restoreReaderProgress(position);
 }
 
 function exitReaderMode(): void {
+  saveReaderPosition();
   readerOverlayOpen.value = false;
-  readerMode.value = "edit";
+  if (activity.value === "novel") readerMode.value = "edit";
+  if (document.fullscreenElement) void document.exitFullscreen?.().catch(() => undefined);
+}
+
+function scrollReaderViewport(direction: -1 | 1): void {
+  const wrap = readerScrollContainer();
+  if (!wrap) return;
+  wrap.scrollBy({top: direction * wrap.clientHeight * 0.86, behavior: "smooth"});
+  window.setTimeout(updateReadingProgress, 240);
 }
 
 function handleReaderOverlayKeydown(event: KeyboardEvent): void {
-  if (event.key === "Escape" && readerOverlayOpen.value) {
+  if (!readerOverlayOpen.value) return;
+  const target = event.target as HTMLElement | null;
+  if (target?.matches("input, textarea, [contenteditable='true']")) return;
+  if (event.key === "Escape") {
     exitReaderMode();
+    return;
+  }
+  if (event.key === "ArrowRight") {
+    event.preventDefault();
+    readerPageNext();
+    return;
+  }
+  if (event.key === "ArrowLeft") {
+    event.preventDefault();
+    readerPagePrev();
+    return;
+  }
+  if (["PageDown", " "].includes(event.key)) {
+    event.preventDefault();
+    if (readerPageMode.value === "page") readerPageNext();
+    else scrollReaderViewport(1);
+    return;
+  }
+  if (event.key === "PageUp") {
+    event.preventDefault();
+    if (readerPageMode.value === "page") readerPagePrev();
+    else scrollReaderViewport(-1);
+    return;
+  }
+  if (event.key.toLocaleLowerCase() === "m") {
+    toggleReaderBookmark();
+  }
+  if (event.key.toLocaleLowerCase() === "f") {
+    toggleReaderFullscreen();
   }
 }
 
 function handleReaderResize(): void {
-  if (readerPageMode.value === "page" && activity.value === "novel") {
-    void repaginate();
+  if (window.innerWidth <= 720) {
+    chatSidebarOpen.value = false;
   }
+  if (readerResizeTimer) window.clearTimeout(readerResizeTimer);
+  readerResizeTimer = window.setTimeout(() => {
+    if (readerPageMode.value === "page" && readerCurrentChapterId.value) {
+      void repaginate();
+    }
+  }, 120);
 }
 
 async function loadChapterContext(): Promise<void> {
@@ -3368,36 +5343,212 @@ async function refreshReview(): Promise<void> {
   if (stagingResult.status === "fulfilled") {
     stagingEntries.value = stagingResult.value;
   }
+  const draftKeys = new Set(knowledgeDraftItems.value.map((item) => item.key));
+  const readyIds = new Set(knowledgeReadyItems.value.map((item) => item.entryId));
+  selectedKnowledgeDraftKeys.value = selectedKnowledgeDraftKeys.value.filter((key) => draftKeys.has(key));
+  selectedKnowledgeReadyIds.value = selectedKnowledgeReadyIds.value.filter((id) => readyIds.has(id));
 }
 
-function proposalTemporaryIds(proposal: ApiRecord): string[] {
-  return ((proposal.proposed_nodes ?? []) as ApiRecord[])
-    .map((node) => String(node.temporary_id ?? ""))
-    .filter(Boolean);
+async function refreshKnowledgeCenter(): Promise<void> {
+  await Promise.allSettled([refreshReview(), refreshNodes()]);
 }
 
-async function stageAll(proposal: ApiRecord): Promise<void> {
-  const proposalId = String(proposal.proposal_id);
-  const temporaryIds = proposalTemporaryIds(proposal);
-  if (temporaryIds.length === 0) {
-    runState.value = {error: "Proposal 没有可保存的候选节点"};
+function knowledgeSourceSummary(item: KnowledgeReviewItem): string {
+  const source = parseKnowledgeSource(item.content);
+  if (source.project && source.chapter && source.chapter !== "未选择") {
+    return `${source.project} · ${source.chapter}`;
+  }
+  if (source.project) return source.project;
+  if (source.kind) return source.kind;
+  return "手动创建";
+}
+
+function toggleKnowledgeDraftSelection(item: KnowledgeReviewItem, selected: unknown): void {
+  const next = new Set(selectedKnowledgeDraftKeys.value);
+  if (Boolean(selected)) next.add(item.key);
+  else next.delete(item.key);
+  selectedKnowledgeDraftKeys.value = Array.from(next);
+}
+
+function toggleKnowledgeReadySelection(item: KnowledgeReviewItem, selected: unknown): void {
+  if (!item.entryId) return;
+  const next = new Set(selectedKnowledgeReadyIds.value);
+  if (Boolean(selected)) next.add(item.entryId);
+  else next.delete(item.entryId);
+  selectedKnowledgeReadyIds.value = Array.from(next);
+}
+
+function toggleAllKnowledgeDrafts(): void {
+  selectedKnowledgeDraftKeys.value = selectedKnowledgeDraftKeys.value.length === knowledgeDraftItems.value.length
+    ? []
+    : knowledgeDraftItems.value.map((item) => item.key);
+}
+
+function toggleAllKnowledgeReady(): void {
+  selectedKnowledgeReadyIds.value = selectedKnowledgeReadyIds.value.length === knowledgeReadyItems.value.length
+    ? []
+    : knowledgeReadyItems.value.flatMap((item) => item.entryId ? [item.entryId] : []);
+}
+
+function openKnowledgeReview(item: KnowledgeReviewItem): void {
+  activeKnowledgeReviewKey.value = item.key;
+  knowledgeReviewForm.value = {
+    title: item.title,
+    nodeType: item.nodeType,
+    body: knowledgeEditableBody(item),
+    authority: item.authority || "experimental",
+    tagsText: item.tags.join(", "),
+  };
+  const libraryMatches = knowledgeSimilarities(item)
+    .filter((match) => match.item.stage === "library");
+  const savedTargetKey = knowledgeConflictTargets.value[item.key];
+  const target = libraryMatches.find((match) => match.item.key === savedTargetKey)?.item
+    ?? libraryMatches[0]?.item
+    ?? null;
+  knowledgeConflictTargetKey.value = target?.key ?? "";
+  if (target) {
+    knowledgeConflictTargets.value = {...knowledgeConflictTargets.value, [item.key]: target.key};
+  }
+  const savedMode = knowledgeConflictModes.value[item.key] ?? "coexist";
+  knowledgeConflictMode.value = savedMode !== "coexist" && !target ? "coexist" : savedMode;
+  coexistNodeId(item);
+  knowledgeReviewVisible.value = true;
+}
+
+function parseKnowledgeReviewTags(): string[] {
+  return Array.from(new Set(
+    knowledgeReviewForm.value.tagsText
+      .split(/[,，、\s]+/)
+      .map((tag) => tag.trim())
+      .filter(Boolean),
+  ));
+}
+
+async function saveActiveKnowledgeReview(options: {quiet?: boolean} = {}): Promise<boolean> {
+  const item = activeKnowledgeReviewItem.value;
+  const form = knowledgeReviewForm.value;
+  if (!item || item.stage !== "draft" || !item.proposalId || !item.temporaryId) {
+    return false;
+  }
+  if (!form.title.trim() || !form.body.trim()) {
+    ElMessage.warning("标题和内容不能为空");
+    return false;
+  }
+  const patch = knowledgeReviewPatch(item);
+  const result = await perform(
+    "保存资料修改",
+    () => updateProposalNode(item.proposalId!, item.temporaryId!, patch),
+    {collapseOutput: true},
+  );
+  if (!result) return false;
+  knowledgeReviewForm.value = {
+    ...knowledgeReviewForm.value,
+    title: patch.title,
+    nodeType: patch.node_type,
+    body: splitKnowledgeEnvelope(patch.content, patch.title).body,
+    authority: patch.authority,
+  };
+  await refreshReview();
+  if (!options.quiet) {
+    markSaved("资料修改已保存");
+    toastSuccess("资料草稿已更新");
+  }
+  return true;
+}
+
+async function stageActiveKnowledgeReview(): Promise<void> {
+  const item = activeKnowledgeReviewItem.value;
+  if (!item || item.stage !== "draft" || !item.proposalId || !item.temporaryId) return;
+  const saved = await saveActiveKnowledgeReview({quiet: true});
+  if (!saved) return;
+  const result = await perform(
+    "保存并送审",
+    () => stageProposal(item.proposalId!, [item.temporaryId!]),
+    {collapseOutput: true},
+  );
+  if (!result) return;
+  knowledgeReviewVisible.value = false;
+  knowledgeQueueTab.value = "ready";
+  await refreshReview();
+  markSaved("资料已送去确认");
+  toastSuccess("资料已送审，确认后即可用于创作");
+}
+
+async function rejectActiveKnowledgeReview(): Promise<void> {
+  const item = activeKnowledgeReviewItem.value;
+  if (!item || item.stage !== "draft" || !item.proposalId) return;
+  try {
+    await ElMessageBox.confirm(
+      `驳回“${item.title}”后，它不会进入资料库，但来源记录仍会保留。`,
+      "驳回资料草稿",
+      {confirmButtonText: "确认驳回", cancelButtonText: "取消", type: "warning"},
+    );
+  } catch {
     return;
   }
-  const result = await perform("送去确认", () => stageProposal(proposalId, temporaryIds));
-  if (result) {
-    markSaved("资料已送去确认");
-    toastSuccess("资料已送去确认");
-    await refreshReview();
-  }
+  const result = await perform("驳回资料草稿", () => rejectProposal(item.proposalId!), {collapseOutput: true});
+  if (!result) return;
+  knowledgeReviewVisible.value = false;
+  await refreshReview();
+  markSaved("资料草稿已驳回");
 }
 
-async function approveEntry(entry: ApiRecord): Promise<void> {
-  const result = await perform("确认入库", () => approveStaging([String(entry.entry_id)]));
-  if (result) {
-    markSaved("资料已入库");
-    toastSuccess("资料已入库");
-    await Promise.allSettled([refreshReview(), refreshNodes()]);
+async function stageSelectedKnowledgeDrafts(): Promise<void> {
+  const selected = knowledgeDraftItems.value.filter((item) => selectedKnowledgeDraftKeys.value.includes(item.key));
+  if (selected.length === 0) {
+    ElMessage.warning("先选择要送审的资料草稿");
+    return;
   }
+  const groups = new Map<string, string[]>();
+  for (const item of selected) {
+    if (!item.proposalId || !item.temporaryId) continue;
+    groups.set(item.proposalId, [...(groups.get(item.proposalId) ?? []), item.temporaryId]);
+  }
+  const result = await perform("批量送审", async () => {
+    for (const item of selected) {
+      if (!item.proposalId || !item.temporaryId) continue;
+      await updateProposalNode(item.proposalId, item.temporaryId, {
+        node_id: coexistNodeId(item),
+        title: item.title,
+        node_type: item.nodeType,
+        content: item.content,
+        authority: item.authority === "project" ? "approved" : item.authority || "experimental",
+        tags: item.tags,
+      });
+    }
+    for (const [proposalId, temporaryIds] of groups) {
+      await stageProposal(proposalId, temporaryIds);
+    }
+    return {count: selected.length};
+  }, {collapseOutput: true});
+  if (!result) return;
+  selectedKnowledgeDraftKeys.value = [];
+  knowledgeQueueTab.value = "ready";
+  await refreshReview();
+  markSaved(`${result.count} 条资料已送审`);
+  toastSuccess(`${result.count} 条资料已进入待入库`);
+}
+
+async function approveSelectedKnowledgeReady(): Promise<void> {
+  if (selectedKnowledgeReadyIds.value.length === 0) {
+    ElMessage.warning("先选择要入库的资料");
+    return;
+  }
+  const entryIds = [...selectedKnowledgeReadyIds.value];
+  const result = await perform("批量确认入库", () => approveStaging(entryIds), {collapseOutput: true});
+  if (!result) return;
+  selectedKnowledgeReadyIds.value = [];
+  knowledgeReviewVisible.value = false;
+  await Promise.allSettled([refreshReview(), refreshNodes()]);
+  markSaved(`${entryIds.length} 条资料已入库`);
+  toastSuccess(`${entryIds.length} 条资料现在可以用于对话参考`);
+}
+
+async function approveActiveKnowledgeReady(): Promise<void> {
+  const item = activeKnowledgeReviewItem.value;
+  if (!item?.entryId) return;
+  selectedKnowledgeReadyIds.value = [item.entryId];
+  await approveSelectedKnowledgeReady();
 }
 
 async function refreshWorkspaces(): Promise<void> {
@@ -3574,7 +5725,7 @@ async function handleBackupImport(event: Event): Promise<void> {
         refreshNodes(),
         refreshReview(),
       ]);
-      backupMessage.value = `导入完成：${result.projects} 个项目、${result.books} 本书、${result.versions} 个版本`;
+      backupMessage.value = `导入完成：${result.projects} 个项目、${result.books} 本书、${result.versions} 个版本、${result.knowledge ?? 0} 份资料库数据`;
       toastSuccess("备份导入完成");
     }
   } finally {
@@ -4113,15 +6264,27 @@ function acceptEvolutionIntoChapter(): void {
   activity.value = "novel";
 }
 
+const selectedDeepSeekLevel = computed(() =>
+  deepSeekLevelOptions.find((item) => item.value === llmLevel.value) ?? deepSeekLevelOptions[1],
+);
+
+const llmParameterSummary = computed(() => {
+  const reasoning = llmPreset.value === "deepseek" ? `推理 ${llmReasoningEffort.value}` : "标准推理";
+  return `${reasoning} · 随机性 ${llmTemperature.value.toFixed(1)} · 最长 ${llmMaxTokens.value.toLocaleString()} tokens`;
+});
+
 const llmStatusLabel = computed(() => {
   if (!llmConfigured.value) {
     return "未配置（离线模板模式）";
   }
-  return `${llmModel.value.trim() || "模型"} · ${llmMaskedKey.value || "已配置"}`;
+  const level = llmPreset.value === "deepseek" ? ` · ${selectedDeepSeekLevel.value.label}` : "";
+  return `${llmModel.value.trim() || "模型"}${level} · ${llmMaskedKey.value || "已配置"}`;
 });
 
 const llmChannelLabel = computed(() => {
-  return llmConfigured.value ? `已接入 ${llmModel.value.trim() || "模型"}` : "离线模板";
+  if (!llmConfigured.value) return "离线模板";
+  const level = llmPreset.value === "deepseek" ? ` · ${selectedDeepSeekLevel.value.label}` : "";
+  return `已接入 ${llmModel.value.trim() || "模型"}${level}`;
 });
 
 const aiStatusLabel = computed(() => {
@@ -4181,21 +6344,28 @@ async function runAiCheck(): Promise<void> {
   }
 }
 
+function openAiPanel(): void {
+  aiPanelOpen.value = true;
+  void loadLlmServerConfig();
+  if (aiStatus.value === "unset") {
+    void runAiCheck();
+  }
+}
+
 function toggleAiPanel(): void {
-  aiPanelOpen.value = !aiPanelOpen.value;
   if (aiPanelOpen.value) {
-    void loadLlmServerConfig();
-    if (aiStatus.value === "unset") {
-      void runAiCheck();
-    }
+    aiPanelOpen.value = false;
+  } else {
+    openAiPanel();
   }
 }
 
 async function applyLlmProvider(provider: "deepseek" | "openai" | "custom"): Promise<void> {
   llmPreset.value = provider;
   if (provider === "deepseek") {
-    llmBaseUrl.value = "https://api.deepseek.com/v1";
-    llmModel.value = "deepseek-chat";
+    llmBaseUrl.value = "https://api.deepseek.com";
+    llmModel.value = selectedDeepSeekLevel.value.model;
+    llmReasoningEffort.value = selectedDeepSeekLevel.value.effort;
   } else if (provider === "openai") {
     llmBaseUrl.value = "https://api.openai.com/v1";
     llmModel.value = "gpt-4o-mini";
@@ -4204,12 +6374,25 @@ async function applyLlmProvider(provider: "deepseek" | "openai" | "custom"): Pro
   markSaved("模型预设已切换");
 }
 
+async function applyLlmLevel(level: LlmLevel): Promise<void> {
+  llmLevel.value = level;
+  llmModel.value = selectedDeepSeekLevel.value.model;
+  llmReasoningEffort.value = selectedDeepSeekLevel.value.effort;
+  await persistLlmConfig();
+  markSaved(`AI 等级已切换为${selectedDeepSeekLevel.value.label}`);
+}
+
 async function persistLlmConfig(): Promise<void> {
   try {
     const config = await saveLlmServerConfig({
       base_url: llmBaseUrl.value.trim() || undefined,
       model: llmModel.value.trim() || undefined,
       preset: llmPreset.value,
+      level: llmLevel.value,
+      reasoning_effort: llmReasoningEffort.value,
+      temperature: llmTemperature.value,
+      top_p: llmTopP.value,
+      max_tokens: llmMaxTokens.value,
       api_key: llmApiKey.value.trim() || undefined,
     });
     llmConfigured.value = config.configured;
@@ -4234,10 +6417,24 @@ async function loadLlmServerConfig(): Promise<void> {
     llmBaseUrl.value = config.base_url || llmBaseUrl.value;
     llmModel.value = config.model || llmModel.value;
     llmPreset.value = config.preset || llmPreset.value;
+    llmLevel.value = config.level || llmLevel.value;
+    llmReasoningEffort.value = config.reasoning_effort || selectedDeepSeekLevel.value.effort;
+    llmTemperature.value = config.temperature ?? llmTemperature.value;
+    llmTopP.value = config.top_p ?? llmTopP.value;
+    llmMaxTokens.value = config.max_tokens ?? llmMaxTokens.value;
     llmMaskedKey.value = config.masked_key;
   } catch {
     llmConfigured.value = false;
   }
+}
+
+async function resetLlmTuning(): Promise<void> {
+  llmReasoningEffort.value = selectedDeepSeekLevel.value.effort;
+  llmTemperature.value = 1;
+  llmTopP.value = 1;
+  llmMaxTokens.value = 8192;
+  await persistLlmConfig();
+  markSaved("已恢复当前 AI 等级的推荐参数");
 }
 
 function clearLlmKey(): void {
@@ -4311,6 +6508,322 @@ const evolutionActiveChapter = computed(() => {
   const index = Math.min(evolutionChapterIndex.value, Math.max(0, chapters.length - 1));
   return chapters[index] ?? null;
 });
+
+const readerSource = computed<ReaderSource | null>(() => {
+  if (activity.value === "novel") return "novel";
+  if (activity.value === "read") return "evolution";
+  if (activity.value === "shelf" && shelfBook.value) return "shelf";
+  return null;
+});
+
+const readerWorkId = computed(() => {
+  if (readerSource.value === "shelf") return shelfBookId.value;
+  return activeProject.value.id;
+});
+
+const readerWorkTitle = computed(() => {
+  if (readerSource.value === "shelf") return shelfBook.value?.name || "TXT 书籍";
+  if (readerSource.value === "evolution") return `${activeProject.value.name} · 演化小说`;
+  return activeProject.value.name;
+});
+
+const readerCurrentChapterId = computed(() => {
+  if (readerSource.value === "shelf") return shelfChapter.value?.id || "";
+  if (readerSource.value === "evolution") return evolutionActiveChapter.value ? String(evolutionActiveChapter.value.index) : "";
+  return activeChapter.value?.id || "";
+});
+
+const readerCurrentTitle = computed(() => {
+  if (readerSource.value === "shelf") return shelfChapter.value?.title || "";
+  if (readerSource.value === "evolution") return evolutionActiveChapter.value?.title || "";
+  return activeChapter.value?.title || "";
+});
+
+const readerCurrentParagraphs = computed(() => {
+  if (readerSource.value === "shelf") {
+    return shelfChapter.value ? shelfChapterParagraphs(shelfChapter.value) : [];
+  }
+  if (readerSource.value === "evolution") {
+    return (evolutionActiveChapter.value?.paragraphs ?? []).flatMap(splitReaderParagraphs);
+  }
+  return activeChapterParagraphs.value;
+});
+
+const readerTocItems = computed<ReaderTocItem[]>(() => {
+  if (readerSource.value === "shelf") {
+    const chapters = shelfBook.value?.chapters ?? [];
+    return chapters.map((chapter, index) => {
+      const chapterNumber = chapters.slice(0, index + 1).filter((item) => !isReaderVolumeTitle(item.title)).length;
+      return {
+        id: chapter.id,
+        title: chapter.title,
+        meta: isReaderVolumeTitle(chapter.title)
+          ? `卷 · 全书 ${index + 1} / ${chapters.length}`
+          : `第 ${chapterNumber} 章 · ${chapter.char_count.toLocaleString()} 字`,
+      };
+    });
+  }
+  if (readerSource.value === "evolution") {
+    return evolutionNovelChapters.value.map((chapter) => ({
+      id: String(chapter.index),
+      title: chapter.title,
+      meta: `${chapter.actName} · ${chapter.paragraphs.join("\n").length.toLocaleString()} 字`,
+    }));
+  }
+  const chapters = activeProject.value.chapters;
+  return chapters.map((chapter, index) => {
+    const chapterNumber = chapters.slice(0, index + 1).filter((item) => !isReaderVolumeTitle(item.title)).length;
+    return {
+      id: chapter.id,
+      title: chapter.title,
+      meta: isReaderVolumeTitle(chapter.title)
+        ? `卷 · 全书 ${index + 1} / ${chapters.length}`
+        : `第 ${chapterNumber} 章 · ${chapterLength(chapter).toLocaleString()} 字`,
+    };
+  });
+});
+
+const readerCurrentChapterIndex = computed(() => {
+  if (readerSource.value === "shelf") return shelfChapterIndex.value;
+  if (readerSource.value === "evolution") return evolutionChapterIndex.value;
+  return activeChapterIndex.value;
+});
+
+const readerCurrentBookmarks = computed(() =>
+  readerBookmarks.value.filter(
+    (item) => item.source === readerSource.value && item.workId === readerWorkId.value,
+  ),
+);
+
+const readerCurrentBookmark = computed(() =>
+  readerCurrentBookmarks.value.find((item) => item.chapterId === readerCurrentChapterId.value),
+);
+
+const readerEstimatedMinutes = computed(() => {
+  const chars = readerCurrentParagraphs.value.join("").length;
+  return chars > 0 ? Math.max(1, Math.ceil(chars / 350)) : 0;
+});
+
+const readerCurrentTitleIsVolume = computed(() => isReaderVolumeTitle(readerCurrentTitle.value));
+
+const readerTitlePageMeta = computed(() => {
+  const items = readerTocItems.value;
+  const index = readerCurrentChapterIndex.value;
+  if (index < 0 || items.length === 0) return "";
+  if (readerCurrentTitleIsVolume.value) {
+    return `卷 · 全书 ${index + 1} / ${items.length}`;
+  }
+  const chapters = items.filter((item) => !isReaderVolumeTitle(item.title));
+  const chapterNumber = items.slice(0, index + 1).filter((item) => !isReaderVolumeTitle(item.title)).length;
+  const chars = readerCurrentParagraphs.value.join("").length;
+  return `第 ${chapterNumber} / ${chapters.length} 章${chars > 0 ? ` · ${chars.toLocaleString()} 字` : ""}`;
+});
+
+const readerOverallProgress = computed(() => {
+  const total = readerTocItems.value.length;
+  const index = readerCurrentChapterIndex.value;
+  if (total <= 0 || index < 0) return 0;
+  return Math.min(100, ((index + readingProgress.value / 100) / total) * 100);
+});
+
+watch([readerSource, readerWorkId], () => {
+  readerSearchQuery.value = "";
+  readerSearchResults.value = [];
+  readingProgress.value = 0;
+});
+
+watch([activity, readerCurrentChapterId], async () => {
+  capturedBranchSelection.value = null;
+  await nextTick();
+  bindReaderScrollListener(readerScrollContainer());
+});
+
+function readerPositionKey(source = readerSource.value, workId = readerWorkId.value): string {
+  return `rhine-lore-reader-position-${source || "none"}-${workId || "none"}`;
+}
+
+function loadReaderPosition(source = readerSource.value, workId = readerWorkId.value): ReaderPosition | null {
+  try {
+    const value = JSON.parse(localStorage.getItem(readerPositionKey(source, workId)) || "null") as ReaderPosition | null;
+    return value && typeof value.chapterId === "string" ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveReaderPosition(): void {
+  if (!readerSource.value || !readerWorkId.value || !readerCurrentChapterId.value) return;
+  const position: ReaderPosition = {
+    chapterId: readerCurrentChapterId.value,
+    progress: readingProgress.value,
+    pageIndex: readerPageIndex.value,
+  };
+  localStorage.setItem(readerPositionKey(), JSON.stringify(position));
+}
+
+function scheduleReaderPositionSave(): void {
+  if (readerPositionTimer) window.clearTimeout(readerPositionTimer);
+  readerPositionTimer = window.setTimeout(saveReaderPosition, 240);
+}
+
+async function restoreReaderProgress(position: ReaderPosition | null): Promise<void> {
+  if (!position) return;
+  await nextTick();
+  requestAnimationFrame(() => {
+    if (readerPageMode.value === "page") {
+      readerPageIndex.value = Math.min(Math.max(0, position.pageIndex), Math.max(0, readerPages.value.length - 1));
+      readingProgress.value = readerPages.value.length > 0
+        ? ((readerPageIndex.value + 1) / readerPages.value.length) * 100
+        : position.progress;
+      return;
+    }
+    const wrap = readerScrollContainer();
+    if (wrap) {
+      const max = Math.max(0, wrap.scrollHeight - wrap.clientHeight);
+      wrap.scrollTop = max * Math.min(1, Math.max(0, position.progress / 100));
+      updateReadingProgress();
+    }
+  });
+}
+
+async function selectReaderChapter(chapterId: string, closeNavigator = true): Promise<void> {
+  saveReaderPosition();
+  if (readerSource.value === "shelf") {
+    await loadShelfChapter(chapterId);
+  } else if (readerSource.value === "evolution") {
+    selectReadingChapter(Number(chapterId));
+  } else {
+    selectChapter(chapterId);
+  }
+  readerPageIndex.value = 0;
+  if (readerPageMode.value === "page") await repaginate();
+  if (closeNavigator) readerNavigatorVisible.value = false;
+}
+
+function openReaderNavigator(tab: "toc" | "search" | "bookmarks" = "toc"): void {
+  readerNavigatorTab.value = tab;
+  readerNavigatorVisible.value = true;
+  if (tab === "search" && readerSearchQuery.value.trim() && readerSearchResults.value.length === 0) {
+    void runReaderSearch();
+  }
+}
+
+function searchReaderChapter(content: string, chapterId: string, title: string, query: string): ReaderSearchItem | null {
+  const lowerContent = content.toLocaleLowerCase();
+  const lowerQuery = query.toLocaleLowerCase();
+  let cursor = 0;
+  let matches = 0;
+  while ((cursor = lowerContent.indexOf(lowerQuery, cursor)) >= 0) {
+    matches += 1;
+    cursor += Math.max(1, lowerQuery.length);
+  }
+  if (matches === 0) return null;
+  const first = lowerContent.indexOf(lowerQuery);
+  const clean = content.replace(/\s+/g, " ").trim();
+  const cleanFirst = clean.toLocaleLowerCase().indexOf(lowerQuery);
+  const start = Math.max(0, (cleanFirst >= 0 ? cleanFirst : first) - 34);
+  const end = Math.min(clean.length, start + query.length + 78);
+  return {
+    id: `${chapterId}-${first}`,
+    chapterId,
+    title,
+    snippet: `${start > 0 ? "…" : ""}${clean.slice(start, end)}${end < clean.length ? "…" : ""}`,
+    matches,
+  };
+}
+
+async function runReaderSearch(): Promise<void> {
+  const query = readerSearchQuery.value.trim();
+  if (!query || !readerSource.value) {
+    readerSearchResults.value = [];
+    return;
+  }
+  readerSearching.value = true;
+  try {
+    let chapters: {id: string; title: string; content: string}[] = [];
+    if (readerSource.value === "novel") {
+      chapters = activeProject.value.chapters.map((chapter) => ({...chapter}));
+    } else if (readerSource.value === "evolution") {
+      chapters = evolutionNovelChapters.value.map((chapter) => ({
+        id: String(chapter.index),
+        title: chapter.title,
+        content: chapter.paragraphs.join("\n\n"),
+      }));
+    } else if (shelfBook.value && shelfBookId.value) {
+      const bookId = shelfBookId.value;
+      chapters = await Promise.all(
+        shelfBook.value.chapters.map(async (chapter) => {
+          if (shelfChapter.value?.id === chapter.id) {
+            return {id: chapter.id, title: shelfChapter.value.title, content: shelfChapter.value.content};
+          }
+          const result = await getBookChapter(bookId, chapter.id);
+          return {id: chapter.id, title: result.chapter.title, content: result.chapter.content};
+        }),
+      );
+    }
+    readerSearchResults.value = chapters
+      .map((chapter) => searchReaderChapter(chapter.content, chapter.id, chapter.title, query))
+      .filter((item): item is ReaderSearchItem => Boolean(item));
+  } catch (error) {
+    toastError(error instanceof Error ? error.message : "全书搜索失败");
+  } finally {
+    readerSearching.value = false;
+  }
+}
+
+async function openReaderSearchResult(item: ReaderSearchItem): Promise<void> {
+  await selectReaderChapter(item.chapterId);
+}
+
+function persistReaderBookmarks(): void {
+  localStorage.setItem("rhine-lore-reader-bookmarks", JSON.stringify(readerBookmarks.value));
+}
+
+function toggleReaderBookmark(): void {
+  const current = readerCurrentBookmark.value;
+  if (current) {
+    removeReaderBookmark(current.id);
+    toastSuccess("已移除本章书签");
+    return;
+  }
+  if (!readerSource.value || !readerCurrentChapterId.value) return;
+  const content = readerCurrentParagraphs.value.join(" ").trim();
+  const offset = Math.max(0, Math.floor((content.length - 70) * readingProgress.value / 100));
+  readerBookmarks.value.unshift({
+    id: uid("reader-bookmark"),
+    source: readerSource.value,
+    workId: readerWorkId.value,
+    chapterId: readerCurrentChapterId.value,
+    title: readerCurrentTitle.value,
+    excerpt: content.slice(offset, offset + 70),
+    progress: readingProgress.value,
+    createdAt: new Date().toLocaleString("zh-CN", {month: "short", day: "numeric", hour: "2-digit", minute: "2-digit"}),
+  });
+  persistReaderBookmarks();
+  toastSuccess("书签已保存");
+}
+
+function removeReaderBookmark(id: string): void {
+  readerBookmarks.value = readerBookmarks.value.filter((item) => item.id !== id);
+  persistReaderBookmarks();
+}
+
+async function openReaderBookmark(item: ReaderBookmarkItem): Promise<void> {
+  await selectReaderChapter(item.chapterId);
+  await restoreReaderProgress({chapterId: item.chapterId, progress: item.progress, pageIndex: 0});
+}
+
+function toggleReaderFullscreen(): void {
+  if (!document.fullscreenElement) {
+    void document.documentElement.requestFullscreen?.().catch(() => undefined);
+  } else {
+    void document.exitFullscreen?.().catch(() => undefined);
+  }
+}
+
+function handleReaderFullscreenChange(): void {
+  readerFullscreenActive.value = Boolean(document.fullscreenElement);
+}
 
 function evolutionActNameForTurn(turn: number): string {
   if (turn <= 5) return "序幕";
@@ -4490,15 +7003,6 @@ function appendAIProseToChapter(): void {
   activity.value = "novel";
 }
 
-async function testLlmConnection(): Promise<void> {
-  await runAiCheck();
-  if (aiStatus.value === "ok") {
-    markSaved("AI 通道功能正常");
-  } else if (aiStatus.value === "error") {
-    runState.value = {error: aiStatusDetail.value};
-  }
-}
-
 function openDeepSeekKeyAssistant(): void {
   const bridge = (
     window as unknown as {
@@ -4529,8 +7033,13 @@ async function pasteDeepSeekKey(): Promise<void> {
       saveLlmServerConfig({
         base_url: "https://api.deepseek.com",
         api_key: match[0],
-        model: llmModel.value.trim() || "deepseek-chat",
+        model: selectedDeepSeekLevel.value.model,
         preset: "deepseek",
+        level: llmLevel.value,
+        reasoning_effort: llmReasoningEffort.value,
+        temperature: llmTemperature.value,
+        top_p: llmTopP.value,
+        max_tokens: llmMaxTokens.value,
       }),
     );
     await loadLlmServerConfig();
@@ -4541,12 +7050,23 @@ async function pasteDeepSeekKey(): Promise<void> {
 }
 
 onUnmounted(() => {
+  delete (window as NativeBackWindow).rhineLoreHandleBack;
+  flushPendingProjectDrafts();
   window.matchMedia("(prefers-color-scheme: dark)").removeEventListener("change", handleSystemThemeChange);
   document.removeEventListener("click", closeChatMore);
   window.removeEventListener("scroll", handleReadingScroll);
-  readerScrollContainer()?.removeEventListener("scroll", handleReadingScroll);
+  readerBoundScrollElement?.removeEventListener("scroll", handleReadingScroll);
   window.removeEventListener("resize", handleReaderResize);
   window.removeEventListener("keydown", handleReaderOverlayKeydown);
+  window.removeEventListener("pagehide", handleProjectPageHide);
+  document.removeEventListener("fullscreenchange", handleReaderFullscreenChange);
+  for (const timer of projectDraftTimers.values()) window.clearTimeout(timer);
+  for (const timer of projectBackupTimers.values()) window.clearTimeout(timer);
+  projectDraftTimers.clear();
+  projectBackupTimers.clear();
+  if (readerPositionTimer) window.clearTimeout(readerPositionTimer);
+  if (readerResizeTimer) window.clearTimeout(readerResizeTimer);
+  clearShelfAnalysisPoll();
   if (evolutionTimer) {
     window.clearInterval(evolutionTimer);
     evolutionTimer = undefined;
@@ -4588,7 +7108,7 @@ onUnmounted(() => {
         aria-label="关闭菜单"
         @click="closeMobileNav"
       >
-        ×
+        <GameIcon name="close" :size="20" />
       </button>
       <div class="sidebar-project">
         <el-select
@@ -4612,6 +7132,7 @@ onUnmounted(() => {
           :aria-pressed="sidebarMode === 'workbench'"
           @click="setSidebarMode('workbench')"
         >
+          <GameIcon name="pen" :size="15" />
           工作台
         </button>
         <button
@@ -4620,30 +7141,34 @@ onUnmounted(() => {
           :aria-pressed="sidebarMode === 'reader'"
           @click="setSidebarMode('reader')"
         >
+          <GameIcon name="book-open" :size="15" />
           阅读器
         </button>
       </div>
       <nav class="sidebar-nav" aria-label="主导航">
-        <el-button
-          v-for="item in visibleActivities"
-          :key="item.id"
-          class="nav-item"
-          :class="{
-            active: activity === item.id,
-            'nav-item-secondary': !isPrimaryActivity(item.id),
-            'mobile-parent-active': isStudioChildActivity(item.id),
-            'nav-chat': item.id === 'chat',
-          }"
-          :aria-current="activity === item.id ? 'page' : undefined"
-          @click="openActivity(item.id); mobileNavOpen = false"
-          :title="sidebarCollapsed ? item.label : ''"
-        >
-          <span class="nav-icon-dot"><GameIcon :name="item.icon" :label="item.label" /></span>
-          <span class="nav-label">
-            <strong>{{ item.label }}</strong>
-            <small>{{ item.description }}</small>
-          </span>
-        </el-button>
+        <div v-for="group in visibleActivityGroups" :key="group.label" class="sidebar-nav-group">
+          <span class="sidebar-nav-group-label">{{ group.label }}</span>
+          <el-button
+            v-for="item in group.items"
+            :key="item.id"
+            class="nav-item"
+            :class="{
+              active: activity === item.id,
+              'nav-item-secondary': !isPrimaryActivity(item.id),
+              'mobile-parent-active': isStudioChildActivity(item.id),
+              'nav-chat': item.id === 'chat',
+            }"
+            :aria-current="activity === item.id ? 'page' : undefined"
+            @click="openActivity(item.id); mobileNavOpen = false"
+            :title="sidebarCollapsed ? item.label : ''"
+          >
+            <span class="nav-icon-dot"><GameIcon :name="item.icon" :label="item.label" /></span>
+            <span class="nav-label">
+              <strong>{{ item.label }}</strong>
+              <small>{{ item.description }}</small>
+            </span>
+          </el-button>
+        </div>
       </nav>
       <div class="sidebar-footer">
         <span class="sidebar-footer-status">
@@ -4652,7 +7177,7 @@ onUnmounted(() => {
         </span>
         <span class="sidebar-footer-meta">
           <img class="sidebar-footer-brand" :src="rhineLoreMark" alt="Rhine-Lore">
-          v0.1.0
+          v{{ appVersion }}
         </span>
       </div>
       <el-button
@@ -4662,7 +7187,10 @@ onUnmounted(() => {
         :aria-expanded="!sidebarCollapsed"
         @click="toggleSidebar"
       >
-        {{ sidebarCollapsed ? "»" : "«" }}
+        <GameIcon
+          :name="sidebarCollapsed ? 'panel-left-open' : 'panel-left-close'"
+          :size="17"
+        />
       </el-button>
     </aside>
 
@@ -4677,7 +7205,7 @@ onUnmounted(() => {
           :aria-expanded="mobileNavOpen"
           @click="openMobileNav"
         >
-          ☰
+          <GameIcon name="menu" :size="19" />
         </el-button>
         <div class="workspace-title-group">
           <span class="section-icon"><GameIcon :name="activeTabMeta.icon" /></span>
@@ -4697,8 +7225,14 @@ onUnmounted(() => {
         </div>
       </header>
 
-      <el-scrollbar class="workspace-main">
-        <main ref="contentMainRef" tabindex="-1" class="content-grid" :aria-label="activeTabMeta.label">
+      <el-scrollbar class="workspace-main" :class="{'chat-workspace-main': activity === 'chat'}">
+        <main
+          ref="contentMainRef"
+          tabindex="-1"
+          class="content-grid"
+          :class="{'content-grid--chat': activity === 'chat'}"
+          :aria-label="activeTabMeta.label"
+        >
           <section v-if="activity === 'studio'" class="activity-panel home-panel">
             <el-card shadow="never" class="home-hero">
               <div class="home-hero-main">
@@ -4729,7 +7263,7 @@ onUnmounted(() => {
                 <strong>AI 创作助手</strong>
                 <small>续写 · 修订 · 导入 · 角色与设定管理</small>
               </span>
-              <span class="ai-entry-arrow">→</span>
+              <span class="ai-entry-arrow"><GameIcon name="arrow-right" :size="20" /></span>
             </button>
 
             <div class="home-path-row">
@@ -4746,7 +7280,7 @@ onUnmounted(() => {
                   <strong>{{ step.label }}</strong>
                   <small>{{ step.hint }}</small>
                 </span>
-                <i>→</i>
+                <i aria-hidden="true"><GameIcon name="chevron-right" :size="16" /></i>
               </button>
             </div>
 
@@ -5302,7 +7836,14 @@ onUnmounted(() => {
                 >
                   <el-input v-model="relation.name" placeholder="对方姓名" size="small" />
                   <el-input v-model="relation.relation" placeholder="关系，如：恋人 / 死敌" size="small" />
-                  <el-button size="small" @click="removeRelationship(characterDraft, index)">×</el-button>
+                  <el-button
+                    size="small"
+                    title="移除关系"
+                    aria-label="移除关系"
+                    @click="removeRelationship(characterDraft, index)"
+                  >
+                    <GameIcon name="close" :size="16" />
+                  </el-button>
                 </div>
                 <el-button size="small" @click="addRelationship(characterDraft)">添加关系</el-button>
                 <div class="character-status-row">
@@ -5338,7 +7879,7 @@ onUnmounted(() => {
                   :aria-expanded="mobileNavOpen"
                   @click="openMobileNav"
                 >
-                  ☰
+                  <GameIcon name="menu" :size="19" />
                 </el-button>
                 <div class="ai-chat-title">
                   <img class="ai-chat-logo" :src="rhineLoreMark" alt="Rhine-Lore">
@@ -5355,6 +7896,7 @@ onUnmounted(() => {
                     :type="chatSidebarOpen ? 'primary' : 'default'"
                     @click="chatSidebarOpen = !chatSidebarOpen"
                   >
+                    <GameIcon name="panel-right" :size="16" />
                     上下文
                     <span v-if="selectedKnowledgeNodes.length + pendingIssueCount > 0" class="ai-chat-badge">
                       {{ selectedKnowledgeNodes.length + pendingIssueCount }}
@@ -5368,10 +7910,11 @@ onUnmounted(() => {
                     <el-button
                       class="ai-chat-more-btn"
                       size="small"
+                      title="更多操作"
                       aria-label="更多操作"
                       @click.stop="chatMoreOpen = !chatMoreOpen"
                     >
-                      ⋮
+                      <GameIcon name="more" :size="18" />
                     </el-button>
                     <div v-if="chatMoreOpen" class="ai-chat-more-menu">
                       <button
@@ -5416,17 +7959,29 @@ onUnmounted(() => {
                 </span>
               </div>
 
-              <div ref="chatThreadRef" class="chat-thread ai-chat-thread">
+              <div ref="chatThreadRef" class="chat-thread ai-chat-thread" role="log" aria-live="polite">
                 <div v-if="activeProject.chat.length === 0 && !chatThinking" class="chat-welcome">
+                  <img class="chat-welcome-mark" :src="rhineLoreMark" alt="" />
                   <span>开始一段创作对话</span>
                   <strong>先说说你想写什么</strong>
                   <p>续写、讨论、修订、导入——都可以直接说，或点下方快捷提示。</p>
+                  <div class="chat-welcome-actions">
+                    <button
+                      v-for="starter in promptStarters.slice(0, 3)"
+                      :key="starter"
+                      type="button"
+                      @click="usePromptStarter(starter)"
+                    >
+                      {{ starter }}
+                    </button>
+                  </div>
                 </div>
                 <article
                   v-for="message in activeProject.chat"
                   :key="message.id"
                   class="chat-message"
-                  :class="message.role"
+                  :class="[message.role, {'source-highlight': highlightedKnowledgeMessageId === message.id}]"
+                  :data-message-id="message.id"
                 >
                   <img
                     v-if="message.role === 'assistant'"
@@ -5559,7 +8114,9 @@ onUnmounted(() => {
                   <div class="chat-composer-main">
                     <div v-if="chatAttachment" class="chat-attachment-chip">
                       <span>{{ chatAttachment.name }}</span>
-                      <button type="button" @click="removeChatAttachment">×</button>
+                      <button type="button" title="移除附件" aria-label="移除附件" @click="removeChatAttachment">
+                        <GameIcon name="close" :size="14" />
+                      </button>
                     </div>
                     <el-input
                       v-model="chatInput"
@@ -5576,13 +8133,18 @@ onUnmounted(() => {
                       :loading="busyAction === '对话创作'"
                       @click="sendCreativeMessage"
                     >
+                      <GameIcon name="send" :size="16" />
                       发送
                     </el-button>
-                    <el-button title="附加文件（TXT / 项目 JSON）" @click="chatAttachInput?.click()">
-                      📎
+                    <el-button
+                      title="附加文件（TXT / 项目 JSON）"
+                      aria-label="附加文件"
+                      @click="chatAttachInput?.click()"
+                    >
+                      <GameIcon name="attachment" :size="16" />
                     </el-button>
                   </div>
-                  <div class="chat-starter-row">
+                  <div v-if="activeProject.chat.length > 0" class="chat-starter-row">
                     <el-button
                       v-for="starter in promptStarters"
                       :key="starter"
@@ -5666,9 +8228,11 @@ onUnmounted(() => {
                       class="chat-sidebar-close mobile-only"
                       size="small"
                       text
+                      title="关闭上下文"
+                      aria-label="关闭上下文"
                       @click="chatSidebarOpen = false"
                     >
-                      关闭
+                      <GameIcon name="close" :size="18" />
                     </el-button>
                   </el-space>
                 </div>
@@ -5823,13 +8387,17 @@ onUnmounted(() => {
                   <span>正文</span>
                   <el-space wrap>
                     <el-button size="small" @click="openNovelVersions">版本</el-button>
-                    <el-button size="small" @click="novelTocVisible = true">目录</el-button>
-                    <el-button size="small" @click="novelSettingsVisible = true">阅读设置</el-button>
+                    <el-button size="small" @click="openReaderNavigator('toc')">目录</el-button>
+                    <el-button size="small" @click="readerSettingsVisible = true">阅读设置</el-button>
                     <el-button :type="readerMode === 'read' ? 'primary' : 'default'" @click="enterReaderMode">
                       阅读
                     </el-button>
                     <el-button :type="readerMode === 'edit' ? 'primary' : 'default'" @click="exitReaderMode">
                       编辑
+                    </el-button>
+                    <el-button v-if="activeChapter && readerMode === 'edit'" @click="openProjectBranchFromCursor">
+                      <GameIcon name="git-merge" :size="15" />
+                      从光标分支
                     </el-button>
                     <el-button class="desktop-only-control" @click="submitChapterExtract">
                       保存为资料
@@ -5845,7 +8413,7 @@ onUnmounted(() => {
                 <i :style="{width: `${readingProgress}%`}" />
               </div>
 
-              <div v-if="readerMode === 'read' && activeChapter" class="reader-tap-zones">
+              <div v-if="readerMode === 'read' && activeChapter && readerPageMode === 'page'" class="reader-tap-zones">
                 <button
                   type="button"
                   class="reader-tap-zone left"
@@ -5885,14 +8453,33 @@ onUnmounted(() => {
                   class="novel-reader"
                   :class="[readerThemeClass(), {'reader-paged': readerPageMode === 'page'}]"
                   :style="readerContentStyle()"
+                  @mouseup="captureBranchSelection"
+                  @touchend="captureBranchSelection"
                 >
                   <template v-if="readerPageMode === 'page'">
-                    <h2>{{ activeChapter.title }}</h2>
-                    <div ref="readerPageAreaRef" class="reader-page-area">
-                      <p v-for="(paragraph, index) in currentReaderPage()" :key="`${readerPageIndex}-${index}`">
-                        {{ paragraph }}
-                      </p>
-                      <p v-if="currentReaderPage().length === 0" class="empty-paragraph">这一章还没有正文。</p>
+                    <div
+                      ref="readerPageAreaRef"
+                      class="reader-page-area"
+                      :class="{'is-title-page': currentReaderPageIsTitle()}"
+                    >
+                      <section
+                        v-if="currentReaderPageIsTitle()"
+                        class="reader-title-page"
+                        :class="{'is-volume': readerCurrentTitleIsVolume}"
+                      >
+                        <p class="reader-title-page-work">{{ activeProject.name }}</p>
+                        <h2>{{ activeChapter.title }}</h2>
+                        <p class="reader-title-page-meta">{{ readerTitlePageMeta }}</p>
+                      </section>
+                      <template v-else>
+                        <p
+                          v-for="(paragraph, index) in currentReaderPage()"
+                          :key="`${readerPageIndex}-${index}`"
+                          :class="{'reader-paragraph-continuation': paragraph.continuation}"
+                        >
+                          {{ paragraph.text }}
+                        </p>
+                      </template>
                     </div>
                     <div class="reader-page-meta">{{ readerPageIndex + 1 }} / {{ Math.max(1, readerPages.length) }} 页</div>
                   </template>
@@ -5910,6 +8497,7 @@ onUnmounted(() => {
                   class="novel-editor"
                   type="textarea"
                   :rows="24"
+                  placeholder="从这一章开始写。你也可以先去 AI 对话梳理情节，再插入正文。"
                   @input="saveProjects"
                 />
               </div>
@@ -5918,8 +8506,12 @@ onUnmounted(() => {
                 v-if="readerMode === 'read' && activeChapter"
                 class="immersive-toolbar"
               >
-                <el-button size="small" @click="novelTocVisible = true">目录</el-button>
-                <el-button size="small" @click="novelSettingsVisible = true">阅读设置</el-button>
+                <el-button size="small" @click="openReaderNavigator('toc')">目录</el-button>
+                <el-button size="small" @click="readerSettingsVisible = true">阅读设置</el-button>
+                <el-button size="small" @click="openReaderBranch">
+                  <GameIcon name="git-merge" :size="15" />
+                  分支续写
+                </el-button>
                 <template v-if="readerPageMode === 'page'">
                   <el-button size="small" :disabled="readerPageIndex <= 0" @click="readerPagePrev">
                     上一页
@@ -5968,26 +8560,6 @@ onUnmounted(() => {
               </el-button>
             </div>
 
-            <el-drawer v-model="novelTocVisible" title="章节目录" size="82%">
-              <div class="shelf-toc-list">
-                <button
-                  v-for="chapter in activeProject.chapters"
-                  :key="chapter.id"
-                  type="button"
-                  class="shelf-toc-item"
-                  :class="{active: activeChapter?.id === chapter.id}"
-                  @click="novelTocVisible = false; selectChapter(chapter.id)"
-                >
-                  <strong>{{ chapter.title }}</strong>
-                  <small>{{ chapterLength(chapter) }} 字</small>
-                </button>
-                <div v-if="activeProject.chapters.length === 0" class="product-empty-state compact">
-                  <strong>从第一章开始</strong>
-                  <el-button type="primary" @click="startWriting">创建并编辑</el-button>
-                </div>
-              </div>
-            </el-drawer>
-
             <el-drawer v-model="novelVersionsVisible" title="版本历史" direction="rtl" size="min(420px, 92vw)">
               <div class="version-panel">
                 <div class="version-commit-row">
@@ -6031,213 +8603,245 @@ onUnmounted(() => {
               </div>
             </el-drawer>
 
-            <el-drawer
-              v-model="novelSettingsVisible"
-              title="阅读设置"
-              direction="btt"
-              size="70%"
-            >
-              <div class="shelf-settings">
-                <label>阅读方式</label>
-                <el-radio-group v-model="readerPageMode" @change="changeReaderPageMode">
-                  <el-radio-button value="scroll">滚动</el-radio-button>
-                  <el-radio-button value="page">翻页</el-radio-button>
-                </el-radio-group>
-                <label>字号</label>
-                <el-slider
-                  v-model="readerFontSize"
-                  :min="15"
-                  :max="28"
-                  :step="1"
-                  show-input
-                  @change="persistReaderSettings"
-                />
-                <label>行距</label>
-                <el-slider
-                  v-model="readerLineHeight"
-                  :min="1.4"
-                  :max="2.6"
-                  :step="0.1"
-                  show-input
-                  @change="persistReaderSettings"
-                />
-                <label>主题</label>
-                <el-radio-group v-model="readerTheme" @change="persistReaderSettings">
-                  <el-radio-button value="day">白</el-radio-button>
-                  <el-radio-button value="sepia">米黄</el-radio-button>
-                  <el-radio-button value="night">夜间</el-radio-button>
-                </el-radio-group>
-                <label>段距</label>
-                <el-slider
-                  v-model="readerParagraphSpacing"
-                  :min="0.8"
-                  :max="2.2"
-                  :step="0.1"
-                  show-input
-                  @change="persistReaderSettings"
-                />
-                <label>对齐</label>
-                <el-radio-group v-model="readerJustify" @change="persistReaderSettings">
-                  <el-radio-button :value="true">两端对齐</el-radio-button>
-                  <el-radio-button :value="false">左对齐</el-radio-button>
-                </el-radio-group>
-                <label>阅读宽度</label>
-                <el-slider
-                  v-model="readerMeasure"
-                  :min="700"
-                  :max="1100"
-                  :step="20"
-                  show-input
-                  @change="persistReaderSettings"
-                />
-              </div>
-            </el-drawer>
           </section>
 
           <section v-else-if="activity === 'context'" class="activity-panel context-panel">
-            <div class="knowledge-pipeline">
-              <div v-for="stat in knowledgePipelineStats" :key="stat.label" class="stat-card" :class="stat.tone">
-                <b>{{ stat.value }}</b>
-                <span>{{ stat.label }}</span>
-              </div>
-            </div>
-            <el-row :gutter="14">
-              <el-col :xs="24" :lg="8">
-                <el-card shadow="never" class="knowledge-create-card">
-                  <template #header>
-                    <div class="card-header">
-                      <span>新增资料草稿</span>
-                      <el-button size="small" :disabled="!activeChapter" @click="prefillKnowledgeFromChapter">
-                        取当前章节
-                      </el-button>
-                    </div>
-                  </template>
-                  <el-form label-position="top">
-                    <el-form-item label="标题">
-                      <el-input v-model="manualKnowledgeTitle" placeholder="例如：城邦禁令、角色秘密、重要伏笔" />
-                    </el-form-item>
-                    <el-form-item label="内容">
-                      <el-input
-                        v-model="manualKnowledgeContent"
-                        type="textarea"
-                        :rows="9"
-                        placeholder="写下需要被记住的设定、事实、约束或素材。"
-                      />
-                    </el-form-item>
-                    <el-form-item label="标签">
-                      <el-input v-model="manualKnowledgeTags" placeholder="lore, character, chapter" />
-                    </el-form-item>
-                    <el-button
-                      type="primary"
-                      :loading="busyAction === '保存资料草稿'"
-                      @click="submitManualKnowledgeDraft"
-                    >
-                      保存为资料草稿
-                    </el-button>
-                  </el-form>
-                </el-card>
-              </el-col>
-
-              <el-col :xs="24" :lg="8">
-                <el-card shadow="never" class="knowledge-search-card">
-                  <template #header>
-                    <div class="card-header">
-                      <span>查找资料</span>
-                      <el-space>
-                        <el-button @click="buildContext">查找</el-button>
-                        <el-button @click="generateStoryBible">生成设定文档</el-button>
-                      </el-space>
-                    </div>
-                  </template>
-                  <el-form label-position="top">
-                    <el-form-item label="想查什么">
-                      <el-input v-model="contextQuery" type="textarea" :rows="8" />
-                    </el-form-item>
-                    <el-form-item label="最多显示几条">
-                      <el-input-number v-model="resultLimit" :min="1" :max="30" />
-                    </el-form-item>
-                  </el-form>
-                </el-card>
-              </el-col>
-
-              <el-col :xs="24" :lg="8">
-                <el-card shadow="never" class="knowledge-review-card">
-                  <template #header>
-                    <div class="card-header">
-                      <span>资料入库</span>
-                      <el-button size="small" @click="refreshReview">刷新</el-button>
-                    </div>
-                  </template>
-                  <p class="knowledge-flow-note">草稿需要先送去确认，再入库成为对话可引用的资料。</p>
-                  <div class="knowledge-card-list">
-                    <div
-                      v-for="row in proposals"
-                      :key="row.proposal_id || row.id"
-                      class="knowledge-flow-card"
-                    >
-                      <div class="knowledge-flow-copy">
-                        <strong>{{ row.title || "未命名草稿" }}</strong>
-                        <small>{{ preview(row.content || "", 60) }}</small>
-                      </div>
-                      <el-button size="small" @click="stageAll(row)">送去确认</el-button>
-                    </div>
-                    <p v-if="proposals.length === 0" class="knowledge-flow-empty">暂无草稿</p>
-                  </div>
-                  <div class="knowledge-card-list advanced-card-list">
-                    <div
-                      v-for="row in stagingEntries"
-                      :key="row.entry_id || row.id"
-                      class="knowledge-flow-card"
-                    >
-                      <div class="knowledge-flow-copy">
-                        <strong>{{ row.title || "未命名" }}</strong>
-                        <small>{{ preview(row.content || "", 60) }}</small>
-                      </div>
-                      <el-button size="small" type="primary" @click="approveEntry(row)">入库</el-button>
-                    </div>
-                    <p v-if="stagingEntries.length === 0" class="knowledge-flow-empty">暂无待入库</p>
-                  </div>
-                </el-card>
-              </el-col>
-            </el-row>
-
-            <el-card shadow="never" class="knowledge-library-card">
-              <template #header>
-                <div class="card-header">
-                  <span>已入库资料</span>
-                  <el-space wrap>
-                    <el-button size="small" @click="refreshNodes">刷新</el-button>
-                    <el-button size="small" :disabled="selectedKnowledgeNodes.length === 0" @click="activity = 'chat'">
-                      去对话使用
-                    </el-button>
-                  </el-space>
+            <header class="knowledge-commandbar">
+              <nav class="knowledge-page-tabs" aria-label="资料库视图">
+                <button type="button" :class="{active: knowledgePageTab === 'review'}" @click="knowledgePageTab = 'review'">
+                  <GameIcon name="check" :size="17" />
+                  <span>审核队列</span>
+                  <b v-if="knowledgeDraftItems.length + knowledgeReadyItems.length > 0">
+                    {{ knowledgeDraftItems.length + knowledgeReadyItems.length }}
+                  </b>
+                </button>
+                <button type="button" :class="{active: knowledgePageTab === 'library'}" @click="knowledgePageTab = 'library'">
+                  <GameIcon name="database" :size="17" />
+                  <span>已入库</span>
+                </button>
+                <button type="button" :class="{active: knowledgePageTab === 'tools'}" @click="knowledgePageTab = 'tools'">
+                  <GameIcon name="edit" :size="17" />
+                  <span>新增与查找</span>
+                </button>
+              </nav>
+              <div class="knowledge-pipeline compact">
+                <div v-for="stat in knowledgePipelineStats" :key="stat.label" class="stat-card" :class="stat.tone">
+                  <b>{{ stat.value }}</b>
+                  <span>{{ stat.label }}</span>
                 </div>
+              </div>
+            </header>
+
+            <section v-if="knowledgePageTab === 'review'" class="knowledge-page-view knowledge-review-workbench">
+              <div class="knowledge-view-heading">
+                <div>
+                  <span class="section-icon"><GameIcon name="check" :size="18" /></span>
+                  <div>
+                    <h2>资料审核</h2>
+                    <p>先整理内容和来源，再确认进入资料库。AI 提炼的结果不会自动成为事实。</p>
+                  </div>
+                </div>
+                <el-button @click="refreshKnowledgeCenter">
+                  <GameIcon name="search" :size="15" />
+                  刷新
+                </el-button>
+              </div>
+
+              <div class="knowledge-queue-tabs" role="tablist" aria-label="审核状态">
+                <button type="button" role="tab" :aria-selected="knowledgeQueueTab === 'draft'" :class="{active: knowledgeQueueTab === 'draft'}" @click="knowledgeQueueTab = 'draft'">
+                  待整理 <b>{{ knowledgeDraftItems.length }}</b>
+                </button>
+                <button type="button" role="tab" :aria-selected="knowledgeQueueTab === 'ready'" :class="{active: knowledgeQueueTab === 'ready'}" @click="knowledgeQueueTab = 'ready'">
+                  待入库 <b>{{ knowledgeReadyItems.length }}</b>
+                </button>
+              </div>
+
+              <template v-if="knowledgeQueueTab === 'draft'">
+                <div v-if="knowledgeDraftItems.length > 0" class="knowledge-batchbar">
+                  <el-button text @click="toggleAllKnowledgeDrafts">
+                    {{ selectedKnowledgeDraftKeys.length === knowledgeDraftItems.length ? "取消全选" : "全选" }}
+                  </el-button>
+                  <span>已选择 {{ selectedKnowledgeDraftKeys.length }} 条</span>
+                  <el-button type="primary" :disabled="selectedKnowledgeDraftKeys.length === 0" @click="stageSelectedKnowledgeDrafts">
+                    批量送审
+                    <GameIcon name="arrow-right" :size="15" />
+                  </el-button>
+                </div>
+                <div v-if="knowledgeDraftItems.length > 0" class="knowledge-review-list">
+                  <article v-for="item in knowledgeDraftItems" :key="item.key" class="knowledge-review-row" @click="openKnowledgeReview(item)">
+                    <el-checkbox
+                      :model-value="selectedKnowledgeDraftKeys.includes(item.key)"
+                      :aria-label="`选择 ${item.title}`"
+                      @click.stop
+                      @change="toggleKnowledgeDraftSelection(item, $event)"
+                    />
+                    <span class="knowledge-row-icon"><GameIcon name="file-text" :size="18" /></span>
+                    <div class="knowledge-row-copy">
+                      <header>
+                        <strong>{{ item.title }}</strong>
+                        <span>{{ knowledgeTypeLabel(item.nodeType) }}</span>
+                      </header>
+                      <p>{{ preview(knowledgeEditableBody(item), 150) || "暂无内容" }}</p>
+                      <footer>
+                        <span>{{ knowledgeSourceSummary(item) }}</span>
+                        <time>{{ formatKnowledgeDate(item.createdAt) }}</time>
+                      </footer>
+                    </div>
+                    <div class="knowledge-row-actions">
+                      <span v-if="knowledgeDuplicateCount(item) > 0" class="similarity-alert">
+                        {{ knowledgeDuplicateCount(item) }} 条相似
+                      </span>
+                      <el-button size="small" @click.stop="openKnowledgeReview(item)">审核</el-button>
+                    </div>
+                  </article>
+                </div>
+                <EmptyState
+                  v-else
+                  icon="check"
+                  title="没有待整理资料"
+                  description="从对话提炼、保存章节或手动新增后，资料草稿会出现在这里。"
+                  compact
+                >
+                  <el-button type="primary" @click="activity = 'chat'">去对话创作</el-button>
+                  <el-button @click="knowledgePageTab = 'tools'">手动新增</el-button>
+                </EmptyState>
               </template>
+
+              <template v-else>
+                <div v-if="knowledgeReadyItems.length > 0" class="knowledge-batchbar">
+                  <el-button text @click="toggleAllKnowledgeReady">
+                    {{ selectedKnowledgeReadyIds.length === knowledgeReadyItems.length ? "取消全选" : "全选" }}
+                  </el-button>
+                  <span>已选择 {{ selectedKnowledgeReadyIds.length }} 条</span>
+                  <el-button type="primary" :disabled="selectedKnowledgeReadyIds.length === 0" @click="approveSelectedKnowledgeReady">
+                    确认入库
+                    <GameIcon name="check" :size="15" />
+                  </el-button>
+                </div>
+                <div v-if="knowledgeReadyItems.length > 0" class="knowledge-review-list">
+                  <article v-for="item in knowledgeReadyItems" :key="item.key" class="knowledge-review-row ready" @click="openKnowledgeReview(item)">
+                    <el-checkbox
+                      :model-value="Boolean(item.entryId && selectedKnowledgeReadyIds.includes(item.entryId))"
+                      :aria-label="`选择 ${item.title}`"
+                      @click.stop
+                      @change="toggleKnowledgeReadySelection(item, $event)"
+                    />
+                    <span class="knowledge-row-icon"><GameIcon name="database" :size="18" /></span>
+                    <div class="knowledge-row-copy">
+                      <header>
+                        <strong>{{ item.title }}</strong>
+                        <span>{{ knowledgeTypeLabel(item.nodeType) }}</span>
+                      </header>
+                      <p>{{ preview(knowledgeEditableBody(item), 150) || "暂无内容" }}</p>
+                      <footer>
+                        <span>{{ knowledgeSourceSummary(item) }}</span>
+                        <time>{{ formatKnowledgeDate(item.createdAt) }}</time>
+                      </footer>
+                    </div>
+                    <div class="knowledge-row-actions">
+                      <span v-if="knowledgeDuplicateCount(item) > 0" class="similarity-alert">
+                        {{ knowledgeDuplicateCount(item) }} 条相似
+                      </span>
+                      <el-button size="small" @click.stop="openKnowledgeReview(item)">查看</el-button>
+                    </div>
+                  </article>
+                </div>
+                <EmptyState
+                  v-else
+                  icon="database"
+                  title="没有待入库资料"
+                  description="整理好的草稿送审后，会在这里等待最终确认。"
+                  compact
+                />
+              </template>
+            </section>
+
+            <section v-else-if="knowledgePageTab === 'library'" class="knowledge-page-view">
+              <div class="knowledge-view-heading">
+                <div>
+                  <span class="section-icon"><GameIcon name="database" :size="18" /></span>
+                  <div>
+                    <h2>已入库资料</h2>
+                    <p>这里的内容可以加入对话参考。一次最多携带 6 条，避免上下文过载。</p>
+                  </div>
+                </div>
+                <el-space wrap>
+                  <el-button @click="refreshNodes">刷新</el-button>
+                  <el-button type="primary" :disabled="selectedKnowledgeNodes.length === 0" @click="activity = 'chat'">
+                    去对话使用 {{ selectedKnowledgeNodes.length > 0 ? `(${selectedKnowledgeNodes.length})` : "" }}
+                  </el-button>
+                </el-space>
+              </div>
               <EmptyState
                 v-if="nodes.length === 0"
                 icon="database"
                 title="还没有已入库资料"
-                description="对话或正文可以保存为资料草稿，送审入库后会出现在这里，并可加入对话参考。"
+                description="对话或正文可以保存为资料草稿，经过审核后会出现在这里。"
                 compact
               >
-                <el-button size="small" type="primary" @click="activity = 'chat'">去对话创作</el-button>
-                <el-button size="small" @click="prefillKnowledgeFromChapter">保存当前章节</el-button>
+                <el-button type="primary" @click="activity = 'chat'">去对话创作</el-button>
+                <el-button @click="knowledgePageTab = 'tools'">手动新增</el-button>
               </EmptyState>
-              <div v-else class="knowledge-node-grid">
-                <div v-for="row in nodes" :key="recordId(row)" class="knowledge-node-card">
-                    <div class="node-title-cell">
-                      <strong>{{ recordTitle(row) }}</strong>
-                      <span>{{ recordPreview(row, 90) }}</span>
-                    </div>
-                  <div class="knowledge-node-foot">
-                    <span class="knowledge-node-type">{{ row.node_type || "Note" }}</span>
-                    <el-button size="small" :type="isKnowledgeSelected(row) ? 'primary' : 'default'" @click="addKnowledgeToChat(row)">
-                      {{ isKnowledgeSelected(row) ? "已加入" : "加入" }}
-                    </el-button>
+              <div v-else class="knowledge-library-grid">
+                <article v-for="row in nodes" :key="recordId(row)" class="knowledge-library-row">
+                  <span class="knowledge-row-icon"><GameIcon name="file-text" :size="18" /></span>
+                  <div class="node-title-cell">
+                    <strong>{{ recordTitle(row) }}</strong>
+                    <span>{{ recordPreview(row, 150) }}</span>
+                    <small>{{ knowledgeTypeLabel(String(row.node_type || 'Note')) }}</small>
+                  </div>
+                  <el-button size="small" :type="isKnowledgeSelected(row) ? 'primary' : 'default'" @click="toggleKnowledgeReference(row)">
+                    {{ isKnowledgeSelected(row) ? "已选择" : "加入参考" }}
+                  </el-button>
+                </article>
+              </div>
+            </section>
+
+            <section v-else class="knowledge-page-view knowledge-tools-view">
+              <div class="knowledge-tool-panel">
+                <div class="knowledge-view-heading compact">
+                  <div>
+                    <span class="section-icon"><GameIcon name="edit" :size="18" /></span>
+                    <div><h2>新增资料草稿</h2><p>手动记录需要长期保持一致的设定和事实。</p></div>
+                  </div>
+                  <el-button size="small" :disabled="!activeChapter" @click="prefillKnowledgeFromChapter">取当前章节</el-button>
+                </div>
+                <el-form label-position="top">
+                  <el-form-item label="标题">
+                    <el-input v-model="manualKnowledgeTitle" placeholder="例如：城邦禁令、角色秘密、重要伏笔" />
+                  </el-form-item>
+                  <el-form-item label="内容">
+                    <el-input v-model="manualKnowledgeContent" type="textarea" :rows="9" placeholder="写下需要被记住的设定、事实、约束或素材。" />
+                  </el-form-item>
+                  <el-form-item label="标签">
+                    <el-input v-model="manualKnowledgeTags" placeholder="lore, character, chapter" />
+                  </el-form-item>
+                  <el-button type="primary" :loading="busyAction === '保存资料草稿'" @click="submitManualKnowledgeDraft">
+                    保存为资料草稿
+                  </el-button>
+                </el-form>
+              </div>
+              <div class="knowledge-tool-panel">
+                <div class="knowledge-view-heading compact">
+                  <div>
+                    <span class="section-icon"><GameIcon name="search" :size="18" /></span>
+                    <div><h2>查找资料</h2><p>按问题检索已批准的资料，或生成一份设定文档。</p></div>
                   </div>
                 </div>
+                <el-form label-position="top">
+                  <el-form-item label="想查什么">
+                    <el-input v-model="contextQuery" type="textarea" :rows="9" />
+                  </el-form-item>
+                  <el-form-item label="最多显示几条">
+                    <el-input-number v-model="resultLimit" :min="1" :max="30" />
+                  </el-form-item>
+                  <div class="knowledge-tool-actions">
+                    <el-button type="primary" @click="buildContext"><GameIcon name="search" :size="15" />查找</el-button>
+                    <el-button @click="generateStoryBible">生成设定文档</el-button>
+                  </div>
+                </el-form>
               </div>
-            </el-card>
+            </section>
           </section>
 
           <section v-else-if="activity === 'evolution'" class="activity-panel evolution-panel">
@@ -6811,8 +9415,10 @@ onUnmounted(() => {
                   </div>
                 </div>
                 <div class="reading-toolbar-controls">
-                  <el-button size="small" @click="readTocVisible = true">目录</el-button>
-                  <el-button size="small" @click="readSettingsVisible = true">阅读设置</el-button>
+                  <el-button size="small" @click="openReaderNavigator('toc')">目录</el-button>
+                  <el-button size="small" @click="openReaderNavigator('search')">搜索</el-button>
+                  <el-button size="small" @click="readerSettingsVisible = true">排版</el-button>
+                  <el-button size="small" type="primary" @click="enterReaderMode">沉浸阅读</el-button>
                   <el-select
                     v-model="evolutionViewpoint"
                     size="small"
@@ -6997,84 +9603,6 @@ onUnmounted(() => {
               <p v-else class="empty-paragraph reading-empty-hint">还没有可读的章节，先推进一回合。</p>
             </template>
 
-            <el-drawer v-model="readTocVisible" title="章节目录" size="82%">
-              <div class="shelf-toc-list">
-                <button
-                  v-for="chapter in evolutionNovelChapters"
-                  :key="chapter.index"
-                  type="button"
-                  class="shelf-toc-item"
-                  :class="{active: evolutionActiveChapter?.index === chapter.index}"
-                  @click="readTocVisible = false; selectReadingChapter(chapter.index)"
-                >
-                  <strong>{{ chapter.title }}</strong>
-                  <small>
-                    {{
-                      chapter.startTurn === chapter.endTurn
-                        ? `第${chapter.startTurn}回合`
-                        : `第${chapter.startTurn}–${chapter.endTurn}回合`
-                    }}
-                  </small>
-                </button>
-              </div>
-            </el-drawer>
-
-            <el-drawer
-              v-model="readSettingsVisible"
-              title="阅读设置"
-              direction="btt"
-              size="70%"
-            >
-              <div class="shelf-settings">
-                <label>字号</label>
-                <el-slider
-                  v-model="readerFontSize"
-                  :min="15"
-                  :max="28"
-                  :step="1"
-                  show-input
-                  @change="persistReaderSettings"
-                />
-                <label>行距</label>
-                <el-slider
-                  v-model="readerLineHeight"
-                  :min="1.4"
-                  :max="2.6"
-                  :step="0.1"
-                  show-input
-                  @change="persistReaderSettings"
-                />
-                <label>主题</label>
-                <el-radio-group v-model="readerTheme" @change="persistReaderSettings">
-                  <el-radio-button value="day">白</el-radio-button>
-                  <el-radio-button value="sepia">米黄</el-radio-button>
-                  <el-radio-button value="night">夜间</el-radio-button>
-                </el-radio-group>
-                <label>段距</label>
-                <el-slider
-                  v-model="readerParagraphSpacing"
-                  :min="0.8"
-                  :max="2.2"
-                  :step="0.1"
-                  show-input
-                  @change="persistReaderSettings"
-                />
-                <label>对齐</label>
-                <el-radio-group v-model="readerJustify" @change="persistReaderSettings">
-                  <el-radio-button :value="true">两端对齐</el-radio-button>
-                  <el-radio-button :value="false">左对齐</el-radio-button>
-                </el-radio-group>
-                <label>阅读宽度</label>
-                <el-slider
-                  v-model="readerMeasure"
-                  :min="700"
-                  :max="1100"
-                  :step="20"
-                  show-input
-                  @change="persistReaderSettings"
-                />
-              </div>
-            </el-drawer>
           </section>
 
           <section v-else-if="activity === 'shelf'" class="activity-panel shelf-panel">
@@ -7115,6 +9643,7 @@ onUnmounted(() => {
                   <div class="shelf-card-meta">
                     <span>{{ book.chapter_count }} 章</span>
                     <span>{{ book.total_chars.toLocaleString() }} 字</span>
+                    <span v-if="book.source_encoding">{{ textEncodingLabel(book.source_encoding) }}</span>
                     <span>{{ book.updated_at }}</span>
                   </div>
                   <div class="shelf-card-actions">
@@ -7142,13 +9671,26 @@ onUnmounted(() => {
                 <div class="reading-toolbar-controls">
                   <el-button
                     size="small"
-                    @click="shelfBook = null; shelfBookId = ''; shelfChapter = null; shelfChapterIndex = -1"
+                    @click="closeShelfBook"
                   >
                     返回书架
                   </el-button>
                   <el-button size="small" @click="openShelfVersions">版本</el-button>
-                  <el-button size="small" @click="shelfTocVisible = true">目录</el-button>
-                  <el-button size="small" @click="shelfSettingsVisible = true">阅读设置</el-button>
+                  <el-button size="small" @click="openReaderNavigator('toc')">目录</el-button>
+                  <el-button size="small" @click="openReaderNavigator('search')">搜索</el-button>
+                  <el-button size="small" @click="readerSettingsVisible = true">排版</el-button>
+                  <el-button size="small" @click="openReaderBranch">
+                    <GameIcon name="git-merge" :size="15" />
+                    分支续写
+                  </el-button>
+                  <el-button size="small" @click="openShelfBranchTree">
+                    <GameIcon name="route" :size="15" />
+                    故事树<span v-if="shelfBranches.length"> · {{ shelfBranches.length }}</span>
+                  </el-button>
+                  <el-button size="small" :loading="branchProjectBusy" @click="materializeShelfProject()">
+                    导入工作台
+                  </el-button>
+                  <el-button size="small" type="primary" @click="enterReaderMode">沉浸阅读</el-button>
                   <el-button
                     size="small"
                     :disabled="shelfChapterIndex <= 0"
@@ -7174,104 +9716,206 @@ onUnmounted(() => {
                   class="novel-reader shelf-reader"
                   :class="readerThemeClass()"
                   :style="readerContentStyle()"
+                  @mouseup="captureBranchSelection"
+                  @touchend="captureBranchSelection"
                 >
-                  <div class="reader-tap-zones">
-                    <button
-                      type="button"
-                      class="reader-tap-zone left"
-                      :disabled="shelfChapterIndex <= 0"
-                      aria-label="上一章"
-                      @click="openShelfAdjacentChapter(-1)"
-                    />
-                    <button
-                      type="button"
-                      class="reader-tap-zone right"
-                      :disabled="shelfChapterIndex < 0 || shelfChapterIndex >= shelfBook.chapters.length - 1"
-                      aria-label="下一章"
-                      @click="openShelfAdjacentChapter(1)"
-                    />
-                  </div>
                   <h2>{{ shelfChapter.title }}</h2>
-                  <p v-for="(paragraph, index) in shelfChapterParagraphs(shelfChapter)" :key="index">
-                    {{ paragraph }}
-                  </p>
+                  <div
+                    v-for="(paragraph, index) in shelfChapterParagraphs(shelfChapter)"
+                    :key="index"
+                    class="shelf-reader-paragraph"
+                  >
+                    <p>{{ paragraph }}</p>
+                    <button
+                      type="button"
+                      class="shelf-branch-button"
+                      title="从本段末尾分支续写"
+                      :aria-label="`从第 ${index + 1} 段末尾分支续写`"
+                      @click.stop="openShelfParagraphBranch(paragraph, index)"
+                    >
+                      <GameIcon name="git-merge" :size="16" />
+                    </button>
+                  </div>
                 </article>
 
                 <div class="shelf-ai-panel">
-                  <div class="shelf-ai-head">
-                    <strong>AI 创作</strong>
-                    <el-radio-group v-model="shelfAiMode" size="small">
-                      <el-radio-button value="continue">续写</el-radio-button>
-                      <el-radio-button value="rewrite">改写</el-radio-button>
-                      <el-radio-button value="expand">扩写</el-radio-button>
-                    </el-radio-group>
-                    <el-button type="primary" size="small" :loading="shelfAiBusy" @click="runShelfAiWrite">
-                      生成
-                    </el-button>
-                    <el-button size="small" :loading="shelfAnalyzeBusy" @click="runShelfAnalysis">
-                      分析全书
-                    </el-button>
-                  </div>
-                  <el-input
-                    v-model="shelfGuidance"
-                    placeholder="引导 AI，例如：让主角发现旧码头火光，语气保持沉静"
-                    clearable
-                  />
-                  <div v-if="shelfAnalysis" class="shelf-analysis">
-                    <div class="shelf-analysis-head">
-                      <strong>全书档案</strong>
-                      <small v-if="shelfAnalysis.offline">离线提取 · 配置 AI 后可升级</small>
-                      <span v-else>AI 分析</span>
-                      <span>
-                        {{ shelfAnalysis.characters.length }} 角色 ·
-                        {{ shelfAnalysis.settings.length }} 设定 ·
-                        {{ shelfAnalysis.key_facts.length }} 事实 ·
-                        {{ shelfAnalysis.unresolved_threads.length }} 伏笔
-                      </span>
+                  <section class="shelf-analysis-console">
+                    <div class="shelf-analysis-toolbar">
+                      <div class="shelf-analysis-title">
+                        <span class="shelf-analysis-icon"><GameIcon name="database" :size="19" /></span>
+                        <div>
+                          <strong>全书档案</strong>
+                          <small>
+                            {{ shelfAnalysisStatus?.message || "逐章阅读正文，整理人物、时间线、设定与伏笔" }}
+                          </small>
+                        </div>
+                      </div>
+                      <div class="shelf-analysis-actions">
+                        <el-button
+                          v-if="shelfAnalysisRunning"
+                          size="small"
+                          @click="pauseShelfAnalysis"
+                        >
+                          暂停
+                        </el-button>
+                        <el-button
+                          v-else
+                          type="primary"
+                          size="small"
+                          :loading="shelfAnalyzeBusy"
+                          @click="runShelfAnalysis"
+                        >
+                          {{ shelfAnalysisActionLabel }}
+                        </el-button>
+                        <el-button
+                          class="shelf-analysis-settings-button"
+                          size="small"
+                          circle
+                          :title="shelfAnalysisAdvanced ? '收起分析设置' : '分析设置'"
+                          aria-label="分析设置"
+                          @click="shelfAnalysisAdvanced = !shelfAnalysisAdvanced"
+                        >
+                          <GameIcon name="settings" :size="16" />
+                        </el-button>
+                      </div>
                     </div>
-                    <template v-if="shelfAnalysis.characters.length">
-                      <label>角色</label>
-                      <div class="shelf-tags">
-                        <span
-                          v-for="item in shelfAnalysis.characters.slice(0, 16)"
-                          :key="item.name"
-                          class="shelf-tag"
-                          :title="`${item.role} · ${item.notes}`"
-                        >
-                          {{ item.name }}
+
+                    <div v-if="shelfAnalysisRunning || shelfAnalysisStatus?.can_resume" class="shelf-analysis-progress">
+                      <el-progress
+                        :percentage="shelfAnalysisStatus?.progress ?? 0"
+                        :stroke-width="7"
+                        :show-text="false"
+                      />
+                      <div>
+                        <span>{{ shelfAnalysisStatus?.progress ?? 0 }}%</span>
+                        <span v-if="shelfAnalysisStatus?.current_chapter">
+                          {{ shelfAnalysisStatus.current_chapter }}
+                        </span>
+                        <span v-else-if="shelfAnalysisStatus?.cached_steps">
+                          已复用 {{ shelfAnalysisStatus.cached_steps }} 个分析节点
+                        </span>
+                        <span v-if="shelfAnalysisStatus?.error" class="analysis-error">
+                          {{ shelfAnalysisStatus.error }}
                         </span>
                       </div>
-                    </template>
-                    <template v-if="shelfAnalysis.settings.length">
-                      <label>设定</label>
-                      <div class="shelf-tags">
-                        <span
-                          v-for="item in shelfAnalysis.settings.slice(0, 10)"
-                          :key="item.name"
-                          class="shelf-tag shelf-tag-blue"
-                          :title="`${item.type} · ${item.notes}`"
-                        >
-                          {{ item.name }}
-                        </span>
+                    </div>
+
+                    <div v-show="shelfAnalysisAdvanced" class="shelf-analysis-advanced">
+                      <div class="shelf-analysis-mode-row">
+                        <label>阅读深度</label>
+                        <el-radio-group v-model="shelfAnalysisMode" size="small">
+                          <el-radio-button value="quick">快速</el-radio-button>
+                          <el-radio-button value="smart">智能</el-radio-button>
+                          <el-radio-button value="deep">深读</el-radio-button>
+                        </el-radio-group>
                       </div>
-                    </template>
-                    <template v-if="shelfAnalysis.key_facts.length">
-                      <label>关键事实</label>
-                      <ul>
-                        <li v-for="(fact, index) in shelfAnalysis.key_facts.slice(0, 6)" :key="index">
-                          {{ fact }}
-                        </li>
-                      </ul>
-                    </template>
-                    <template v-if="shelfAnalysis.unresolved_threads.length">
-                      <label>待回收伏笔</label>
-                      <ul>
-                        <li v-for="(thread, index) in shelfAnalysis.unresolved_threads.slice(0, 6)" :key="index">
-                          {{ thread }}
-                        </li>
-                      </ul>
-                    </template>
-                  </div>
+                      <p>
+                        <template v-if="shelfAnalysisMode === 'quick'">适合先看全局轮廓，长片段合并阅读。</template>
+                        <template v-else-if="shelfAnalysisMode === 'deep'">更细地阅读长章节，适合复杂群像和多线叙事。</template>
+                        <template v-else>自动平衡细节、耗时与费用，适合大多数长篇。</template>
+                      </p>
+                      <div v-if="shelfAnalysisPlan" class="shelf-analysis-plan">
+                        <span>{{ shelfAnalysisPlan.chapter_count }} 项正文</span>
+                        <span>{{ shelfAnalysisPlan.total_chars.toLocaleString() }} 字</span>
+                        <span>{{ shelfAnalysisPlan.fragment_count }} 个阅读片段</span>
+                        <span>约 {{ shelfAnalysisPlan.estimated_requests }} 次分析</span>
+                      </div>
+                      <el-checkbox v-model="shelfAnalysisForce" :disabled="shelfAnalysisRunning">
+                        忽略已有结果，从头重新分析
+                      </el-checkbox>
+                    </div>
+
+                    <div v-if="shelfAnalysis" class="shelf-analysis">
+                      <div v-if="shelfAnalysis.offline || shelfAnalysis.stale" class="shelf-analysis-notice">
+                        <span v-if="shelfAnalysis.stale">正文已修改，更新档案时只会重读变化部分。</span>
+                        <span v-else>当前是本地基础索引，连接 AI 后可获得完整时间线与伏笔追踪。</span>
+                      </div>
+                      <el-tabs v-model="shelfAnalysisTab" class="shelf-analysis-tabs">
+                        <el-tab-pane label="总览" name="overview">
+                          <div class="shelf-analysis-metrics">
+                            <div><strong>{{ shelfAnalysis.characters.length }}</strong><span>角色</span></div>
+                            <div><strong>{{ shelfAnalysis.settings.length }}</strong><span>设定</span></div>
+                            <div><strong>{{ shelfAnalysis.timeline?.length ?? 0 }}</strong><span>事件</span></div>
+                            <div><strong>{{ shelfAnalysis.unresolved_threads.length }}</strong><span>待回收</span></div>
+                          </div>
+                          <p v-if="shelfAnalysis.summary" class="shelf-analysis-summary">{{ shelfAnalysis.summary }}</p>
+                          <div v-if="shelfAnalysis.key_facts.length" class="shelf-analysis-list">
+                            <article v-for="(fact, index) in shelfAnalysis.key_facts.slice(0, 8)" :key="index">
+                              <p>{{ fact.text }}</p>
+                              <small>{{ analysisSourceLabel(fact.source_chapters) }}</small>
+                            </article>
+                          </div>
+                        </el-tab-pane>
+                        <el-tab-pane label="人物" name="characters">
+                          <div class="shelf-analysis-entity-grid">
+                            <article v-for="item in shelfAnalysis.characters" :key="item.name">
+                              <div><strong>{{ item.name }}</strong><span>{{ item.role }}</span></div>
+                              <p>{{ item.notes || "暂无补充说明" }}</p>
+                              <small>{{ analysisSourceLabel(item.source_chapters) }}</small>
+                            </article>
+                          </div>
+                        </el-tab-pane>
+                        <el-tab-pane label="时间线" name="timeline">
+                          <div class="shelf-analysis-timeline">
+                            <article v-for="(item, index) in shelfAnalysis.timeline" :key="`${item.title}-${index}`">
+                              <span>{{ analysisSourceLabel(item.source_chapters) }}</span>
+                              <div><strong>{{ item.title }}</strong><p>{{ item.summary }}</p></div>
+                            </article>
+                            <p v-if="!shelfAnalysis.timeline?.length" class="shelf-analysis-empty">暂无时间线记录</p>
+                          </div>
+                        </el-tab-pane>
+                        <el-tab-pane label="世界" name="world">
+                          <div class="shelf-analysis-entity-grid">
+                            <article v-for="item in shelfAnalysis.settings" :key="item.name">
+                              <div><strong>{{ item.name }}</strong><span>{{ item.type }}</span></div>
+                              <p>{{ item.notes || "暂无补充说明" }}</p>
+                              <small>{{ analysisSourceLabel(item.source_chapters) }}</small>
+                            </article>
+                          </div>
+                          <div v-if="shelfAnalysis.relations?.length" class="shelf-relation-list">
+                            <span v-for="(item, index) in shelfAnalysis.relations.slice(0, 40)" :key="index">
+                              {{ item.from }} · {{ item.relation }} · {{ item.to }}
+                            </span>
+                          </div>
+                        </el-tab-pane>
+                        <el-tab-pane label="伏笔" name="threads">
+                          <div class="shelf-thread-columns">
+                            <section>
+                              <strong>待回收</strong>
+                              <article v-for="(item, index) in shelfAnalysis.unresolved_threads" :key="index">
+                                <p>{{ item.text }}</p><small>{{ analysisSourceLabel(item.source_chapters) }}</small>
+                              </article>
+                            </section>
+                            <section>
+                              <strong>已回收</strong>
+                              <article v-for="(item, index) in shelfAnalysis.resolved_threads" :key="index">
+                                <p>{{ item.text }}</p><small>{{ analysisSourceLabel(item.source_chapters) }}</small>
+                              </article>
+                            </section>
+                          </div>
+                        </el-tab-pane>
+                      </el-tabs>
+                    </div>
+                  </section>
+
+                  <section class="shelf-compose-section">
+                    <div class="shelf-ai-head">
+                      <strong>AI 创作</strong>
+                      <el-radio-group v-model="shelfAiMode" size="small">
+                        <el-radio-button value="continue">续写</el-radio-button>
+                        <el-radio-button value="rewrite">改写</el-radio-button>
+                        <el-radio-button value="expand">扩写</el-radio-button>
+                      </el-radio-group>
+                      <el-button type="primary" size="small" :loading="shelfAiBusy" @click="runShelfAiWrite">
+                        生成
+                      </el-button>
+                    </div>
+                    <el-input
+                      v-model="shelfGuidance"
+                      placeholder="引导 AI，例如：让主角发现旧码头火光，语气保持沉静"
+                      clearable
+                    />
+                  </section>
                   <template v-if="shelfAiResult">
                     <el-input
                       v-model="shelfAiResult"
@@ -7293,24 +9937,21 @@ onUnmounted(() => {
                     </el-button>
                     <small>AI 结果应用后需要保存才会写入磁盘。</small>
                   </div>
-                </div>
-              </template>
-
-              <el-drawer v-model="shelfTocVisible" title="章节目录" size="82%">
-                <div class="shelf-toc-list">
                   <button
-                    v-for="chapter in shelfBook.chapters"
-                    :key="chapter.id"
+                    v-if="shelfBranches.length"
                     type="button"
-                    class="shelf-toc-item"
-                    :class="{active: shelfChapter?.id === chapter.id}"
-                    @click="shelfTocVisible = false; loadShelfChapter(chapter.id)"
+                    class="shelf-branch-tree-entry"
+                    @click="openShelfBranchTree"
                   >
-                    <strong>{{ chapter.title }}</strong>
-                    <small>{{ chapter.char_count.toLocaleString() }} 字</small>
+                    <span class="shelf-branch-tree-icon"><GameIcon name="route" :size="18" /></span>
+                    <span>
+                      <strong>查看本章故事树</strong>
+                      <small>{{ shelfBranches.length }} 个故事节点 · {{ shelfBranchEndingCount }} 条开放结局</small>
+                    </span>
+                    <GameIcon name="chevron-right" :size="16" />
                   </button>
                 </div>
-              </el-drawer>
+              </template>
 
               <el-drawer
                 v-model="shelfVersionsVisible"
@@ -7360,62 +10001,6 @@ onUnmounted(() => {
                 </div>
               </el-drawer>
 
-              <el-drawer
-                v-model="shelfSettingsVisible"
-                title="阅读设置"
-                direction="btt"
-                size="70%"
-              >
-                <div class="shelf-settings">
-                  <label>字号</label>
-                  <el-slider
-                    v-model="readerFontSize"
-                    :min="15"
-                    :max="28"
-                    :step="1"
-                    show-input
-                    @change="persistReaderSettings"
-                  />
-                  <label>行距</label>
-                  <el-slider
-                    v-model="readerLineHeight"
-                    :min="1.4"
-                    :max="2.6"
-                    :step="0.1"
-                    show-input
-                    @change="persistReaderSettings"
-                  />
-                  <label>主题</label>
-                  <el-radio-group v-model="readerTheme" @change="persistReaderSettings">
-                    <el-radio-button value="day">白</el-radio-button>
-                    <el-radio-button value="sepia">米黄</el-radio-button>
-                    <el-radio-button value="night">夜间</el-radio-button>
-                  </el-radio-group>
-                  <label>段距</label>
-                  <el-slider
-                    v-model="readerParagraphSpacing"
-                    :min="0.8"
-                    :max="2.2"
-                    :step="0.1"
-                    show-input
-                    @change="persistReaderSettings"
-                  />
-                  <label>对齐</label>
-                  <el-radio-group v-model="readerJustify" @change="persistReaderSettings">
-                    <el-radio-button :value="true">两端对齐</el-radio-button>
-                    <el-radio-button :value="false">左对齐</el-radio-button>
-                  </el-radio-group>
-                  <label>阅读宽度</label>
-                  <el-slider
-                    v-model="readerMeasure"
-                    :min="700"
-                    :max="1100"
-                    :step="20"
-                    show-input
-                    @change="persistReaderSettings"
-                  />
-                </div>
-              </el-drawer>
             </template>
           </section>
 
@@ -7442,7 +10027,7 @@ onUnmounted(() => {
                         <strong>{{ item.label }}</strong>
                         <small>{{ item.description }}</small>
                       </span>
-                      <i>→</i>
+                      <i aria-hidden="true"><GameIcon name="chevron-right" :size="16" /></i>
                     </button>
                   </div>
                 </el-card>
@@ -7670,62 +10255,18 @@ onUnmounted(() => {
                   </div>
                 </el-card>
 
-                <el-card shadow="never" class="llm-config-card">
-                  <template #header>
-                    <div class="card-header">
-                      <span>AI 正文扩写（OpenAI 兼容）</span>
-                      <el-space wrap>
-                        <el-button size="small" :loading="busyAction === '测试模型连接'" @click="testLlmConnection">
-                          测试连接
-                        </el-button>
-                        <el-button size="small" type="primary" @click="saveLlmConfig">保存设置</el-button>
-                      </el-space>
-                    </div>
-                  </template>
-                  <el-form label-position="top" class="vault-deploy-form">
-                    <el-row :gutter="10">
-                      <el-col :xs="24" :sm="8">
-                        <el-form-item label="通道预设">
-                          <el-select v-model="llmPreset" @change="applyLlmProvider">
-                            <el-option label="DeepSeek" value="deepseek" />
-                            <el-option label="OpenAI" value="openai" />
-                            <el-option label="自定义" value="custom" />
-                          </el-select>
-                        </el-form-item>
-                      </el-col>
-                      <el-col :xs="24" :sm="8">
-                        <el-form-item label="API 地址">
-                          <el-input v-model="llmBaseUrl" placeholder="https://api.deepseek.com/v1" />
-                        </el-form-item>
-                      </el-col>
-                      <el-col :xs="24" :sm="8">
-                        <el-form-item label="模型名称">
-                          <el-input v-model="llmModel" placeholder="deepseek-chat" />
-                        </el-form-item>
-                      </el-col>
-                      <el-col :xs="24" :sm="8">
-                        <el-form-item label="API Key">
-                          <el-input
-                            v-model="llmApiKey"
-                            type="password"
-                            show-password
-                            placeholder="已配置则留空保持不变"
-                          />
-                        </el-form-item>
-                      </el-col>
-                    </el-row>
-                    <p class="knowledge-flow-note">
-                      配置保存在服务端磁盘（data/llm-config.json），所有设备（含局域网手机）共用同一份；
-                      生成请求经本机 Rhine-Vault 转发，浏览器不再持有密钥。
-                      演化引擎本身仍离线可用，配置模型后只是把“场景简报”扩写成更完整的正文。
-                    </p>
-                    <el-space wrap>
-                      <el-button size="small" type="danger" plain :disabled="!llmConfigured" @click="clearLlmKey">
-                        清除 API Key
-                      </el-button>
-                    </el-space>
-                  </el-form>
-                </el-card>
+                <div class="settings-route-row ai-settings-route">
+                  <span class="settings-route-icon"><GameIcon name="settings" :size="19" /></span>
+                  <div class="settings-route-copy">
+                    <strong>AI 模型配置</strong>
+                    <span>{{ llmChannelLabel }}</span>
+                    <small>{{ llmParameterSummary }}</small>
+                  </div>
+                  <el-button type="primary" @click="openAiPanel">
+                    打开右侧配置
+                    <GameIcon name="panel-right" :size="16" />
+                  </el-button>
+                </div>
 
                 <el-row :gutter="14">
                   <el-col :xs="24" :lg="12">
@@ -7765,7 +10306,7 @@ onUnmounted(() => {
                       <template #header>
                         <div class="card-header">
                           <span>资料入库</span>
-                          <el-button size="small" @click="refreshReview">刷新</el-button>
+                          <el-button size="small" @click="refreshKnowledgeCenter">刷新</el-button>
                         </div>
                       </template>
                       <div class="knowledge-pipeline compact">
@@ -7775,29 +10316,29 @@ onUnmounted(() => {
                         </div>
                       </div>
                       <p class="knowledge-flow-note">资料草稿不会直接影响创作，送去确认并入库后才会出现在对话写作参考里。</p>
-                      <el-table :data="proposals" height="220" class="knowledge-table">
+                      <el-table :data="knowledgeDraftItems" height="220" class="knowledge-table">
                         <el-table-column prop="title" label="资料草稿" min-width="160" />
                         <el-table-column label="内容预览" min-width="220">
                           <template #default="{row}">
-                            <span class="knowledge-preview">{{ draftPreview(row, 110) }}</span>
+                            <span class="knowledge-preview">{{ preview(knowledgeEditableBody(row), 110) }}</span>
                           </template>
                         </el-table-column>
                         <el-table-column label="下一步" width="120">
                           <template #default="{row}">
-                            <el-button size="small" @click="stageAll(row)">送去确认</el-button>
+                            <el-button size="small" @click="openKnowledgeReview(row)">审核</el-button>
                           </template>
                         </el-table-column>
                       </el-table>
-                      <el-table :data="stagingEntries" height="220" class="advanced-table knowledge-table">
+                      <el-table :data="knowledgeReadyItems" height="220" class="advanced-table knowledge-table">
                         <el-table-column prop="title" label="待入库" min-width="160" />
                         <el-table-column label="内容预览" min-width="220">
                           <template #default="{row}">
-                            <span class="knowledge-preview">{{ draftPreview(row, 110) }}</span>
+                            <span class="knowledge-preview">{{ preview(knowledgeEditableBody(row), 110) }}</span>
                           </template>
                         </el-table-column>
                         <el-table-column label="下一步" width="110">
                           <template #default="{row}">
-                            <el-button size="small" type="primary" @click="approveEntry(row)">入库</el-button>
+                            <el-button size="small" type="primary" @click="openKnowledgeReview(row)">确认</el-button>
                           </template>
                         </el-table-column>
                       </el-table>
@@ -7813,18 +10354,104 @@ onUnmounted(() => {
     </section>
 
     <el-dialog
+      v-model="shelfImportVisible"
+      class="txt-import-dialog"
+      title="导入 TXT"
+      width="min(680px, calc(100vw - 24px))"
+      append-to-body
+      destroy-on-close
+      @closed="resetShelfImportDialog"
+    >
+      <div class="txt-import-shell">
+        <div class="txt-import-file">
+          <span class="txt-import-file-icon"><GameIcon name="file-text" :size="20" /></span>
+          <div>
+            <strong>{{ shelfImportFileName }}</strong>
+            <small>{{ shelfImportFileSize }}</small>
+          </div>
+          <span class="txt-import-encoding" :class="{attention: shelfImportNeedsAttention}">
+            <GameIcon :name="shelfImportNeedsAttention ? 'alert' : 'check'" :size="14" />
+            {{ shelfImportDecoded?.label }} · {{ shelfImportConfidenceLabel }}
+          </span>
+        </div>
+
+        <label class="txt-import-field">
+          <span>书名</span>
+          <el-input v-model="shelfImportName" maxlength="120" />
+        </label>
+
+        <section class="txt-import-preview" :class="{attention: shelfImportNeedsAttention}">
+          <header>
+            <div>
+              <strong>文字预览</strong>
+              <small v-if="shelfImportNeedsAttention">编码识别结果需要确认</small>
+            </div>
+            <el-button link type="primary" @click="shelfImportAdvanced = !shelfImportAdvanced">
+              {{ shelfImportAdvanced ? '收起编码' : '更换编码' }}
+            </el-button>
+          </header>
+          <div v-if="shelfImportAdvanced" class="txt-import-encoding-control">
+            <span>文件编码</span>
+            <el-select v-model="shelfImportEncoding" @change="updateShelfImportDecoding">
+              <el-option
+                v-for="option in textEncodingOptions"
+                :key="option.value"
+                :label="option.label"
+                :value="option.value"
+              />
+            </el-select>
+          </div>
+          <pre>{{ shelfImportPreview }}</pre>
+        </section>
+
+        <p v-if="shelfImportError" class="txt-import-error">{{ shelfImportError }}</p>
+      </div>
+      <template #footer>
+        <div class="txt-import-actions">
+          <el-button @click="shelfImportVisible = false">取消</el-button>
+          <el-button
+            type="primary"
+            :loading="shelfImportBusy"
+            :disabled="Boolean(shelfImportError) || !shelfImportDecoded?.text.trim()"
+            @click="confirmShelfTxtImport"
+          >
+            导入并打开
+          </el-button>
+        </div>
+      </template>
+    </el-dialog>
+
+    <el-dialog
       v-model="createDialogVisible"
       class="create-story-dialog"
       title="开始一个新故事"
-      width="min(520px, calc(100vw - 24px))"
+      width="min(560px, calc(100vw - 24px))"
     >
       <div class="create-story-intro">
-        <strong>先写最确定的部分</strong>
-        <span>名称之外都可以稍后再改，创建后会自动准备好第一章。</span>
+        <strong>{{ selectedStoryTemplate.label }}</strong>
+        <span>{{ selectedStoryTemplate.description }}</span>
       </div>
       <el-form label-position="top">
+        <el-form-item label="故事起点">
+          <el-radio-group v-model="newProjectTemplate" class="story-template-switch">
+            <el-radio-button
+              v-for="template in storyTemplates"
+              :key="template.id"
+              :value="template.id"
+            >
+              {{ template.label }}
+            </el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+        <div v-if="newProjectTemplate === 'gothic-fantasy'" class="story-template-summary">
+          <span v-for="item in selectedStoryTemplate.contents" :key="item">{{ item }}</span>
+        </div>
         <el-form-item label="故事名称">
-          <el-input v-model="newProjectName" autofocus placeholder="例如：雾港来信" />
+          <el-input
+            v-model="newProjectName"
+            autofocus
+            :placeholder="selectedStoryTemplate.name"
+          />
         </el-form-item>
         <el-form-item label="故事类型">
           <el-select
@@ -7832,7 +10459,7 @@ onUnmounted(() => {
             allow-create
             default-first-option
             filterable
-            placeholder="选择或输入类型"
+            :placeholder="selectedStoryTemplate.genre"
           >
             <el-option v-for="genre in genreOptions" :key="genre" :label="genre" :value="genre" />
           </el-select>
@@ -7842,7 +10469,7 @@ onUnmounted(() => {
             v-model="newProjectIdea"
             type="textarea"
             :rows="4"
-            placeholder="例如：一个只在雨夜送信的人，收到了一封写给自己的信。"
+            :placeholder="selectedStoryTemplate.summary || '例如：一个只在雨夜送信的人，收到了一封写给自己的信。'"
           />
         </el-form-item>
       </el-form>
@@ -7912,124 +10539,1046 @@ onUnmounted(() => {
     </el-dialog>
 
     <el-drawer
-      v-model="aiPanelOpen"
-      title="AI 生成通道"
+      v-model="knowledgeReviewVisible"
+      class="knowledge-review-drawer"
+      :title="activeKnowledgeReviewItem?.stage === 'ready' ? '确认资料入库' : '审核资料草稿'"
       direction="rtl"
-      size="min(380px, 88vw)"
+      size="min(720px, 96vw)"
+      append-to-body
     >
-      <div class="ai-drawer-body">
-        <div class="ai-status-row" :class="aiStatusTone">
-          <strong>状态 · {{ aiStatusLabel }}</strong>
-          <span>{{ aiStatusDetail || "点击「测试连接」检查通道状态" }}</span>
-        </div>
-        <div class="ai-drawer-section">
-          <label>通道预设</label>
-          <el-select v-model="llmPreset" style="width: 100%" @change="applyLlmProvider">
-            <el-option label="DeepSeek" value="deepseek" />
-            <el-option label="OpenAI" value="openai" />
-            <el-option label="自定义" value="custom" />
-          </el-select>
-          <label>API 地址</label>
-          <el-input v-model="llmBaseUrl" placeholder="API 地址" />
-          <label>模型</label>
-          <el-input v-model="llmModel" placeholder="模型" />
-          <label>API Key</label>
-          <el-input
-            v-model="llmApiKey"
-            type="password"
-            show-password
-            placeholder="已配置则留空保持不变"
-          />
-        </div>
-        <div class="ai-status-actions">
-          <el-button :loading="aiStatus === 'checking'" @click="runAiCheck">测试连接</el-button>
-          <el-button type="primary" @click="saveLlmConfig">保存并检查</el-button>
-          <el-button @click="openDeepSeekKeyAssistant">DeepSeek 登录取 Key</el-button>
-          <el-button @click="pasteDeepSeekKey">从剪贴板读取</el-button>
-          <small>配置后对话创作与演化正文都走此通道；未配置时使用离线模板。</small>
-        </div>
+      <div v-if="activeKnowledgeReviewItem" class="knowledge-review-shell">
+        <section class="knowledge-review-status" :class="activeKnowledgeReviewItem.stage">
+          <span class="knowledge-review-status-icon">
+            <GameIcon :name="activeKnowledgeReviewItem.stage === 'ready' ? 'database' : 'file-text'" :size="19" />
+          </span>
+          <div>
+            <strong>
+              {{ activeKnowledgeReviewItem.stage === 'ready'
+                ? activeKnowledgeRevisionTarget
+                  ? `将更新“${activeKnowledgeRevisionTarget.title}”`
+                  : '将新增一条正式资料'
+                : '检查内容、来源和相似资料' }}
+            </strong>
+            <small>
+              {{ activeKnowledgeReviewItem.stage === 'ready'
+                ? activeKnowledgeRevisionTarget
+                  ? `确认后生成 rev ${(activeKnowledgeReviewItem.baseRevision ?? activeKnowledgeRevisionTarget.revision ?? 1) + 1}，旧版本仍可回滚。`
+                  : '确认后将成为对话可引用的正式资料。'
+                : '保存修改不会直接入库；送审后还需要一次最终确认。' }}
+            </small>
+          </div>
+          <span class="knowledge-review-type">{{ knowledgeTypeLabel(activeKnowledgeReviewItem.nodeType) }}</span>
+        </section>
+
+        <section class="knowledge-review-editor">
+          <div class="knowledge-review-section-heading">
+            <div><GameIcon name="edit" :size="17" /><strong>资料内容</strong></div>
+            <small v-if="activeKnowledgeReviewItem.stage === 'ready'">只读</small>
+          </div>
+          <template v-if="activeKnowledgeReviewItem.stage === 'draft'">
+            <div class="knowledge-review-fields two-column">
+              <label>
+                <span>资料类型</span>
+                <el-select v-model="knowledgeReviewForm.nodeType">
+                  <el-option v-for="option in knowledgeTypeOptions" :key="option.value" :label="option.label" :value="option.value" />
+                </el-select>
+              </label>
+              <label>
+                <span>可信级别</span>
+                <el-select v-model="knowledgeReviewForm.authority">
+                  <el-option label="创作候选" value="experimental" />
+                  <el-option label="项目事实" value="approved" />
+                  <el-option label="参考资料" value="reference" />
+                </el-select>
+              </label>
+            </div>
+            <label class="knowledge-review-field">
+              <span>标题</span>
+              <el-input v-model="knowledgeReviewForm.title" maxlength="80" show-word-limit />
+            </label>
+            <label class="knowledge-review-field">
+              <span>内容</span>
+              <el-input v-model="knowledgeReviewForm.body" type="textarea" :rows="8" maxlength="8000" />
+            </label>
+            <label class="knowledge-review-field">
+              <span>标签</span>
+              <el-input v-model="knowledgeReviewForm.tagsText" placeholder="setting, character, clue" />
+            </label>
+          </template>
+          <div v-else class="knowledge-review-readonly">
+            <header>
+              <strong>{{ activeKnowledgeReviewItem.title }}</strong>
+              <span>{{ knowledgeTypeLabel(activeKnowledgeReviewItem.nodeType) }}</span>
+            </header>
+            <p>{{ knowledgeEditableBody(activeKnowledgeReviewItem) }}</p>
+            <footer>
+              <span v-for="tag in activeKnowledgeReviewItem.tags" :key="tag">{{ tag }}</span>
+            </footer>
+          </div>
+        </section>
+
+        <section class="knowledge-review-source">
+          <div class="knowledge-review-section-heading">
+            <div><GameIcon name="message" :size="17" /><strong>来源记录</strong></div>
+            <small>{{ activeKnowledgeSource.messageIds.length > 0 ? `${activeKnowledgeSource.messageIds.length} 条消息` : '手动资料' }}</small>
+          </div>
+          <div v-if="activeKnowledgeSource.metadata" class="knowledge-source-grid">
+            <div><span>来源</span><strong>{{ activeKnowledgeSource.kind || 'Rhine-Lore' }}</strong></div>
+            <div><span>项目</span><strong>{{ activeKnowledgeSource.project || '未记录' }}</strong></div>
+            <div><span>章节</span><strong>{{ activeKnowledgeSource.chapter || '未选择' }}</strong></div>
+          </div>
+          <div v-if="activeKnowledgeSource.excerpts.length > 0" class="knowledge-source-excerpts">
+            <p v-for="(excerpt, index) in activeKnowledgeSource.excerpts" :key="index">{{ excerpt }}</p>
+          </div>
+          <p v-else class="knowledge-source-empty">这条资料由手动输入或旧版本创建，没有可回看的对话摘录。</p>
+          <div v-if="activeKnowledgeSource.metadata" class="knowledge-source-actions">
+            <el-button
+              size="small"
+              :disabled="!activeKnowledgeSourceTarget.messageId"
+              @click="jumpToKnowledgeSource('chat')"
+            >
+              <GameIcon name="message" :size="15" />
+              打开原对话
+            </el-button>
+            <el-button
+              size="small"
+              :disabled="!activeKnowledgeSourceTarget.chapter"
+              @click="jumpToKnowledgeSource('chapter')"
+            >
+              <GameIcon name="book-open" :size="15" />
+              打开章节
+            </el-button>
+            <small v-if="!activeKnowledgeSourceTarget.project">原项目不在当前设备，来源摘录仍可正常阅读。</small>
+            <small v-else-if="!activeKnowledgeSourceTarget.messageId">原对话已被清理，来源摘录仍可正常阅读。</small>
+          </div>
+        </section>
+
+        <section class="knowledge-review-similarity">
+          <div class="knowledge-review-section-heading">
+            <div><GameIcon name="search" :size="17" /><strong>相似资料</strong></div>
+            <small>{{ activeKnowledgeSimilarities.length > 0 ? '入库前请确认是否重复或冲突' : '未发现明显相似项' }}</small>
+          </div>
+          <div v-if="activeKnowledgeSimilarities.length > 0" class="knowledge-similarity-list">
+            <article
+              v-for="match in activeKnowledgeSimilarities"
+              :key="match.item.key"
+              :class="{
+                selectable: activeKnowledgeReviewItem.stage === 'draft' && match.item.stage === 'library',
+                selected: knowledgeConflictTargetKey === match.item.key,
+              }"
+              :role="match.item.stage === 'library' ? 'button' : undefined"
+              :tabindex="match.item.stage === 'library' ? 0 : undefined"
+              @click="selectKnowledgeConflictTarget(match.item)"
+              @keydown.enter="selectKnowledgeConflictTarget(match.item)"
+            >
+              <span
+                class="knowledge-target-radio"
+                :class="{hidden: match.item.stage !== 'library'}"
+                aria-hidden="true"
+              >
+                <i />
+              </span>
+              <div>
+                <strong>{{ match.item.title }}</strong>
+                <p>{{ preview(knowledgeEditableBody(match.item), 150) }}</p>
+                <small>
+                  {{ match.reason }} · {{ knowledgeTypeLabel(match.item.nodeType) }}
+                  <template v-if="match.item.revision"> · rev {{ match.item.revision }}</template>
+                </small>
+              </div>
+              <span class="knowledge-similarity-score" :class="{high: match.score >= 0.5}">{{ Math.round(match.score * 100) }}%</span>
+            </article>
+          </div>
+          <div v-else class="knowledge-similarity-clear">
+            <GameIcon name="check" :size="18" />
+            <span>标题、正文和标签中没有发现明显重复。</span>
+          </div>
+          <div v-if="activeKnowledgeReviewItem.stage === 'draft'" class="knowledge-conflict-decision">
+            <div class="knowledge-conflict-mode" role="group" aria-label="相似资料处理方式">
+              <button
+                type="button"
+                :class="{active: knowledgeConflictMode === 'coexist'}"
+                @click="selectKnowledgeConflictMode('coexist')"
+              >
+                <GameIcon name="copy" :size="16" />
+                <span><strong>并存</strong><small>保留为两条资料</small></span>
+              </button>
+              <button
+                type="button"
+                :disabled="!activeKnowledgeConflictTarget"
+                :class="{active: knowledgeConflictMode === 'merge'}"
+                @click="selectKnowledgeConflictMode('merge')"
+              >
+                <GameIcon name="git-merge" :size="16" />
+                <span><strong>合并</strong><small>补充到已有资料</small></span>
+              </button>
+              <button
+                type="button"
+                :disabled="!activeKnowledgeConflictTarget"
+                :class="{active: knowledgeConflictMode === 'replace'}"
+                @click="selectKnowledgeConflictMode('replace')"
+              >
+                <GameIcon name="refresh" :size="16" />
+                <span><strong>覆盖</strong><small>用草稿替换内容</small></span>
+              </button>
+            </div>
+            <p v-if="knowledgeConflictMode === 'coexist'">
+              当前草稿会以新资料入库，不改动任何已有内容。
+            </p>
+            <p v-else-if="activeKnowledgeConflictTarget">
+              将更新“{{ activeKnowledgeConflictTarget.title }}”并生成 rev {{ (activeKnowledgeConflictTarget.revision ?? 1) + 1 }}，旧版本仍可回滚。
+            </p>
+            <p v-else>选择一条已入库的相似资料后，可以合并或覆盖。</p>
+          </div>
+        </section>
       </div>
+
+      <template #footer>
+        <div v-if="activeKnowledgeReviewItem" class="knowledge-review-footer">
+          <template v-if="activeKnowledgeReviewItem.stage === 'draft'">
+            <el-button type="danger" plain @click="rejectActiveKnowledgeReview">驳回</el-button>
+            <span />
+            <el-button :loading="busyAction === '保存资料修改'" @click="saveActiveKnowledgeReview()">保存修改</el-button>
+            <el-button type="primary" :loading="busyAction === '保存并送审'" @click="stageActiveKnowledgeReview">
+              保存并送审
+              <GameIcon name="arrow-right" :size="15" />
+            </el-button>
+          </template>
+          <template v-else>
+            <el-button @click="knowledgeReviewVisible = false">返回</el-button>
+            <span />
+            <el-button type="primary" :loading="busyAction === '批量确认入库'" @click="approveActiveKnowledgeReady">
+              确认入库
+              <GameIcon name="check" :size="15" />
+            </el-button>
+          </template>
+        </div>
+      </template>
     </el-drawer>
 
-    <button
-      v-if="showAiFab"
-      class="ai-fab"
-      type="button"
-      aria-label="打开 AI 对话"
-      @click="openActivity('chat')"
+    <el-drawer
+      v-model="knowledgeExtractVisible"
+      class="knowledge-extract-drawer"
+      title="从对话提炼资料"
+      direction="rtl"
+      size="min(680px, 96vw)"
+      append-to-body
     >
-      <GameIcon name="message" :size="20" />
-      <span>AI</span>
-    </button>
+      <div class="knowledge-extract-shell">
+        <div class="knowledge-extract-progress" aria-label="资料提炼步骤">
+          <span :class="{active: knowledgeExtractStep === 'select', complete: knowledgeExtractStep === 'review'}">
+            <b>1</b>
+            选择对话
+          </span>
+          <i />
+          <span :class="{active: knowledgeExtractStep === 'review'}">
+            <b>2</b>
+            审核资料
+          </span>
+        </div>
+
+        <template v-if="knowledgeExtractStep === 'select'">
+          <section class="knowledge-extract-intro">
+            <span class="knowledge-extract-icon"><GameIcon name="message" :size="20" /></span>
+            <div>
+              <strong>选择真正包含设定的消息</strong>
+              <small>最多 24 条。提炼只生成候选，不会自动进入知识库。</small>
+            </div>
+          </section>
+          <div class="knowledge-message-tools">
+            <span>已选择 {{ knowledgeSelectedMessageIds.length }} 条</span>
+            <el-space wrap>
+              <el-button size="small" @click="selectRecentKnowledgeMessages">最近 8 条</el-button>
+              <el-button size="small" @click="selectAllKnowledgeMessages">最近 24 条</el-button>
+              <el-button size="small" text @click="knowledgeSelectedMessageIds = []">清空</el-button>
+            </el-space>
+          </div>
+          <div class="knowledge-message-list">
+            <button
+              v-for="message in knowledgeExtractMessages"
+              :key="message.id"
+              type="button"
+              class="knowledge-message-row"
+              :class="{selected: knowledgeSelectedMessageIds.includes(message.id)}"
+              :disabled="knowledgeSelectedMessageIds.length >= 24 && !knowledgeSelectedMessageIds.includes(message.id)"
+              @click="toggleKnowledgeExtractMessage(message.id)"
+            >
+              <span class="knowledge-message-check" aria-hidden="true">
+                <GameIcon v-if="knowledgeSelectedMessageIds.includes(message.id)" name="check" :size="15" />
+              </span>
+              <span class="knowledge-message-copy">
+                <span>
+                  <strong>{{ message.role === 'user' ? '我' : 'Rhine-Lore' }}</strong>
+                  <time>{{ chatTime(message.created_at) }}</time>
+                </span>
+                <small>{{ preview(message.content, 220) }}</small>
+              </span>
+            </button>
+          </div>
+        </template>
+
+        <template v-else>
+          <div class="knowledge-extract-result" :class="{offline: knowledgeExtractOffline}">
+            <GameIcon :name="knowledgeExtractOffline ? 'database' : 'sparkles'" :size="18" />
+            <span>
+              <strong>{{ knowledgeExtractOffline ? '本地规则提炼' : 'AI 结构化提炼' }}</strong>
+              <small>{{ knowledgeExtractNote }}</small>
+            </span>
+          </div>
+          <div class="knowledge-candidate-summary">
+            <span>找到 {{ knowledgeCandidates.length }} 条候选</span>
+            <span>已选择 {{ knowledgeSelectedCandidateCount }} 条</span>
+          </div>
+          <div class="knowledge-candidate-list">
+            <article
+              v-for="candidate in knowledgeCandidates"
+              :key="candidate.candidate_id"
+              class="knowledge-candidate"
+              :class="{selected: candidate.selected}"
+            >
+              <header>
+                <button
+                  type="button"
+                  class="knowledge-candidate-toggle"
+                  :aria-pressed="candidate.selected"
+                  :aria-label="candidate.selected ? '取消选择资料' : '选择资料'"
+                  @click="candidate.selected = !candidate.selected"
+                >
+                  <GameIcon v-if="candidate.selected" name="check" :size="15" />
+                </button>
+                <el-select v-model="candidate.node_type" size="small" aria-label="资料类型">
+                  <el-option
+                    v-for="option in knowledgeTypeOptions"
+                    :key="option.value"
+                    :label="option.label"
+                    :value="option.value"
+                  />
+                </el-select>
+                <span class="knowledge-confidence">可信度 {{ Math.round(candidate.confidence * 100) }}%</span>
+              </header>
+              <label>
+                <span>标题</span>
+                <el-input v-model="candidate.title" maxlength="80" show-word-limit />
+              </label>
+              <label>
+                <span>内容</span>
+                <el-input v-model="candidate.content" type="textarea" :rows="4" maxlength="4000" />
+              </label>
+              <label>
+                <span>标签</span>
+                <el-input v-model="candidate.tagsText" placeholder="character, setting, clue" />
+              </label>
+              <footer>
+                <span><GameIcon name="message" :size="15" /> 来源 {{ knowledgeCandidateSource(candidate).length }} 条消息</span>
+                <small>{{ candidate.rationale }}</small>
+              </footer>
+            </article>
+            <EmptyState
+              v-if="knowledgeCandidates.length === 0"
+              icon="database"
+              title="没有可审核的候选"
+              description="返回重新选择包含角色、规则、事件或伏笔的对话。"
+              compact
+            />
+          </div>
+        </template>
+      </div>
+
+      <template #footer>
+        <div class="knowledge-extract-actions">
+          <template v-if="knowledgeExtractStep === 'select'">
+            <el-button @click="knowledgeExtractVisible = false">取消</el-button>
+            <el-button
+              type="primary"
+              :disabled="knowledgeSelectedMessageIds.length === 0"
+              :loading="busyAction === '提炼对话资料'"
+              @click="runKnowledgeExtraction"
+            >
+              <GameIcon name="sparkles" :size="16" />
+              提炼候选
+            </el-button>
+          </template>
+          <template v-else>
+            <el-button @click="knowledgeExtractStep = 'select'">
+              <GameIcon name="chevron-left" :size="16" />
+              返回选择
+            </el-button>
+            <el-button @click="knowledgeExtractVisible = false">暂不保存</el-button>
+            <el-button
+              type="primary"
+              :disabled="knowledgeSelectedCandidateCount === 0"
+              :loading="busyAction === '保存资料草稿'"
+              @click="saveKnowledgeCandidates"
+            >
+              保存 {{ knowledgeSelectedCandidateCount }} 条草稿
+            </el-button>
+          </template>
+        </div>
+      </template>
+    </el-drawer>
+
+    <el-drawer
+      v-model="aiPanelOpen"
+      class="ai-config-drawer"
+      direction="rtl"
+      size="min(560px, 100vw)"
+      append-to-body
+    >
+      <template #header>
+        <div class="ai-drawer-heading">
+          <span><GameIcon name="settings" :size="20" /></span>
+          <div>
+            <strong>AI 生成通道</strong>
+            <small>连接模型并调整生成质量</small>
+          </div>
+        </div>
+      </template>
+      <div class="ai-drawer-body">
+        <div class="ai-status-row" :class="aiStatusTone">
+          <div>
+            <strong>状态 · {{ aiStatusLabel }}</strong>
+            <span>{{ llmConfigured ? llmChannelLabel : "离线模板可用" }}</span>
+          </div>
+          <small>{{ aiStatusDetail || "尚未进行连接检查" }}</small>
+        </div>
+
+        <section class="ai-config-section">
+          <div class="ai-config-section-heading">
+            <strong>模型服务</strong>
+            <small>基础连接</small>
+          </div>
+          <div class="ai-field-grid two-columns">
+            <label class="ai-config-field">
+              <span>服务商</span>
+              <el-select v-model="llmPreset" style="width: 100%" @change="applyLlmProvider">
+                <el-option label="DeepSeek" value="deepseek" />
+                <el-option label="OpenAI" value="openai" />
+                <el-option label="自定义" value="custom" />
+              </el-select>
+            </label>
+            <label class="ai-config-field">
+              <span>模型</span>
+              <el-input v-model="llmModel" :readonly="llmPreset === 'deepseek'" placeholder="模型名称" />
+            </label>
+          </div>
+
+          <template v-if="llmPreset === 'deepseek'">
+            <label class="ai-config-field ai-level-field">
+              <span>AI 等级</span>
+              <el-radio-group v-model="llmLevel" class="ai-level-segment" @change="applyLlmLevel">
+                <el-radio-button v-for="option in deepSeekLevelOptions" :key="option.value" :value="option.value">
+                  {{ option.label }}
+                </el-radio-button>
+              </el-radio-group>
+            </label>
+            <small class="llm-level-description">{{ selectedDeepSeekLevel.description }}</small>
+          </template>
+
+          <label class="ai-config-field">
+            <span>API 地址</span>
+            <el-input v-model="llmBaseUrl" placeholder="https://api.deepseek.com" />
+          </label>
+          <label class="ai-config-field">
+            <span>API Key</span>
+            <el-input
+              v-model="llmApiKey"
+              type="password"
+              show-password
+              :placeholder="llmConfigured ? `${llmMaskedKey} · 留空保持不变` : '输入服务商 API Key'"
+            />
+          </label>
+          <div v-if="llmPreset === 'deepseek'" class="ai-key-actions">
+            <el-button @click="openDeepSeekKeyAssistant">打开 DeepSeek 控制台</el-button>
+            <el-button @click="pasteDeepSeekKey">读取剪贴板 Key</el-button>
+          </div>
+        </section>
+
+        <el-collapse v-model="llmAdvancedSections" class="ai-tuning-collapse">
+          <el-collapse-item name="generation">
+            <template #title>
+              <div class="ai-collapse-title">
+                <span><GameIcon name="settings" :size="17" /></span>
+                <div>
+                  <strong>生成精调</strong>
+                  <small>{{ llmParameterSummary }}</small>
+                </div>
+              </div>
+            </template>
+
+            <div class="ai-tuning-stack">
+              <div v-if="llmPreset === 'deepseek'" class="ai-tuning-control">
+                <div class="ai-tuning-label">
+                  <div><strong>推理强度</strong><small>控制思考深度和响应成本</small></div>
+                  <span>{{ llmReasoningEffort }}</span>
+                </div>
+                <el-radio-group v-model="llmReasoningEffort" class="ai-reasoning-segment">
+                  <el-radio-button value="low">轻量</el-radio-button>
+                  <el-radio-button value="high">标准</el-radio-button>
+                  <el-radio-button value="max">最大</el-radio-button>
+                </el-radio-group>
+              </div>
+
+              <div class="ai-tuning-control">
+                <div class="ai-tuning-label">
+                  <div><strong>随机性</strong><small>越高越有变化，越低越稳定</small></div>
+                  <span>{{ llmTemperature.toFixed(1) }}</span>
+                </div>
+                <el-slider v-model="llmTemperature" :min="0" :max="2" :step="0.1" :show-tooltip="false" />
+              </div>
+
+              <div class="ai-tuning-control">
+                <div class="ai-tuning-label">
+                  <div><strong>候选范围</strong><small>通常只需调整随机性或候选范围其中一项</small></div>
+                  <span>{{ llmTopP.toFixed(2) }}</span>
+                </div>
+                <el-slider v-model="llmTopP" :min="0" :max="1" :step="0.05" :show-tooltip="false" />
+              </div>
+
+              <div class="ai-tuning-control output-limit-control">
+                <div class="ai-tuning-label">
+                  <div><strong>最长输出</strong><small>限制单次回答或续写的最大 token 数</small></div>
+                </div>
+                <el-input-number
+                  v-model="llmMaxTokens"
+                  :min="256"
+                  :max="393216"
+                  :step="1024"
+                  controls-position="right"
+                />
+              </div>
+
+              <el-button class="ai-reset-tuning" @click="resetLlmTuning">
+                <GameIcon name="refresh" :size="15" />
+                恢复等级推荐值
+              </el-button>
+            </div>
+          </el-collapse-item>
+        </el-collapse>
+      </div>
+
+      <template #footer>
+        <div class="ai-drawer-footer">
+          <el-button type="danger" text :disabled="!llmConfigured" @click="clearLlmKey">清除密钥</el-button>
+          <div>
+            <el-button :loading="aiStatus === 'checking'" @click="runAiCheck">测试连接</el-button>
+            <el-button type="primary" @click="saveLlmConfig">保存并检查</el-button>
+          </div>
+        </div>
+      </template>
+    </el-drawer>
+
+    <el-drawer
+      v-model="readerNavigatorVisible"
+      class="reader-drawer"
+      direction="ltr"
+      size="min(420px, 92vw)"
+      :with-header="false"
+      append-to-body
+    >
+      <ReaderNavigator
+        v-model:active-tab="readerNavigatorTab"
+        :title="readerWorkTitle"
+        :toc="readerTocItems"
+        :current-chapter-id="readerCurrentChapterId"
+        :query="readerSearchQuery"
+        :results="readerSearchResults"
+        :searching="readerSearching"
+        :bookmarks="readerCurrentBookmarks"
+        @update:query="readerSearchQuery = $event"
+        @search="runReaderSearch"
+        @select-chapter="selectReaderChapter"
+        @open-result="openReaderSearchResult"
+        @open-bookmark="openReaderBookmark"
+        @remove-bookmark="removeReaderBookmark"
+      />
+    </el-drawer>
+
+    <el-dialog
+      v-model="branchTreeVisible"
+      class="branch-tree-dialog"
+      width="min(1180px, calc(100vw - 24px))"
+      append-to-body
+      destroy-on-close
+    >
+      <template #header>
+        <div class="branch-tree-dialog-title">
+          <span class="section-icon"><GameIcon name="route" :size="19" /></span>
+          <div>
+            <strong>故事分支树</strong>
+            <small>选择一条故事线，阅读它，或让它继续生长</small>
+          </div>
+          <el-button size="small" @click="createBranchFromTree">
+            <GameIcon name="sparkles" :size="15" />
+            从当前阅读位置分支
+          </el-button>
+        </div>
+      </template>
+
+      <div class="branch-tree-workspace">
+        <BranchTree
+          :branches="shelfBranches"
+          :selected-id="selectedShelfBranchId"
+          :chapter-title="shelfChapter?.title || '当前章节'"
+          @select="selectShelfBranch"
+          @create="createBranchFromTree"
+        />
+
+        <aside v-if="selectedShelfBranch" class="branch-tree-inspector">
+          <div class="branch-inspector-heading">
+            <span :class="`branch-kind-mark tone-${selectedShelfBranch.kind || 'free'}`" />
+            <div>
+              <small>{{ branchKindLabels[selectedShelfBranch.kind || "free"] }} · 第 {{ selectedShelfBranch.depth + 1 }} 层</small>
+              <strong>{{ selectedShelfBranch.title || selectedShelfBranch.guidance || "未命名分支" }}</strong>
+            </div>
+          </div>
+
+          <div v-if="branchPathBusy" class="branch-inspector-loading">
+            <GameIcon name="refresh" :size="18" />
+            <span>正在还原这条故事线</span>
+          </div>
+          <template v-else>
+            <section class="branch-lineage-section">
+              <div class="branch-inspector-label">
+                <strong>当前路径</strong>
+                <span>{{ selectedBranchPath?.lineage.length || 1 }} 个选择</span>
+              </div>
+              <div class="branch-lineage-list">
+                <span class="branch-lineage-origin"><GameIcon name="book-open" :size="14" />原作主线</span>
+                <button
+                  v-for="(item, index) in selectedBranchPath?.lineage || []"
+                  :key="item.branch_id"
+                  type="button"
+                  :class="{active: item.branch_id === selectedShelfBranchId}"
+                  @click="selectShelfBranch(item)"
+                >
+                  <b>{{ index + 1 }}</b>
+                  <span>{{ item.title || item.guidance || "自然续写" }}</span>
+                </button>
+              </div>
+            </section>
+
+            <section class="branch-inspector-copy">
+              <div class="branch-inspector-label">
+                <strong>节点正文</strong>
+                <span>{{ selectedShelfBranch.text.length.toLocaleString() }} 字</span>
+              </div>
+              <div>
+                <p v-for="(paragraph, index) in splitReaderParagraphs(selectedShelfBranch.text).slice(0, 5)" :key="index">
+                  {{ paragraph }}
+                </p>
+              </div>
+            </section>
+
+            <p v-if="selectedShelfBranch.offline" class="branch-inspector-offline">
+              这个节点只保存了分支点。连接 AI 后可重新生成正文。
+            </p>
+
+            <div class="branch-inspector-actions">
+              <el-button :disabled="selectedShelfBranch.offline" @click="openSelectedBranchPath">
+                <GameIcon name="book-open" :size="15" />
+                阅读此线
+              </el-button>
+              <el-button type="primary" :disabled="selectedShelfBranch.offline" @click="continueShelfBranch()">
+                <GameIcon name="git-fork" :size="15" />
+                沿此线继续
+              </el-button>
+              <el-button
+                :loading="branchProjectBusy"
+                :disabled="selectedShelfBranch.offline"
+                @click="materializeShelfProject(selectedShelfBranch.branch_id)"
+              >
+                <GameIcon name="pen" :size="15" />
+                进入工作台
+              </el-button>
+              <el-button class="branch-delete-action" @click="removeSelectedShelfBranch">
+                <GameIcon name="trash" :size="15" />
+                删除分支
+              </el-button>
+            </div>
+          </template>
+        </aside>
+
+        <aside v-else class="branch-tree-inspector branch-tree-inspector-empty">
+          <GameIcon name="git-fork" :size="24" />
+          <strong>从一个不同的选择开始</strong>
+          <p>故事树会保留原作，让每条新路线独立生长。</p>
+        </aside>
+      </div>
+    </el-dialog>
+
+    <el-dialog
+      v-model="branchPathVisible"
+      class="branch-path-dialog"
+      width="min(820px, calc(100vw - 20px))"
+      append-to-body
+      destroy-on-close
+    >
+      <template #header>
+        <div class="branch-path-title">
+          <span class="section-icon"><GameIcon name="book-open" :size="19" /></span>
+          <div>
+            <strong>{{ selectedShelfBranch?.title || "分支故事" }}</strong>
+            <small>
+              {{ selectedBranchPath?.chapter.title }} · {{ selectedBranchPath?.lineage.length || 1 }} 层故事线
+            </small>
+          </div>
+        </div>
+      </template>
+      <article
+        v-if="selectedBranchPath"
+        class="branch-path-reader"
+        :class="readerThemeClass()"
+        :style="readerContentStyle()"
+      >
+        <div class="branch-path-breadcrumb">
+          <span>原作</span>
+          <template v-for="item in selectedBranchPath.lineage" :key="item.branch_id">
+            <GameIcon name="chevron-right" :size="13" />
+            <span>{{ item.title || item.guidance || "自然续写" }}</span>
+          </template>
+        </div>
+        <h2>{{ selectedBranchPath.chapter.title }} · 分支</h2>
+        <p v-for="(paragraph, index) in splitReaderParagraphs(selectedBranchPath.text)" :key="index">
+          {{ paragraph }}
+        </p>
+        <div class="branch-path-end">
+          <span><GameIcon name="git-fork" :size="17" /></span>
+          <strong>这条故事线仍可继续</strong>
+        </div>
+      </article>
+      <template #footer>
+        <div class="branch-path-actions">
+          <el-button @click="branchPathVisible = false">返回故事树</el-button>
+          <el-button :loading="branchProjectBusy" @click="materializeShelfProject(selectedShelfBranch?.branch_id || '')">
+            进入工作台
+          </el-button>
+          <el-button type="primary" @click="continueShelfBranch()">
+            <GameIcon name="git-fork" :size="15" />
+            从结尾继续分支
+          </el-button>
+        </div>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="branchDialogVisible"
+      class="branch-creative-dialog"
+      width="min(760px, calc(100vw - 24px))"
+      append-to-body
+      destroy-on-close
+      :close-on-click-modal="false"
+    >
+      <template #header>
+        <div class="branch-dialog-title">
+          <span class="section-icon"><GameIcon name="git-merge" :size="19" /></span>
+          <div>
+            <strong>分支续写</strong>
+            <small>{{ branchPositionLabel() }}</small>
+          </div>
+          <span class="branch-source-badge">
+            {{ branchContext?.source === "shelf" ? "导入小说" : "工作台正文" }}
+          </span>
+        </div>
+      </template>
+
+      <div v-if="branchContext" class="branch-dialog-body">
+        <section class="branch-anchor-card">
+          <div class="branch-section-head">
+            <strong>分支点之前</strong>
+            <span>原文保持不变</span>
+          </div>
+          <blockquote>{{ branchContext.anchor || "章节开头" }}<i aria-hidden="true" /></blockquote>
+          <p v-if="branchContext.selectedText" class="branch-selection-note">
+            已从选中文字末尾开始：{{ branchContext.selectedText.slice(0, 90) }}
+          </p>
+        </section>
+
+        <section class="branch-guidance-section">
+          <div class="branch-section-head">
+            <strong>这条分支往哪里走</strong>
+            <span>{{ branchKindLabels[branchKind] }} · 可留空自然续写</span>
+          </div>
+          <el-input
+            v-model="branchGuidance"
+            type="textarea"
+            :rows="3"
+            maxlength="600"
+            show-word-limit
+            placeholder="例如：让主角没有交出钥匙，并从这一决定开始改变后续关系"
+            :disabled="branchBusy"
+          />
+          <div class="branch-guidance-presets">
+            <button type="button" :class="{active: branchKind === 'choice'}" @click="applyBranchPreset('choice', '制造一个与原作不同的关键选择')">关键选择</button>
+            <button type="button" :class="{active: branchKind === 'relationship'}" @click="applyBranchPreset('relationship', '改变两名角色在这一刻的关系走向')">关系变化</button>
+            <button type="button" :class="{active: branchKind === 'clue'}" @click="applyBranchPreset('clue', '揭示一条新的线索，但保持原有设定一致')">新线索</button>
+            <button type="button" :class="{active: branchKind === 'free'}" @click="applyBranchPreset('free', '')">自由续写</button>
+          </div>
+        </section>
+
+        <section v-if="branchBusy" class="branch-generating-state" aria-live="polite">
+          <span class="branch-generating-icon"><GameIcon name="sparkles" :size="20" /></span>
+          <div>
+            <strong>正在沿这条支线写下去</strong>
+            <small>会参考前文、人物卡和世界设定，不会改动原稿。</small>
+          </div>
+        </section>
+
+        <section v-else-if="branchResult" class="branch-result-panel">
+          <div class="branch-section-head">
+            <strong>{{ branchRecord?.offline ? "分支点已保存" : "分支草稿" }}</strong>
+            <span v-if="branchRecord">{{ Math.round(branchRecord.progress) }}% · {{ branchRecord.created_at }}</span>
+          </div>
+          <div class="branch-result-copy" :class="{offline: branchRecord?.offline}">
+            <p v-for="(paragraph, index) in splitReaderParagraphs(branchResult)" :key="index">
+              {{ paragraph }}
+            </p>
+          </div>
+          <div v-if="branchRecord?.offline" class="branch-offline-note">
+            <GameIcon name="alert" :size="17" />
+            <span>当前没有可用的 AI 通道。这个位置已经保存，连接 AI 后可重新生成。</span>
+            <el-button size="small" @click="branchDialogVisible = false; openAiPanel()">连接 AI</el-button>
+          </div>
+        </section>
+
+        <section v-if="branchContext.source === 'shelf'" class="branch-workbench-preview">
+          <div>
+            <strong>作为创作项目继续</strong>
+            <small>
+              {{ shelfAnalysis
+                ? `${shelfAnalysis.characters.length} 个角色、${shelfAnalysis.settings.length} 项设定会进入工作台`
+                : "创建时会先分析全书，再导入角色、势力、地点与关系" }}
+            </small>
+          </div>
+          <GameIcon name="arrow-right" :size="18" />
+        </section>
+      </div>
+
+      <template #footer>
+        <div class="branch-dialog-actions">
+          <el-button @click="branchDialogVisible = false">{{ branchResult ? "保留并关闭" : "取消" }}</el-button>
+          <el-button
+            v-if="branchResult"
+            :loading="branchBusy"
+            :disabled="Boolean(branchRecord?.offline) && !llmConfigured"
+            @click="generateBranchDraft"
+          >
+            {{ branchRecord?.offline ? "重新生成" : "再生成一版" }}
+          </el-button>
+          <el-button
+            v-if="branchResult && branchContext?.source === 'shelf'"
+            type="primary"
+            :loading="branchProjectBusy"
+            :disabled="!branchRecord || branchRecord.offline"
+            @click="materializeShelfProject(branchRecord?.branch_id || '')"
+          >
+            创建工作台项目
+          </el-button>
+          <el-button
+            v-else-if="branchResult && branchContext?.source === 'project'"
+            type="primary"
+            @click="materializeProjectBranch"
+          >
+            创建独立分支项目
+          </el-button>
+          <el-button v-else type="primary" :loading="branchBusy" @click="generateBranchDraft">
+            <GameIcon name="sparkles" :size="16" />
+            生成分支
+          </el-button>
+        </div>
+      </template>
+    </el-dialog>
+
+    <el-drawer
+      v-model="readerSettingsVisible"
+      class="reader-settings-drawer"
+      title="阅读设置"
+      direction="rtl"
+      size="min(430px, 94vw)"
+      append-to-body
+    >
+      <ReaderSettingsPanel
+        v-model:page-mode="readerPageMode"
+        v-model:theme="readerTheme"
+        v-model:font-family="readerFontFamily"
+        v-model:font-size="readerFontSize"
+        v-model:line-height="readerLineHeight"
+        v-model:paragraph-spacing="readerParagraphSpacing"
+        v-model:measure="readerMeasure"
+        v-model:brightness="readerBrightness"
+        v-model:justify="readerJustify"
+        v-model:indent="readerIndent"
+        v-model:auto-advance="readerAutoAdvance"
+        @change="persistReaderSettings"
+        @reset="resetReaderSettings"
+      />
+    </el-drawer>
 
     <div
-      v-if="readerOverlayOpen && activity === 'novel' && activeChapter"
+      v-if="readerOverlayOpen && readerCurrentChapterId"
       class="reader-overlay"
-      :class="[readerThemeClass(), {'reader-overlay-paged': readerPageMode === 'page'}]"
+      :class="[
+        readerThemeClass(),
+        {'reader-overlay-paged': readerPageMode === 'page', 'reader-chrome-hidden': !readerChromeVisible},
+      ]"
+      :style="readerContentStyle()"
       role="application"
-      aria-label="阅读器"
+      aria-label="沉浸阅读器"
+      @pointerdown="handleReaderPointerDown"
+      @pointerup="handleReaderPointerUp"
+      @pointercancel="cancelReaderSwipe"
     >
+      <header class="reader-overlay-header">
+        <button type="button" class="reader-icon-button" title="退出阅读" aria-label="退出阅读" @click="exitReaderMode">
+          <GameIcon name="close" :size="19" />
+        </button>
+        <div class="reader-overlay-title">
+          <strong>{{ readerWorkTitle }}</strong>
+          <span>{{ readerCurrentTitle }}<template v-if="readerEstimatedMinutes > 0"> · 约 {{ readerEstimatedMinutes }} 分钟</template></span>
+        </div>
+        <nav class="reader-overlay-actions" aria-label="阅读工具">
+          <button type="button" class="reader-icon-button" title="目录" aria-label="目录" @click="openReaderNavigator('toc')">
+            <GameIcon name="list" :size="19" />
+          </button>
+          <button type="button" class="reader-icon-button" title="全书搜索" aria-label="全书搜索" @click="openReaderNavigator('search')">
+            <GameIcon name="search" :size="19" />
+          </button>
+          <button
+            type="button"
+            class="reader-icon-button"
+            :class="{active: readerCurrentBookmark}"
+            :title="readerCurrentBookmark ? '移除书签' : '添加书签'"
+            :aria-label="readerCurrentBookmark ? '移除书签' : '添加书签'"
+            @click="toggleReaderBookmark"
+          >
+            <GameIcon name="bookmark" :size="19" />
+          </button>
+          <button
+            v-if="readerSource === 'shelf' || readerSource === 'novel'"
+            type="button"
+            class="reader-icon-button"
+            :class="{active: capturedBranchSelection?.chapterId === readerCurrentChapterId}"
+            title="从选中内容或当前页分支续写"
+            aria-label="分支续写"
+            @click="openReaderBranch"
+          >
+            <GameIcon name="git-merge" :size="19" />
+          </button>
+          <button type="button" class="reader-icon-button" title="阅读设置" aria-label="阅读设置" @click="readerSettingsVisible = true">
+            <GameIcon name="type" :size="19" />
+          </button>
+          <button type="button" class="reader-icon-button desktop-reader-control" title="全屏" aria-label="切换全屏" @click="toggleReaderFullscreen">
+            <GameIcon :name="readerFullscreenActive ? 'fullscreen-exit' : 'fullscreen'" :size="19" />
+          </button>
+          <button
+            v-if="readerSource === 'novel'"
+            type="button"
+            class="reader-icon-button"
+            title="返回编辑"
+            aria-label="返回编辑"
+            @click="exitReaderMode"
+          >
+            <GameIcon name="edit" :size="19" />
+          </button>
+        </nav>
+      </header>
+
       <div class="reader-overlay-scroll">
-        <div class="reader-overlay-progress"><i :style="{width: `${readingProgress}%`}" /></div>
-        <div class="reader-overlay-content" :style="readerContentStyle()">
+        <article
+          class="reader-overlay-content"
+          @mouseup="captureBranchSelection"
+          @touchend="captureBranchSelection"
+        >
           <template v-if="readerPageMode === 'page'">
-            <h2>{{ activeChapter.title }}</h2>
-            <div ref="readerOverlayPageAreaRef" class="reader-page-area">
-              <p v-for="(paragraph, index) in currentReaderPage()" :key="`ov-${readerPageIndex}-${index}`">
-                {{ paragraph }}
-              </p>
-              <p v-if="currentReaderPage().length === 0" class="empty-paragraph">这一章还没有正文。</p>
+            <div
+              ref="readerOverlayPageAreaRef"
+              class="reader-page-area"
+              :class="{'is-title-page': currentReaderPageIsTitle()}"
+            >
+              <section
+                v-if="currentReaderPageIsTitle()"
+                class="reader-title-page"
+                :class="{'is-volume': readerCurrentTitleIsVolume}"
+              >
+                <p class="reader-title-page-work">{{ readerWorkTitle }}</p>
+                <h1>{{ readerCurrentTitle }}</h1>
+                <p class="reader-title-page-meta">{{ readerTitlePageMeta }}</p>
+              </section>
+              <template v-else>
+                <p
+                  v-for="(paragraph, index) in currentReaderPage()"
+                  :key="`ov-${readerPageIndex}-${index}`"
+                  :class="{'reader-paragraph-continuation': paragraph.continuation}"
+                >
+                  {{ paragraph.text }}
+                </p>
+              </template>
             </div>
             <div class="reader-page-meta">{{ readerPageIndex + 1 }} / {{ Math.max(1, readerPages.length) }} 页</div>
           </template>
           <template v-else>
-            <h2>{{ activeChapter.title }}</h2>
-            <p v-for="(paragraph, index) in activeChapterParagraphs" :key="`ov-${index}`">
+            <p class="reader-overlay-kicker">{{ readerWorkTitle }}</p>
+            <h1>{{ readerCurrentTitle }}</h1>
+            <p v-for="(paragraph, index) in readerCurrentParagraphs" :key="`ov-${index}`">
               {{ paragraph }}
             </p>
-            <p v-if="activeChapterParagraphs.length === 0" class="empty-paragraph">这一章还没有正文。</p>
+            <p v-if="readerCurrentParagraphs.length === 0" class="empty-paragraph">这一章还没有正文。</p>
           </template>
-        </div>
+        </article>
       </div>
-      <div class="reader-tap-zones">
+
+      <div v-if="readerPageMode === 'page'" class="reader-tap-zones">
         <button
           type="button"
           class="reader-tap-zone left"
-          :disabled="readerPageMode === 'page' ? (readerPageIndex <= 0 && activeChapterIndex <= 0) : activeChapterIndex <= 0"
+          :disabled="readerPageMode === 'page' ? (readerPageIndex <= 0 && readerCurrentChapterIndex <= 0) : readerCurrentChapterIndex <= 0"
           aria-label="上一章或上一页"
-          @click="readerPagePrev"
+          @click="handleReaderTap('previous')"
+        />
+        <button
+          type="button"
+          class="reader-tap-zone center"
+          aria-label="显示或隐藏阅读工具"
+          @click="handleReaderTap('chrome')"
         />
         <button
           type="button"
           class="reader-tap-zone right"
-          :disabled="readerPageMode === 'page' ? (readerPageIndex >= readerPages.length - 1 && activeChapterIndex >= activeProject.chapters.length - 1) : activeChapterIndex >= activeProject.chapters.length - 1"
+          :disabled="readerPageMode === 'page' ? (readerPageIndex >= readerPages.length - 1 && readerCurrentChapterIndex >= readerTocItems.length - 1) : readerCurrentChapterIndex >= readerTocItems.length - 1"
           aria-label="下一章或下一页"
-          @click="readerPageNext"
+          @click="handleReaderTap('next')"
         />
       </div>
-      <div class="reader-overlay-toolbar">
-        <el-button size="small" @click="novelTocVisible = true">目录</el-button>
-        <el-button size="small" @click="novelSettingsVisible = true">阅读设置</el-button>
-        <template v-if="readerPageMode === 'page'">
-          <el-button size="small" :disabled="readerPageIndex <= 0" @click="readerPagePrev">上一页</el-button>
-          <span class="immersive-chapter">{{ readerPageIndex + 1 }} / {{ Math.max(1, readerPages.length) }} 页</span>
-          <el-button size="small" :disabled="readerPageIndex >= readerPages.length - 1" @click="readerPageNext">
-            下一页
-          </el-button>
-        </template>
-        <el-button size="small" :disabled="activeChapterIndex <= 0" @click="openAdjacentChapter(-1)">
-          上一章
-        </el-button>
-        <span class="immersive-chapter">{{ chapterNavigationLabel }}</span>
-        <el-button
-          size="small"
-          :disabled="activeChapterIndex >= activeProject.chapters.length - 1"
-          @click="openAdjacentChapter(1)"
+
+      <footer class="reader-overlay-footer">
+        <button type="button" class="reader-icon-button" :disabled="readerCurrentChapterIndex <= 0" title="上一章" @click="openReaderAdjacentChapter(-1)">
+          <GameIcon name="chevron-left" :size="20" />
+        </button>
+        <div class="reader-progress-control">
+          <span>{{ readerCurrentChapterIndex + 1 }} / {{ readerTocItems.length }}</span>
+          <input
+            :value="readerOverallProgress"
+            type="range"
+            min="0"
+            max="100"
+            step="0.1"
+            aria-label="全书阅读进度"
+            @change="seekReaderOverallProgress(Number(($event.target as HTMLInputElement).value))"
+          />
+          <b>{{ Math.round(readerOverallProgress) }}%</b>
+        </div>
+        <button
+          type="button"
+          class="reader-icon-button reader-footer-settings"
+          title="阅读设置"
+          aria-label="阅读设置"
+          @click="readerSettingsVisible = true"
         >
-          下一章
-        </el-button>
-        <el-button size="small" type="primary" @click="exitReaderMode">退出阅读</el-button>
-      </div>
+          <GameIcon name="type" :size="19" />
+        </button>
+        <button type="button" class="reader-icon-button" :disabled="readerCurrentChapterIndex >= readerTocItems.length - 1" title="下一章" @click="openReaderAdjacentChapter(1)">
+          <GameIcon name="chevron-right" :size="20" />
+        </button>
+      </footer>
     </div>
   </div>
 </template>

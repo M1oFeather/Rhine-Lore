@@ -187,6 +187,26 @@ public class MainActivity extends Activity {
         super.onActivityResult(requestCode, resultCode, data);
     }
 
+    @SuppressWarnings("deprecation")
+    @Override
+    public void onBackPressed() {
+        if (webView == null) {
+            super.onBackPressed();
+            return;
+        }
+        webView.evaluateJavascript(
+                "(function(){try{return Boolean(window.rhineLoreHandleBack"
+                        + "&&window.rhineLoreHandleBack());}catch(e){return false;}})()",
+                handled -> {
+                    if ("true".equals(handled)) {
+                        return;
+                    }
+                    // Rhine-Lore is a single-page app. WebView history contains the
+                    // initial blank document, so navigating it produces a black screen.
+                    MainActivity.super.onBackPressed();
+                });
+    }
+
     private void showError(String message) {
         if (webView == null) {
             webView = new WebView(this);

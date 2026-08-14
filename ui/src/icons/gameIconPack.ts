@@ -1,73 +1,91 @@
-export type GameIconDef = {
-  paths: string[];
-};
+import {
+  AlertTriangle,
+  ArrowRight,
+  BookOpen,
+  Bookmark,
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  Copy,
+  Database,
+  Ellipsis,
+  FileText,
+  Globe2,
+  GitFork,
+  GitMerge,
+  House,
+  LibraryBig,
+  ListTree,
+  Map,
+  Maximize2,
+  Menu,
+  MessageSquare,
+  Minimize2,
+  PanelLeftClose,
+  PanelLeftOpen,
+  PanelRight,
+  Paperclip,
+  PenLine,
+  RefreshCw,
+  Route,
+  Search,
+  SendHorizontal,
+  Settings2,
+  Sparkles,
+  SquarePen,
+  Sun,
+  Type,
+  Trash2,
+  Users,
+  X,
+} from "@lucide/vue";
+import type {Component} from "vue";
 
-export const gameIcons: Record<string, GameIconDef> = {
-  home: {
-    paths: ["M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"],
-  },
-  pen: {
-    paths: [
-      "M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z",
-      "M20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z",
-    ],
-  },
-  "book-open": {
-    paths: [
-      "M21 5c-1.11-.35-2.33-.5-3.5-.5-1.95 0-4.05.4-5.5 1.5-1.45-1.1-3.55-1.5-5.5-1.5S2.45 4.9 1 6v14.65c0 .25.25.5.5.5.1 0 .15-.05.25-.05C3.1 20.45 5.05 20 6.5 20c1.95 0 4.05.4 5.5 1.5 1.35-.85 3.8-1.5 5.5-1.5 1.65 0 3.35.3 4.75 1.05.1.05.15.05.25.05.25 0 .5-.25.5-.5V6c-.6-.45-1.25-.75-2-1zm0 13.5c-1.1-.35-2.3-.5-3.5-.5-1.7 0-4.15.65-5.5 1.5V8c1.35-.85 3.8-1.5 5.5-1.5 1.2 0 2.4.15 3.5.5v11.5z",
-    ],
-  },
-  library: {
-    paths: [
-      "M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-1 9H9V9h10v2zm-4 4H9v-2h6v2zm4-8H9V5h10v2z",
-    ],
-  },
-  database: {
-    paths: [
-      "M12 3C7.58 3 4 4.79 4 7s3.58 4 8 4 8-1.79 8-4-3.58-4-8-4zM4 9v3c0 2.21 3.58 4 8 4s8-1.79 8-4V9c0 2.21-3.58 4-8 4s-8-1.79-8-4zm0 5v3c0 2.21 3.58 4 8 4s8-1.79 8-4v-3c0 2.21-3.58 4-8 4s-8-1.79-8-4z",
-    ],
-  },
-  sparkles: {
-    paths: [
-      "M19 9l1.25-2.75L23 5l-2.75-1.25L19 1l-1.25 2.75L15 5l2.75 1.25L19 9zm-7.5.5L9 4 6.5 9.5 1 12l5.5 2.5L9 20l2.5-5.5L17 12l-5.5-2.5zM19 15l-1.25 2.75L15 19l2.75 1.25L19 23l1.25-2.75L23 19l-2.75-1.25L19 15z",
-    ],
-  },
-  "file-text": {
-    paths: [
-      "M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z",
-    ],
-  },
-  globe: {
-    paths: [
-      "M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zm6.93 6h-2.95a15.65 15.65 0 0 0-1.38-3.56A8.03 8.03 0 0 1 18.92 8zM12 4.04c.83 1.2 1.48 2.53 1.91 3.96h-3.82c.43-1.43 1.08-2.76 1.91-3.96zM4.26 14C4.1 13.36 4 12.69 4 12s.1-1.36.26-2h3.38c-.08.66-.14 1.32-.14 2s.06 1.34.14 2H4.26zm.82 2h2.95c.32 1.25.78 2.45 1.38 3.56A7.987 7.987 0 0 1 5.08 16zm2.95-8H5.08a7.987 7.987 0 0 1 4.33-3.56A15.65 15.65 0 0 0 8.03 8zM12 19.96c-.83-1.2-1.48-2.53-1.91-3.96h3.82c-.43 1.43-1.08 2.76-1.91 3.96zM14.34 14H9.66c-.09-.66-.16-1.32-.16-2s.07-1.35.16-2h4.68c.09.65.16 1.32.16 2s-.07 1.34-.16 2zm.25 5.56c.6-1.11 1.06-2.31 1.38-3.56h2.95a8.03 8.03 0 0 1-4.33 3.56zM16.36 14c.08-.66.14-1.32.14-2s-.06-1.34-.14-2h3.38c.16.64.26 1.31.26 2s-.1 1.36-.26 2h-3.38z",
-    ],
-  },
-  users: {
-    paths: [
-      "M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z",
-    ],
-  },
-  message: {
-    paths: [
-      "M20 2H4c-1.1 0-1.99.9-1.99 2L2 22l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z",
-    ],
-  },
-  map: {
-    paths: [
-      "M20.5 3l-.16.03L15 5.1 9 3 3.36 4.9c-.21.07-.36.25-.36.48V20.5c0 .28.22.5.5.5l.16-.03L9 18.9l6 2.1 5.64-1.9c.21-.07.36-.25.36-.48V3.5c0-.28-.22-.5-.5-.5zM15 19l-6-2.11V5l6 2.11V19z",
-    ],
-  },
-  settings: {
-    paths: [
-      "M19.14,12.94c0.04-0.3,0.06-0.61,0.06-0.94c0-0.32-0.02-0.64-0.07-0.94l2.03-1.58c0.18-0.14,0.23-0.41,0.12-0.61l-1.92-3.32c-0.12-0.22-0.37-0.29-0.59-0.22l-2.39,0.96c-0.5-0.38-1.03-0.7-1.62-0.94l-0.36-2.54C14.98,2.1,14.79,1.92,14.54,1.92h-3.84c-0.24,0-0.43,0.17-0.47,0.41l-0.36,2.54c-0.59,0.24-1.13,0.57-1.62,0.94l-2.39-0.96c-0.22-0.08-0.47,0-0.59,0.22L2.74,8.87C2.62,9.08,2.66,9.34,2.86,9.48l2.03,1.58C4.84,11.36,4.8,11.69,4.8,12s0.02,0.64,0.07,0.94l-2.03,1.58c-0.18,0.14-0.23,0.41-0.12,0.61l1.92,3.32c0.12,0.22,0.37,0.29,0.59,0.22l2.39-0.96c0.5,0.38,1.03,0.7,1.62,0.94l0.36,2.54c0.05,0.24,0.24,0.41,0.48,0.41h3.84c0.24,0,0.44-0.17,0.47-0.41l0.36-2.54c0.59-0.24,1.13-0.56,1.62-0.94l2.39,0.96c0.22,0.08,0.47,0,0.59-0.22l1.92-3.32c0.12-0.22,0.07-0.47-0.12-0.61L19.14,12.94zM12,15.6c-1.98,0-3.6-1.62-3.6-3.6s1.62-3.6,3.6-3.6s3.6,1.62,3.6,3.6S13.98,15.6,12,15.6z",
-    ],
-  },
-  more: {
-    paths: [
-      "M6 10c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm12 0c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm-6 0c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z",
-    ],
-  },
-};
+/**
+ * Semantic icon names used by the product. The underlying artwork can evolve
+ * without leaking library-specific names into feature components.
+ */
+export const gameIcons = {
+  alert: AlertTriangle,
+  home: House,
+  pen: PenLine,
+  "book-open": BookOpen,
+  library: LibraryBig,
+  database: Database,
+  sparkles: Sparkles,
+  "file-text": FileText,
+  globe: Globe2,
+  users: Users,
+  message: MessageSquare,
+  attachment: Paperclip,
+  map: Map,
+  settings: Settings2,
+  more: Ellipsis,
+  search: Search,
+  bookmark: Bookmark,
+  list: ListTree,
+  sun: Sun,
+  type: Type,
+  fullscreen: Maximize2,
+  close: X,
+  "chevron-left": ChevronLeft,
+  "chevron-right": ChevronRight,
+  "fullscreen-exit": Minimize2,
+  edit: SquarePen,
+  check: Check,
+  copy: Copy,
+  "git-merge": GitMerge,
+  "git-fork": GitFork,
+  route: Route,
+  trash: Trash2,
+  refresh: RefreshCw,
+  menu: Menu,
+  "arrow-right": ArrowRight,
+  "panel-left-close": PanelLeftClose,
+  "panel-left-open": PanelLeftOpen,
+  "panel-right": PanelRight,
+  send: SendHorizontal,
+} satisfies Record<string, Component>;
 
 export type GameIconName = keyof typeof gameIcons;
 

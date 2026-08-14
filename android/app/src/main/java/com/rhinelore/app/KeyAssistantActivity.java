@@ -120,8 +120,9 @@ public class KeyAssistantActivity extends Activity {
             JSONObject body = new JSONObject();
             body.put("base_url", "https://api.deepseek.com");
             body.put("api_key", key);
-            body.put("model", "deepseek-chat");
+            body.put("model", "deepseek-v4-flash");
             body.put("preset", "deepseek");
+            body.put("level", "balanced");
             OutputStream out = connection.getOutputStream();
             out.write(body.toString().getBytes(StandardCharsets.UTF_8));
             out.close();
