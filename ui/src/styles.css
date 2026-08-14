@@ -1933,6 +1933,8 @@ body {
 }
 
 .reader-overlay-paged .reader-overlay-content {
+  display: flex;
+  flex-direction: column;
   height: calc(100dvh - 134px);
   min-height: 0;
   padding-top: 28px;
@@ -1945,7 +1947,14 @@ body {
 }
 
 .reader-overlay-paged .reader-page-area {
+  flex: 1 1 auto;
+  width: 100%;
+  height: auto;
   min-height: 0;
+}
+
+.reader-overlay-paged {
+  touch-action: pan-y;
 }
 
 .reader-overlay .reader-tap-zone.left,
@@ -1964,7 +1973,7 @@ body {
   grid-template-columns: 52px minmax(120px, 1fr) 42px;
   align-items: center;
   gap: 12px;
-  width: min(720px, calc(100vw - 130px));
+  width: min(680px, calc(100vw - 182px));
   margin: 0 auto;
   font-family: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
   font-size: 11px;
@@ -2061,7 +2070,7 @@ body {
   .reader-progress-control {
     grid-template-columns: 40px minmax(80px, 1fr) 36px;
     gap: 7px;
-    width: calc(100vw - 104px);
+    width: calc(100vw - 148px);
   }
 
   .reader-overlay-paged .reader-overlay-content {
@@ -3997,6 +4006,21 @@ body {
 
 .llm-config-card {
   margin-bottom: 14px;
+}
+
+.llm-level-option {
+  float: right;
+  margin-left: 18px;
+  color: var(--muted-2);
+  font-size: 11px;
+}
+
+.llm-level-description {
+  display: block;
+  margin-top: 6px;
+  color: var(--muted-2);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 @media (max-width: 720px) {

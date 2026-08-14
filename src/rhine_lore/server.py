@@ -24,6 +24,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, quote, urlencode, urlparse, urlunparse
 from urllib.request import Request, urlopen
 
+from rhine_lore import __version__
 from rhine_lore.embedded_vault import EmbeddedVaultStore
 from rhine_lore.engine import (
     EvolutionState,
@@ -56,6 +57,12 @@ DATA_ROOT = Path(os.environ.get("RHINE_LORE_DATA_DIR") or (PROJECT_ROOT / "data"
 PROJECTS_DIR = DATA_ROOT / "projects"
 PROJECT_BACKUP_FORMAT = "rhine-lore-project-v1"
 LLM_CONFIG_PATH = DATA_ROOT / "llm-config.json"
+DEFAULT_LLM_LEVEL = "balanced"
+DEEPSEEK_LEVELS = {
+    "fast": {"model": "deepseek-v4-flash", "reasoning_effort": "high"},
+    "balanced": {"model": "deepseek-v4-flash", "reasoning_effort": "max"},
+    "deep": {"model": "deepseek-v4-pro", "reasoning_effort": "max"},
+}
 DEFAULT_VAULT_HOST = "127.0.0.1"
 DEFAULT_VAULT_PORT = 8795
 DEFAULT_VAULT_PORT_CANDIDATES = (8795, 8796, 8797)
@@ -458,22 +465,43 @@ def _evolution_payload(
     }
 
 
+def _normalize_llm_config(config: dict[str, str]) -> dict[str, str]:
+    normalized = {
+        "base_url": str(config.get("base_url") or "").strip(),
+        "api_key": str(config.get("api_key") or "").strip(),
+        "model": str(config.get("model") or "").strip(),
+        "preset": str(config.get("preset") or "deepseek").strip(),
+        "level": str(config.get("level") or DEFAULT_LLM_LEVEL).strip(),
+    }
+    if normalized["level"] not in DEEPSEEK_LEVELS:
+        normalized["level"] = DEFAULT_LLM_LEVEL
+    if normalized["preset"] == "deepseek":
+        if not normalized["base_url"]:
+            normalized["base_url"] = "https://api.deepseek.com"
+        normalized["model"] = DEEPSEEK_LEVELS[normalized["level"]]["model"]
+    return normalized
+
+
 def _load_llm_config() -> dict[str, str]:
     if LLM_CONFIG_PATH.is_file():
         try:
             data = json.loads(LLM_CONFIG_PATH.read_text(encoding="utf-8"))
-            return {
+            return _normalize_llm_config({
                 "base_url": str(data.get("base_url") or "").strip(),
                 "api_key": str(data.get("api_key") or "").strip(),
                 "model": str(data.get("model") or "").strip(),
                 "preset": str(data.get("preset") or "deepseek").strip(),
-            }
+                "level": str(data.get("level") or DEFAULT_LLM_LEVEL).strip(),
+            })
         except (OSError, json.JSONDecodeError):
             pass
-    return {"base_url": "", "api_key": "", "model": "", "preset": "deepseek"}
+    return _normalize_llm_config(
+        {"base_url": "", "api_key": "", "model": "", "preset": "deepseek", "level": DEFAULT_LLM_LEVEL}
+    )
 
 
 def _save_llm_config(config: dict[str, str]) -> None:
+    config = _normalize_llm_config(config)
     LLM_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     temporary = LLM_CONFIG_PATH.with_suffix(".json.tmp")
     temporary.write_text(
@@ -492,11 +520,17 @@ def _mask_key(api_key: str) -> str:
 
 
 def _llm_config_payload(config: dict[str, str]) -> dict[str, Any]:
+    config = _normalize_llm_config(config)
+    level = config.get("level") or DEFAULT_LLM_LEVEL
+    deepseek = config.get("preset") == "deepseek" and config.get("model", "").startswith("deepseek-v4-")
     return {
         "configured": bool(config.get("api_key")),
         "base_url": config.get("base_url") or "",
         "model": config.get("model") or "",
         "preset": config.get("preset") or "deepseek",
+        "level": level,
+        "thinking_enabled": deepseek,
+        "reasoning_effort": DEEPSEEK_LEVELS[level]["reasoning_effort"] if deepseek else "",
         "masked_key": _mask_key(config.get("api_key") or ""),
     }
 
@@ -920,7 +954,7 @@ def _run_agent_tool(tool: str, args: dict[str, Any]) -> dict[str, Any]:
         }
     if tool == "update_llm_config":
         config = _load_llm_config()
-        for key in ("base_url", "model", "preset"):
+        for key in ("base_url", "model", "preset", "level"):
             if key in args and args[key] is not None:
                 config[key] = str(args[key])
         _save_llm_config(config)
@@ -1134,13 +1168,25 @@ def _extract_agent_tool_call(text: str) -> dict[str, Any] | None:
     return {"tool": tool, "args": args if isinstance(args, dict) else {}}
 
 
-def _resolve_llm(payload_llm: dict[str, Any] | None = None) -> dict[str, str]:
+def _resolve_llm(payload_llm: dict[str, Any] | None = None) -> dict[str, Any]:
     stored = _load_llm_config()
     explicit = payload_llm or {}
+    preset = str(explicit.get("preset") or stored.get("preset") or "custom").strip()
+    level = str(explicit.get("level") or stored.get("level") or DEFAULT_LLM_LEVEL).strip()
+    if level not in DEEPSEEK_LEVELS:
+        level = DEFAULT_LLM_LEVEL
+    model = str(explicit.get("model") or stored.get("model") or "").strip()
+    if preset == "deepseek" and not explicit.get("model"):
+        model = DEEPSEEK_LEVELS[level]["model"]
+    deepseek_v4 = preset == "deepseek" and model.startswith("deepseek-v4-")
     return {
         "base_url": str(explicit.get("base_url") or stored.get("base_url") or "").strip(),
         "api_key": str(explicit.get("api_key") or stored.get("api_key") or "").strip(),
-        "model": str(explicit.get("model") or stored.get("model") or "").strip(),
+        "model": model,
+        "preset": preset,
+        "level": level,
+        "thinking_enabled": deepseek_v4,
+        "reasoning_effort": DEEPSEEK_LEVELS[level]["reasoning_effort"] if deepseek_v4 else "",
     }
 
 
@@ -1435,6 +1481,10 @@ def _chat_with_vault(messages: list[dict[str, str]], llm: dict[str, Any]) -> str
         if not base or not llm.get("model"):
             raise ValueError("未配置 API 地址或模型")
         payload = {"model": llm["model"], "messages": messages, "stream": False}
+        if llm.get("thinking_enabled"):
+            payload["thinking"] = {"type": "enabled"}
+        if llm.get("reasoning_effort"):
+            payload["reasoning_effort"] = llm["reasoning_effort"]
         request = Request(
             base + "/chat/completions",
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
@@ -1458,6 +1508,8 @@ def _chat_with_vault(messages: list[dict[str, str]], llm: dict[str, Any]) -> str
         "api_key": str(llm.get("api_key") or "").strip(),
         "model": str(llm.get("model") or "").strip() or None,
         "messages": messages,
+        "thinking_enabled": bool(llm.get("thinking_enabled")),
+        "reasoning_effort": str(llm.get("reasoning_effort") or "").strip() or None,
     }
     request = Request(
         target,
@@ -1793,7 +1845,7 @@ def _lan_addresses() -> list[str]:
 
 
 class RhineLoreHandler(SimpleHTTPRequestHandler):
-    server_version = "RhineLore/0.1"
+    server_version = f"RhineLore/{__version__}"
 
     def __init__(self, *args: Any, directory: str | None = None, **kwargs: Any) -> None:
         super().__init__(*args, directory=directory, **kwargs)
@@ -2490,8 +2542,10 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
                     config["model"] = str(payload["model"]).strip()
                 if str(payload.get("preset") or "").strip():
                     config["preset"] = str(payload["preset"]).strip()
+                if str(payload.get("level") or "").strip():
+                    config["level"] = str(payload["level"]).strip()
                 _save_llm_config(config)
-                self._send_json(200, _llm_config_payload(config))
+                self._send_json(200, _llm_config_payload(_load_llm_config()))
                 return
             if self.command == "POST" and parsed_request.path == "/lore-api/llm/ping":
                 payload = self._read_json_body()

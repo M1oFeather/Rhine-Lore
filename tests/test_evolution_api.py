@@ -256,10 +256,11 @@ class EvolutionApiTests(unittest.TestCase):
             "POST",
             "/lore-api/llm/config",
             {
-                "base_url": "https://api.deepseek.com/v1",
+                "base_url": "https://api.deepseek.com",
                 "api_key": "sk-test-123456",
-                "model": "deepseek-chat",
+                "model": "deepseek-v4-flash",
                 "preset": "deepseek",
+                "level": "deep",
             },
         )
         self.assertEqual(status, 200)
@@ -269,12 +270,17 @@ class EvolutionApiTests(unittest.TestCase):
         status, payload = self._request("GET", "/lore-api/llm/config")
         self.assertEqual(status, 200)
         self.assertTrue(payload["configured"])
-        self.assertEqual(payload["model"], "deepseek-chat")
+        self.assertEqual(payload["model"], "deepseek-v4-pro")
+        self.assertEqual(payload["level"], "deep")
+        self.assertTrue(payload["thinking_enabled"])
+        self.assertEqual(payload["reasoning_effort"], "max")
         # 空 key 不覆盖已有 key
-        status, payload = self._request("POST", "/lore-api/llm/config", {"model": "deepseek-v4"})
+        status, payload = self._request("POST", "/lore-api/llm/config", {"level": "fast"})
         self.assertEqual(status, 200)
         self.assertTrue(payload["configured"])
-        self.assertEqual(payload["model"], "deepseek-v4")
+        self.assertEqual(payload["model"], "deepseek-v4-flash")
+        self.assertEqual(payload["level"], "fast")
+        self.assertEqual(payload["reasoning_effort"], "high")
 
     def test_llm_ping_requires_key(self) -> None:
         status, payload = self._request("POST", "/lore-api/llm/config", {"clear_key": True})

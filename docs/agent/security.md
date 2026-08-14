@@ -2,7 +2,7 @@
 
 ## 当前威胁模型
 
-Rhine-Lore v0.2.0 按单用户、本机应用设计。当前 HTTP 服务：
+Rhine-Lore v0.2.1 按单用户、本机应用设计。当前 HTTP 服务：
 
 - 没有登录、会话、API Token、角色或资源级授权；
 - 返回 `Access-Control-Allow-Origin: *`；

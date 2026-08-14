@@ -118,6 +118,7 @@ import ReaderNavigator, {
 } from "./components/ReaderNavigator.vue";
 import ReaderSettingsPanel from "./components/ReaderSettingsPanel.vue";
 import type { GameIconName } from "./icons/gameIconPack";
+import packageInfo from "../package.json";
 import {
   createStoryProjectFromTemplate,
   getStoryTemplate,
@@ -134,11 +135,21 @@ import {
 } from "./textEncoding";
 import rhineLoreMark from "./assets/rhine-lore-mark.svg";
 
+const appVersion = packageInfo.version;
+
 type Activity = "studio" | "story" | "world" | "characters" | "chat" | "novel" | "context" | "evolution" | "read" | "shelf" | "map" | "settings";
 type WorkMode = "write" | "advanced";
 type BackendStatus = "checking" | "online" | "offline";
 type CreateDestination = "novel" | "chat";
 type ReaderSource = "novel" | "evolution" | "shelf";
+type LlmLevel = "fast" | "balanced" | "deep";
+type DeepSeekLevelOption = {
+  value: LlmLevel;
+  label: string;
+  model: "deepseek-v4-flash" | "deepseek-v4-pro";
+  effort: "high" | "max";
+  description: string;
+};
 type ReaderPageParagraph = {
   text: string;
   continuation: boolean;
@@ -150,6 +161,36 @@ type ReaderPosition = {
   chapterId: string;
   progress: number;
   pageIndex: number;
+};
+
+const deepSeekLevelOptions: DeepSeekLevelOption[] = [
+  {
+    value: "fast",
+    label: "快速",
+    model: "deepseek-v4-flash",
+    effort: "high",
+    description: "V4 Flash，优先响应速度和调用成本",
+  },
+  {
+    value: "balanced",
+    label: "均衡",
+    model: "deepseek-v4-flash",
+    effort: "max",
+    description: "V4 Flash 最大推理，适合日常对话与续写",
+  },
+  {
+    value: "deep",
+    label: "深度",
+    model: "deepseek-v4-pro",
+    effort: "max",
+    description: "V4 Pro 最大推理，适合长篇分析和复杂分支",
+  },
+];
+type ReaderSwipeState = {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  startedAt: number;
 };
 type BranchSource = "shelf" | "project";
 type BranchKind = BookBranch["kind"];
@@ -522,6 +563,8 @@ const readerBookmarks = ref<ReaderBookmarkItem[]>(loadReaderBookmarks());
 let readerPositionTimer: number | undefined;
 let readerBoundScrollElement: HTMLElement | null = null;
 let readerResizeTimer: number | undefined;
+let readerSwipeState: ReaderSwipeState | null = null;
+let suppressReaderTapUntil = 0;
 let shelfAnalysisPollTimer: number | undefined;
 const shelfGuidance = ref("");
 const shelfAiMode = ref<"continue" | "rewrite" | "expand">("continue");
@@ -622,10 +665,11 @@ const mapConnectMode = ref(false);
 const mapPendingNodeId = ref("");
 const mapZoom = ref(1);
 const mapDragging = ref<{id: string; dx: number; dy: number} | null>(null);
-const llmBaseUrl = ref("https://api.deepseek.com/v1");
+const llmBaseUrl = ref("https://api.deepseek.com");
 const llmApiKey = ref("");
-const llmModel = ref("deepseek-chat");
+const llmModel = ref("deepseek-v4-flash");
 const llmPreset = ref("deepseek");
+const llmLevel = ref<LlmLevel>("balanced");
 const llmConfigured = ref(false);
 const llmMaskedKey = ref("");
 const aiProse = ref("");
@@ -3811,7 +3855,6 @@ watch(
     if (readerPageMode.value !== "page") {
       return;
     }
-    readerPageIndex.value = 0;
     void repaginate();
   },
 );
@@ -3819,6 +3862,15 @@ watch(
 watch(readerOverlayOpen, async (open) => {
   await nextTick();
   bindReaderScrollListener(open ? readerScrollContainer() : null);
+});
+
+watch(readerSettingsVisible, async (open) => {
+  if (!open) return;
+  await nextTick();
+  requestAnimationFrame(() => {
+    const body = document.querySelector<HTMLElement>(".reader-settings-drawer .el-drawer__body");
+    if (body) body.scrollTop = 0;
+  });
 });
 
 function bindReaderScrollListener(element: HTMLElement | null): void {
@@ -4908,7 +4960,6 @@ function handleReadingScroll(): void {
 
 function changeReaderPageMode(): void {
   persistReaderSettings();
-  readerPageIndex.value = 0;
   void repaginate();
 }
 
@@ -4921,6 +4972,10 @@ async function repaginate(): Promise<void> {
   if (!area) {
     return;
   }
+  const previousPageCount = readerPages.value.length;
+  const previousPageProgress = previousPageCount > 1
+    ? readerPageIndex.value / (previousPageCount - 1)
+    : 0;
   const paragraphs = readerCurrentParagraphs.value;
   const pageHeight = area.clientHeight;
   if (pageHeight < 100) {
@@ -5050,10 +5105,49 @@ async function repaginate(): Promise<void> {
     document.body.removeChild(measure);
   }
   readerPages.value = pages;
-  if (readerPageIndex.value >= readerPages.value.length) {
+  if (previousPageCount > 1 && readerPages.value.length > 1) {
+    readerPageIndex.value = Math.min(
+      readerPages.value.length - 1,
+      Math.max(0, Math.round(previousPageProgress * (readerPages.value.length - 1))),
+    );
+  } else if (readerPageIndex.value >= readerPages.value.length) {
     readerPageIndex.value = Math.max(0, readerPages.value.length - 1);
   }
   updateReadingProgress();
+}
+
+function handleReaderPointerDown(event: PointerEvent): void {
+  if (readerPageMode.value !== "page" || event.pointerType !== "touch") return;
+  readerSwipeState = {
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    startedAt: performance.now(),
+  };
+}
+
+function handleReaderPointerUp(event: PointerEvent): void {
+  const swipe = readerSwipeState;
+  readerSwipeState = null;
+  if (!swipe || swipe.pointerId !== event.pointerId || readerPageMode.value !== "page") return;
+  const deltaX = event.clientX - swipe.startX;
+  const deltaY = event.clientY - swipe.startY;
+  const elapsed = performance.now() - swipe.startedAt;
+  if (elapsed > 900 || Math.abs(deltaX) < 54 || Math.abs(deltaX) < Math.abs(deltaY) * 1.25) return;
+  suppressReaderTapUntil = performance.now() + 360;
+  if (deltaX < 0) readerPageNext();
+  else readerPagePrev();
+}
+
+function cancelReaderSwipe(): void {
+  readerSwipeState = null;
+}
+
+function handleReaderTap(zone: "previous" | "chrome" | "next"): void {
+  if (performance.now() < suppressReaderTapUntil) return;
+  if (zone === "previous") readerPagePrev();
+  else if (zone === "next") readerPageNext();
+  else readerChromeVisible.value = !readerChromeVisible.value;
 }
 
 function readerPagePrev(): void {
@@ -6164,15 +6258,22 @@ function acceptEvolutionIntoChapter(): void {
   activity.value = "novel";
 }
 
+const selectedDeepSeekLevel = computed(() =>
+  deepSeekLevelOptions.find((item) => item.value === llmLevel.value) ?? deepSeekLevelOptions[1],
+);
+
 const llmStatusLabel = computed(() => {
   if (!llmConfigured.value) {
     return "未配置（离线模板模式）";
   }
-  return `${llmModel.value.trim() || "模型"} · ${llmMaskedKey.value || "已配置"}`;
+  const level = llmPreset.value === "deepseek" ? ` · ${selectedDeepSeekLevel.value.label}` : "";
+  return `${llmModel.value.trim() || "模型"}${level} · ${llmMaskedKey.value || "已配置"}`;
 });
 
 const llmChannelLabel = computed(() => {
-  return llmConfigured.value ? `已接入 ${llmModel.value.trim() || "模型"}` : "离线模板";
+  if (!llmConfigured.value) return "离线模板";
+  const level = llmPreset.value === "deepseek" ? ` · ${selectedDeepSeekLevel.value.label}` : "";
+  return `已接入 ${llmModel.value.trim() || "模型"}${level}`;
 });
 
 const aiStatusLabel = computed(() => {
@@ -6245,8 +6346,8 @@ function toggleAiPanel(): void {
 async function applyLlmProvider(provider: "deepseek" | "openai" | "custom"): Promise<void> {
   llmPreset.value = provider;
   if (provider === "deepseek") {
-    llmBaseUrl.value = "https://api.deepseek.com/v1";
-    llmModel.value = "deepseek-chat";
+    llmBaseUrl.value = "https://api.deepseek.com";
+    llmModel.value = selectedDeepSeekLevel.value.model;
   } else if (provider === "openai") {
     llmBaseUrl.value = "https://api.openai.com/v1";
     llmModel.value = "gpt-4o-mini";
@@ -6255,12 +6356,20 @@ async function applyLlmProvider(provider: "deepseek" | "openai" | "custom"): Pro
   markSaved("模型预设已切换");
 }
 
+async function applyLlmLevel(level: LlmLevel): Promise<void> {
+  llmLevel.value = level;
+  llmModel.value = selectedDeepSeekLevel.value.model;
+  await persistLlmConfig();
+  markSaved(`AI 等级已切换为${selectedDeepSeekLevel.value.label}`);
+}
+
 async function persistLlmConfig(): Promise<void> {
   try {
     const config = await saveLlmServerConfig({
       base_url: llmBaseUrl.value.trim() || undefined,
       model: llmModel.value.trim() || undefined,
       preset: llmPreset.value,
+      level: llmLevel.value,
       api_key: llmApiKey.value.trim() || undefined,
     });
     llmConfigured.value = config.configured;
@@ -6285,6 +6394,7 @@ async function loadLlmServerConfig(): Promise<void> {
     llmBaseUrl.value = config.base_url || llmBaseUrl.value;
     llmModel.value = config.model || llmModel.value;
     llmPreset.value = config.preset || llmPreset.value;
+    llmLevel.value = config.level || llmLevel.value;
     llmMaskedKey.value = config.masked_key;
   } catch {
     llmConfigured.value = false;
@@ -6896,8 +7006,9 @@ async function pasteDeepSeekKey(): Promise<void> {
       saveLlmServerConfig({
         base_url: "https://api.deepseek.com",
         api_key: match[0],
-        model: llmModel.value.trim() || "deepseek-chat",
+        model: selectedDeepSeekLevel.value.model,
         preset: "deepseek",
+        level: llmLevel.value,
       }),
     );
     await loadLlmServerConfig();
@@ -7035,7 +7146,7 @@ onUnmounted(() => {
         </span>
         <span class="sidebar-footer-meta">
           <img class="sidebar-footer-brand" :src="rhineLoreMark" alt="Rhine-Lore">
-          v0.1.0
+          v{{ appVersion }}
         </span>
       </div>
       <el-button
@@ -8271,7 +8382,7 @@ onUnmounted(() => {
                 <i :style="{width: `${readingProgress}%`}" />
               </div>
 
-              <div v-if="readerMode === 'read' && activeChapter" class="reader-tap-zones">
+              <div v-if="readerMode === 'read' && activeChapter && readerPageMode === 'page'" class="reader-tap-zones">
                 <button
                   type="button"
                   class="reader-tap-zone left"
@@ -9577,22 +9688,6 @@ onUnmounted(() => {
                   @mouseup="captureBranchSelection"
                   @touchend="captureBranchSelection"
                 >
-                  <div class="reader-tap-zones">
-                    <button
-                      type="button"
-                      class="reader-tap-zone left"
-                      :disabled="shelfChapterIndex <= 0"
-                      aria-label="上一章"
-                      @click="openShelfAdjacentChapter(-1)"
-                    />
-                    <button
-                      type="button"
-                      class="reader-tap-zone right"
-                      :disabled="shelfChapterIndex < 0 || shelfChapterIndex >= shelfBook.chapters.length - 1"
-                      aria-label="下一章"
-                      @click="openShelfAdjacentChapter(1)"
-                    />
-                  </div>
                   <h2>{{ shelfChapter.title }}</h2>
                   <div
                     v-for="(paragraph, index) in shelfChapterParagraphs(shelfChapter)"
@@ -10152,14 +10247,34 @@ onUnmounted(() => {
                           </el-select>
                         </el-form-item>
                       </el-col>
+                      <el-col v-if="llmPreset === 'deepseek'" :xs="24" :sm="8">
+                        <el-form-item label="AI 等级">
+                          <el-select v-model="llmLevel" @change="applyLlmLevel">
+                            <el-option
+                              v-for="option in deepSeekLevelOptions"
+                              :key="option.value"
+                              :label="option.label"
+                              :value="option.value"
+                            >
+                              <span>{{ option.label }}</span>
+                              <small class="llm-level-option">{{ option.model }} · {{ option.effort }}</small>
+                            </el-option>
+                          </el-select>
+                          <small class="llm-level-description">{{ selectedDeepSeekLevel.description }}</small>
+                        </el-form-item>
+                      </el-col>
                       <el-col :xs="24" :sm="8">
                         <el-form-item label="API 地址">
-                          <el-input v-model="llmBaseUrl" placeholder="https://api.deepseek.com/v1" />
+                          <el-input v-model="llmBaseUrl" placeholder="https://api.deepseek.com" />
                         </el-form-item>
                       </el-col>
                       <el-col :xs="24" :sm="8">
                         <el-form-item label="模型名称">
-                          <el-input v-model="llmModel" placeholder="deepseek-chat" />
+                          <el-input
+                            v-model="llmModel"
+                            :readonly="llmPreset === 'deepseek'"
+                            placeholder="deepseek-v4-flash"
+                          />
                         </el-form-item>
                       </el-col>
                       <el-col :xs="24" :sm="8">
@@ -10853,10 +10968,22 @@ onUnmounted(() => {
             <el-option label="OpenAI" value="openai" />
             <el-option label="自定义" value="custom" />
           </el-select>
+          <template v-if="llmPreset === 'deepseek'">
+            <label>AI 等级</label>
+            <el-select v-model="llmLevel" style="width: 100%" @change="applyLlmLevel">
+              <el-option
+                v-for="option in deepSeekLevelOptions"
+                :key="option.value"
+                :label="`${option.label} · ${option.model}`"
+                :value="option.value"
+              />
+            </el-select>
+            <small class="llm-level-description">{{ selectedDeepSeekLevel.description }}</small>
+          </template>
           <label>API 地址</label>
           <el-input v-model="llmBaseUrl" placeholder="API 地址" />
           <label>模型</label>
-          <el-input v-model="llmModel" placeholder="模型" />
+          <el-input v-model="llmModel" :readonly="llmPreset === 'deepseek'" placeholder="模型" />
           <label>API Key</label>
           <el-input
             v-model="llmApiKey"
@@ -11231,6 +11358,9 @@ onUnmounted(() => {
       :style="readerContentStyle()"
       role="application"
       aria-label="沉浸阅读器"
+      @pointerdown="handleReaderPointerDown"
+      @pointerup="handleReaderPointerUp"
+      @pointercancel="cancelReaderSwipe"
     >
       <header class="reader-overlay-header">
         <button type="button" class="reader-icon-button" title="退出阅读" aria-label="退出阅读" @click="exitReaderMode">
@@ -11331,26 +11461,26 @@ onUnmounted(() => {
         </article>
       </div>
 
-      <div class="reader-tap-zones">
+      <div v-if="readerPageMode === 'page'" class="reader-tap-zones">
         <button
           type="button"
           class="reader-tap-zone left"
           :disabled="readerPageMode === 'page' ? (readerPageIndex <= 0 && readerCurrentChapterIndex <= 0) : readerCurrentChapterIndex <= 0"
           aria-label="上一章或上一页"
-          @click="readerPagePrev"
+          @click="handleReaderTap('previous')"
         />
         <button
           type="button"
           class="reader-tap-zone center"
           aria-label="显示或隐藏阅读工具"
-          @click="readerChromeVisible = !readerChromeVisible"
+          @click="handleReaderTap('chrome')"
         />
         <button
           type="button"
           class="reader-tap-zone right"
           :disabled="readerPageMode === 'page' ? (readerPageIndex >= readerPages.length - 1 && readerCurrentChapterIndex >= readerTocItems.length - 1) : readerCurrentChapterIndex >= readerTocItems.length - 1"
           aria-label="下一章或下一页"
-          @click="readerPageNext"
+          @click="handleReaderTap('next')"
         />
       </div>
 
@@ -11371,6 +11501,15 @@ onUnmounted(() => {
           />
           <b>{{ Math.round(readerOverallProgress) }}%</b>
         </div>
+        <button
+          type="button"
+          class="reader-icon-button reader-footer-settings"
+          title="阅读设置"
+          aria-label="阅读设置"
+          @click="readerSettingsVisible = true"
+        >
+          <GameIcon name="type" :size="19" />
+        </button>
         <button type="button" class="reader-icon-button" :disabled="readerCurrentChapterIndex >= readerTocItems.length - 1" title="下一章" @click="openReaderAdjacentChapter(1)">
           <GameIcon name="chevron-right" :size="20" />
         </button>

@@ -1,4 +1,5 @@
 import type { StoryProject } from "./api";
+import {gothicFantasyVolumeContinuation} from "./demo/gothicFantasyVolume";
 
 export type StoryTemplateId = "blank" | "gothic-fantasy";
 
@@ -33,7 +34,7 @@ export const storyTemplates: StoryTemplateDefinition[] = [
     summary:
       "猎夜骑士罗文在押送夜裔继承人伊蕾娅的雨夜，被一份古老月契绑定。教廷要用她开启封印，夜裔议会要她继承空王座；两个彼此敌视的人必须共同查清十二年前的焚城真相。",
     description: "原创哥特奇幻起点，围绕骑士誓言、夜裔王权、身份谜团与敌对共生展开。",
-    contents: ["3 章正文", "5 名角色", "8 项设定", "7 个地图地点"],
+    contents: ["完整第一卷 · 14 节", "5 名角色", "8 项设定", "7 个地图地点"],
   },
 ];
 
@@ -322,6 +323,11 @@ function createGothicFantasyProject(makeId: IdFactory, overrides: ProjectOverrid
     chapters: [
       {
         id: makeId("chapter"),
+        title: "第一卷 伤月与灰烬",
+        content: "",
+      },
+      {
+        id: makeId("chapter"),
         title: "序章 黑钟处刑",
         content: prose([
           "雨从圣烛城最高的镜塔上落下来时，已经带上了银灰色。",
@@ -425,6 +431,11 @@ function createGothicFantasyProject(makeId: IdFactory, overrides: ProjectOverrid
           "罗文必须在字迹消失前做出选择：护送伊蕾娅前往镜湖林，留下守住拒绝加冕的王庭，或者主动走向教廷，问玛格达自己究竟是谁。",
         ]),
       },
+      ...gothicFantasyVolumeContinuation.map((chapter) => ({
+        id: makeId("chapter"),
+        title: chapter.title,
+        content: chapter.paragraphs.join("\n\n"),
+      })),
     ],
     chat: [],
     issues: [

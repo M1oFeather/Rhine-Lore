@@ -349,6 +349,9 @@ export type LlmServerConfig = {
   base_url: string;
   model: string;
   preset: string;
+  level: "fast" | "balanced" | "deep";
+  thinking_enabled: boolean;
+  reasoning_effort: "high" | "max" | "";
   masked_key: string;
 };
 
@@ -698,6 +701,7 @@ export function saveLlmServerConfig(body: {
   api_key?: string;
   model?: string;
   preset?: string;
+  level?: "fast" | "balanced" | "deep";
   clear_key?: boolean;
 }): Promise<LlmServerConfig> {
   return postJson("/lore-api/llm/config", body);

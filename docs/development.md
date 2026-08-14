@@ -57,6 +57,6 @@ GitHub Actions 会使用 `requirements-docs.txt` 执行 `mkdocs build --strict`�
 
 ## 版本管理
 
-版本号至少出现在 `pyproject.toml`、`src/rhine_lore/__init__.py`、`ui/package.json`、Android `versionName`、README 徽章和发布文档中。发布前应统一更新，并在 CI 中增加一致性检查。当前统一版本为 `0.2.0`。
+版本号至少出现在 `pyproject.toml`、`src/rhine_lore/__init__.py`、`ui/package.json`、Android `versionName`、README 徽章和发布文档中。发布前应统一更新，并在 CI 中增加一致性检查。当前统一版本为 `0.2.1`。
 
 软件尚未正式发布时，数据结构不需要兼容性包袱，但任何破坏性变更仍必须通过一次性迁移保护本地测试数据。不要默默忽略未知字段或损坏文件。
