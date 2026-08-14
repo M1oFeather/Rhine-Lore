@@ -67,7 +67,7 @@
 | 工具 | 参数 | 说明 |
 | --- | --- | --- |
 | `save_knowledge` | `title`, `content`; 可选 `tags` 数组 | 保存到 `story-workspace` 的实验性资料草稿，不会直接批准入库 |
-| `update_llm_config` | 可选 `base_url`, `model`, `preset`, `level` | 修改非密钥模型配置；DeepSeek `level` 为 `fast` / `balanced` / `deep`，不能设置 API Key |
+| `update_llm_config` | 可选 `base_url`, `model`, `preset`, `level`, `reasoning_effort`, `temperature`, `top_p`, `max_tokens` | 修改非密钥模型配置；DeepSeek `level` 为 `fast` / `balanced` / `deep`，推理强度为 `low` / `high` / `max`，不能设置 API Key |
 
 API Key 必须通过受控的设置流程配置。不要把密钥放进对话、附件或 Agent 工具参数。
 

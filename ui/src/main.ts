@@ -2,6 +2,7 @@ import { ElAlert } from "element-plus/es/components/alert/index.mjs";
 import { ElButton } from "element-plus/es/components/button/index.mjs";
 import { ElCard } from "element-plus/es/components/card/index.mjs";
 import { ElCol } from "element-plus/es/components/col/index.mjs";
+import { ElCollapse, ElCollapseItem } from "element-plus/es/components/collapse/index.mjs";
 import {
   ElDescriptions,
   ElDescriptionsItem,
@@ -40,6 +41,8 @@ const app = createApp(App);
   ElButton,
   ElCard,
   ElCol,
+  ElCollapse,
+  ElCollapseItem,
   ElDescriptions,
   ElDescriptionsItem,
   ElDialog,

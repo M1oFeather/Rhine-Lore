@@ -78,8 +78,9 @@ python3 main.py --host 0.0.0.0 --port 8786
 
 ## 🤖 AI 配置
 
-首页右上角 **AI 面板**：选择 DeepSeek / OpenAI / 自定义，填写 API Key。DeepSeek 使用
-V4 API，可选择快速、均衡、深度等级，应用会自动配置 Flash/Pro 模型与推理强度。
+点击顶栏 AI 状态即可从右侧打开完整配置面板；设置页只保留同一面板的入口，不再维护重复表单。
+选择 DeepSeek / OpenAI / 自定义并填写 API Key。DeepSeek 使用 V4 API，可选择快速、均衡、
+深度等级；高级区还可精调推理强度、随机性、候选范围与单次最大输出长度。
 密钥只保存在本机（`data/llm-config.json` 或 App 私有目录）。
 
 安卓端 AI 面板提供 **DeepSeek 登录取 Key**：内置浏览器打开 DeepSeek 控制台，

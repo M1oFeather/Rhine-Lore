@@ -143,6 +143,7 @@ type BackendStatus = "checking" | "online" | "offline";
 type CreateDestination = "novel" | "chat";
 type ReaderSource = "novel" | "evolution" | "shelf";
 type LlmLevel = "fast" | "balanced" | "deep";
+type LlmReasoningEffort = "low" | "high" | "max";
 type DeepSeekLevelOption = {
   value: LlmLevel;
   label: string;
@@ -670,6 +671,11 @@ const llmApiKey = ref("");
 const llmModel = ref("deepseek-v4-flash");
 const llmPreset = ref("deepseek");
 const llmLevel = ref<LlmLevel>("balanced");
+const llmReasoningEffort = ref<LlmReasoningEffort>("max");
+const llmTemperature = ref(1);
+const llmTopP = ref(1);
+const llmMaxTokens = ref(8192);
+const llmAdvancedSections = ref<string[]>([]);
 const llmConfigured = ref(false);
 const llmMaskedKey = ref("");
 const aiProse = ref("");
@@ -6262,6 +6268,11 @@ const selectedDeepSeekLevel = computed(() =>
   deepSeekLevelOptions.find((item) => item.value === llmLevel.value) ?? deepSeekLevelOptions[1],
 );
 
+const llmParameterSummary = computed(() => {
+  const reasoning = llmPreset.value === "deepseek" ? `推理 ${llmReasoningEffort.value}` : "标准推理";
+  return `${reasoning} · 随机性 ${llmTemperature.value.toFixed(1)} · 最长 ${llmMaxTokens.value.toLocaleString()} tokens`;
+});
+
 const llmStatusLabel = computed(() => {
   if (!llmConfigured.value) {
     return "未配置（离线模板模式）";
@@ -6333,13 +6344,19 @@ async function runAiCheck(): Promise<void> {
   }
 }
 
+function openAiPanel(): void {
+  aiPanelOpen.value = true;
+  void loadLlmServerConfig();
+  if (aiStatus.value === "unset") {
+    void runAiCheck();
+  }
+}
+
 function toggleAiPanel(): void {
-  aiPanelOpen.value = !aiPanelOpen.value;
   if (aiPanelOpen.value) {
-    void loadLlmServerConfig();
-    if (aiStatus.value === "unset") {
-      void runAiCheck();
-    }
+    aiPanelOpen.value = false;
+  } else {
+    openAiPanel();
   }
 }
 
@@ -6348,6 +6365,7 @@ async function applyLlmProvider(provider: "deepseek" | "openai" | "custom"): Pro
   if (provider === "deepseek") {
     llmBaseUrl.value = "https://api.deepseek.com";
     llmModel.value = selectedDeepSeekLevel.value.model;
+    llmReasoningEffort.value = selectedDeepSeekLevel.value.effort;
   } else if (provider === "openai") {
     llmBaseUrl.value = "https://api.openai.com/v1";
     llmModel.value = "gpt-4o-mini";
@@ -6359,6 +6377,7 @@ async function applyLlmProvider(provider: "deepseek" | "openai" | "custom"): Pro
 async function applyLlmLevel(level: LlmLevel): Promise<void> {
   llmLevel.value = level;
   llmModel.value = selectedDeepSeekLevel.value.model;
+  llmReasoningEffort.value = selectedDeepSeekLevel.value.effort;
   await persistLlmConfig();
   markSaved(`AI 等级已切换为${selectedDeepSeekLevel.value.label}`);
 }
@@ -6370,6 +6389,10 @@ async function persistLlmConfig(): Promise<void> {
       model: llmModel.value.trim() || undefined,
       preset: llmPreset.value,
       level: llmLevel.value,
+      reasoning_effort: llmReasoningEffort.value,
+      temperature: llmTemperature.value,
+      top_p: llmTopP.value,
+      max_tokens: llmMaxTokens.value,
       api_key: llmApiKey.value.trim() || undefined,
     });
     llmConfigured.value = config.configured;
@@ -6395,10 +6418,23 @@ async function loadLlmServerConfig(): Promise<void> {
     llmModel.value = config.model || llmModel.value;
     llmPreset.value = config.preset || llmPreset.value;
     llmLevel.value = config.level || llmLevel.value;
+    llmReasoningEffort.value = config.reasoning_effort || selectedDeepSeekLevel.value.effort;
+    llmTemperature.value = config.temperature ?? llmTemperature.value;
+    llmTopP.value = config.top_p ?? llmTopP.value;
+    llmMaxTokens.value = config.max_tokens ?? llmMaxTokens.value;
     llmMaskedKey.value = config.masked_key;
   } catch {
     llmConfigured.value = false;
   }
+}
+
+async function resetLlmTuning(): Promise<void> {
+  llmReasoningEffort.value = selectedDeepSeekLevel.value.effort;
+  llmTemperature.value = 1;
+  llmTopP.value = 1;
+  llmMaxTokens.value = 8192;
+  await persistLlmConfig();
+  markSaved("已恢复当前 AI 等级的推荐参数");
 }
 
 function clearLlmKey(): void {
@@ -6967,15 +7003,6 @@ function appendAIProseToChapter(): void {
   activity.value = "novel";
 }
 
-async function testLlmConnection(): Promise<void> {
-  await runAiCheck();
-  if (aiStatus.value === "ok") {
-    markSaved("AI 通道功能正常");
-  } else if (aiStatus.value === "error") {
-    runState.value = {error: aiStatusDetail.value};
-  }
-}
-
 function openDeepSeekKeyAssistant(): void {
   const bridge = (
     window as unknown as {
@@ -7009,6 +7036,10 @@ async function pasteDeepSeekKey(): Promise<void> {
         model: selectedDeepSeekLevel.value.model,
         preset: "deepseek",
         level: llmLevel.value,
+        reasoning_effort: llmReasoningEffort.value,
+        temperature: llmTemperature.value,
+        top_p: llmTopP.value,
+        max_tokens: llmMaxTokens.value,
       }),
     );
     await loadLlmServerConfig();
@@ -10224,82 +10255,18 @@ onUnmounted(() => {
                   </div>
                 </el-card>
 
-                <el-card shadow="never" class="llm-config-card">
-                  <template #header>
-                    <div class="card-header">
-                      <span>AI 正文扩写（OpenAI 兼容）</span>
-                      <el-space wrap>
-                        <el-button size="small" :loading="busyAction === '测试模型连接'" @click="testLlmConnection">
-                          测试连接
-                        </el-button>
-                        <el-button size="small" type="primary" @click="saveLlmConfig">保存设置</el-button>
-                      </el-space>
-                    </div>
-                  </template>
-                  <el-form label-position="top" class="vault-deploy-form">
-                    <el-row :gutter="10">
-                      <el-col :xs="24" :sm="8">
-                        <el-form-item label="通道预设">
-                          <el-select v-model="llmPreset" @change="applyLlmProvider">
-                            <el-option label="DeepSeek" value="deepseek" />
-                            <el-option label="OpenAI" value="openai" />
-                            <el-option label="自定义" value="custom" />
-                          </el-select>
-                        </el-form-item>
-                      </el-col>
-                      <el-col v-if="llmPreset === 'deepseek'" :xs="24" :sm="8">
-                        <el-form-item label="AI 等级">
-                          <el-select v-model="llmLevel" @change="applyLlmLevel">
-                            <el-option
-                              v-for="option in deepSeekLevelOptions"
-                              :key="option.value"
-                              :label="option.label"
-                              :value="option.value"
-                            >
-                              <span>{{ option.label }}</span>
-                              <small class="llm-level-option">{{ option.model }} · {{ option.effort }}</small>
-                            </el-option>
-                          </el-select>
-                          <small class="llm-level-description">{{ selectedDeepSeekLevel.description }}</small>
-                        </el-form-item>
-                      </el-col>
-                      <el-col :xs="24" :sm="8">
-                        <el-form-item label="API 地址">
-                          <el-input v-model="llmBaseUrl" placeholder="https://api.deepseek.com" />
-                        </el-form-item>
-                      </el-col>
-                      <el-col :xs="24" :sm="8">
-                        <el-form-item label="模型名称">
-                          <el-input
-                            v-model="llmModel"
-                            :readonly="llmPreset === 'deepseek'"
-                            placeholder="deepseek-v4-flash"
-                          />
-                        </el-form-item>
-                      </el-col>
-                      <el-col :xs="24" :sm="8">
-                        <el-form-item label="API Key">
-                          <el-input
-                            v-model="llmApiKey"
-                            type="password"
-                            show-password
-                            placeholder="已配置则留空保持不变"
-                          />
-                        </el-form-item>
-                      </el-col>
-                    </el-row>
-                    <p class="knowledge-flow-note">
-                      配置保存在服务端磁盘（data/llm-config.json），所有设备（含局域网手机）共用同一份；
-                      生成请求经本机 Rhine-Vault 转发，浏览器不再持有密钥。
-                      演化引擎本身仍离线可用，配置模型后只是把“场景简报”扩写成更完整的正文。
-                    </p>
-                    <el-space wrap>
-                      <el-button size="small" type="danger" plain :disabled="!llmConfigured" @click="clearLlmKey">
-                        清除 API Key
-                      </el-button>
-                    </el-space>
-                  </el-form>
-                </el-card>
+                <div class="settings-route-row ai-settings-route">
+                  <span class="settings-route-icon"><GameIcon name="settings" :size="19" /></span>
+                  <div class="settings-route-copy">
+                    <strong>AI 模型配置</strong>
+                    <span>{{ llmChannelLabel }}</span>
+                    <small>{{ llmParameterSummary }}</small>
+                  </div>
+                  <el-button type="primary" @click="openAiPanel">
+                    打开右侧配置
+                    <GameIcon name="panel-right" :size="16" />
+                  </el-button>
+                </div>
 
                 <el-row :gutter="14">
                   <el-col :xs="24" :lg="12">
@@ -10952,54 +10919,152 @@ onUnmounted(() => {
 
     <el-drawer
       v-model="aiPanelOpen"
-      title="AI 生成通道"
+      class="ai-config-drawer"
       direction="rtl"
-      size="min(380px, 88vw)"
+      size="min(560px, 100vw)"
+      append-to-body
     >
+      <template #header>
+        <div class="ai-drawer-heading">
+          <span><GameIcon name="settings" :size="20" /></span>
+          <div>
+            <strong>AI 生成通道</strong>
+            <small>连接模型并调整生成质量</small>
+          </div>
+        </div>
+      </template>
       <div class="ai-drawer-body">
         <div class="ai-status-row" :class="aiStatusTone">
-          <strong>状态 · {{ aiStatusLabel }}</strong>
-          <span>{{ aiStatusDetail || "点击「测试连接」检查通道状态" }}</span>
+          <div>
+            <strong>状态 · {{ aiStatusLabel }}</strong>
+            <span>{{ llmConfigured ? llmChannelLabel : "离线模板可用" }}</span>
+          </div>
+          <small>{{ aiStatusDetail || "尚未进行连接检查" }}</small>
         </div>
-        <div class="ai-drawer-section">
-          <label>通道预设</label>
-          <el-select v-model="llmPreset" style="width: 100%" @change="applyLlmProvider">
-            <el-option label="DeepSeek" value="deepseek" />
-            <el-option label="OpenAI" value="openai" />
-            <el-option label="自定义" value="custom" />
-          </el-select>
+
+        <section class="ai-config-section">
+          <div class="ai-config-section-heading">
+            <strong>模型服务</strong>
+            <small>基础连接</small>
+          </div>
+          <div class="ai-field-grid two-columns">
+            <label class="ai-config-field">
+              <span>服务商</span>
+              <el-select v-model="llmPreset" style="width: 100%" @change="applyLlmProvider">
+                <el-option label="DeepSeek" value="deepseek" />
+                <el-option label="OpenAI" value="openai" />
+                <el-option label="自定义" value="custom" />
+              </el-select>
+            </label>
+            <label class="ai-config-field">
+              <span>模型</span>
+              <el-input v-model="llmModel" :readonly="llmPreset === 'deepseek'" placeholder="模型名称" />
+            </label>
+          </div>
+
           <template v-if="llmPreset === 'deepseek'">
-            <label>AI 等级</label>
-            <el-select v-model="llmLevel" style="width: 100%" @change="applyLlmLevel">
-              <el-option
-                v-for="option in deepSeekLevelOptions"
-                :key="option.value"
-                :label="`${option.label} · ${option.model}`"
-                :value="option.value"
-              />
-            </el-select>
+            <label class="ai-config-field ai-level-field">
+              <span>AI 等级</span>
+              <el-radio-group v-model="llmLevel" class="ai-level-segment" @change="applyLlmLevel">
+                <el-radio-button v-for="option in deepSeekLevelOptions" :key="option.value" :value="option.value">
+                  {{ option.label }}
+                </el-radio-button>
+              </el-radio-group>
+            </label>
             <small class="llm-level-description">{{ selectedDeepSeekLevel.description }}</small>
           </template>
-          <label>API 地址</label>
-          <el-input v-model="llmBaseUrl" placeholder="API 地址" />
-          <label>模型</label>
-          <el-input v-model="llmModel" :readonly="llmPreset === 'deepseek'" placeholder="模型" />
-          <label>API Key</label>
-          <el-input
-            v-model="llmApiKey"
-            type="password"
-            show-password
-            placeholder="已配置则留空保持不变"
-          />
-        </div>
-        <div class="ai-status-actions">
-          <el-button :loading="aiStatus === 'checking'" @click="runAiCheck">测试连接</el-button>
-          <el-button type="primary" @click="saveLlmConfig">保存并检查</el-button>
-          <el-button @click="openDeepSeekKeyAssistant">DeepSeek 登录取 Key</el-button>
-          <el-button @click="pasteDeepSeekKey">从剪贴板读取</el-button>
-          <small>配置后对话创作与演化正文都走此通道；未配置时使用离线模板。</small>
-        </div>
+
+          <label class="ai-config-field">
+            <span>API 地址</span>
+            <el-input v-model="llmBaseUrl" placeholder="https://api.deepseek.com" />
+          </label>
+          <label class="ai-config-field">
+            <span>API Key</span>
+            <el-input
+              v-model="llmApiKey"
+              type="password"
+              show-password
+              :placeholder="llmConfigured ? `${llmMaskedKey} · 留空保持不变` : '输入服务商 API Key'"
+            />
+          </label>
+          <div v-if="llmPreset === 'deepseek'" class="ai-key-actions">
+            <el-button @click="openDeepSeekKeyAssistant">打开 DeepSeek 控制台</el-button>
+            <el-button @click="pasteDeepSeekKey">读取剪贴板 Key</el-button>
+          </div>
+        </section>
+
+        <el-collapse v-model="llmAdvancedSections" class="ai-tuning-collapse">
+          <el-collapse-item name="generation">
+            <template #title>
+              <div class="ai-collapse-title">
+                <span><GameIcon name="settings" :size="17" /></span>
+                <div>
+                  <strong>生成精调</strong>
+                  <small>{{ llmParameterSummary }}</small>
+                </div>
+              </div>
+            </template>
+
+            <div class="ai-tuning-stack">
+              <div v-if="llmPreset === 'deepseek'" class="ai-tuning-control">
+                <div class="ai-tuning-label">
+                  <div><strong>推理强度</strong><small>控制思考深度和响应成本</small></div>
+                  <span>{{ llmReasoningEffort }}</span>
+                </div>
+                <el-radio-group v-model="llmReasoningEffort" class="ai-reasoning-segment">
+                  <el-radio-button value="low">轻量</el-radio-button>
+                  <el-radio-button value="high">标准</el-radio-button>
+                  <el-radio-button value="max">最大</el-radio-button>
+                </el-radio-group>
+              </div>
+
+              <div class="ai-tuning-control">
+                <div class="ai-tuning-label">
+                  <div><strong>随机性</strong><small>越高越有变化，越低越稳定</small></div>
+                  <span>{{ llmTemperature.toFixed(1) }}</span>
+                </div>
+                <el-slider v-model="llmTemperature" :min="0" :max="2" :step="0.1" :show-tooltip="false" />
+              </div>
+
+              <div class="ai-tuning-control">
+                <div class="ai-tuning-label">
+                  <div><strong>候选范围</strong><small>通常只需调整随机性或候选范围其中一项</small></div>
+                  <span>{{ llmTopP.toFixed(2) }}</span>
+                </div>
+                <el-slider v-model="llmTopP" :min="0" :max="1" :step="0.05" :show-tooltip="false" />
+              </div>
+
+              <div class="ai-tuning-control output-limit-control">
+                <div class="ai-tuning-label">
+                  <div><strong>最长输出</strong><small>限制单次回答或续写的最大 token 数</small></div>
+                </div>
+                <el-input-number
+                  v-model="llmMaxTokens"
+                  :min="256"
+                  :max="393216"
+                  :step="1024"
+                  controls-position="right"
+                />
+              </div>
+
+              <el-button class="ai-reset-tuning" @click="resetLlmTuning">
+                <GameIcon name="refresh" :size="15" />
+                恢复等级推荐值
+              </el-button>
+            </div>
+          </el-collapse-item>
+        </el-collapse>
       </div>
+
+      <template #footer>
+        <div class="ai-drawer-footer">
+          <el-button type="danger" text :disabled="!llmConfigured" @click="clearLlmKey">清除密钥</el-button>
+          <div>
+            <el-button :loading="aiStatus === 'checking'" @click="runAiCheck">测试连接</el-button>
+            <el-button type="primary" @click="saveLlmConfig">保存并检查</el-button>
+          </div>
+        </div>
+      </template>
     </el-drawer>
 
     <el-drawer
@@ -11271,7 +11336,7 @@ onUnmounted(() => {
           <div v-if="branchRecord?.offline" class="branch-offline-note">
             <GameIcon name="alert" :size="17" />
             <span>当前没有可用的 AI 通道。这个位置已经保存，连接 AI 后可重新生成。</span>
-            <el-button size="small" @click="branchDialogVisible = false; aiPanelOpen = true">连接 AI</el-button>
+            <el-button size="small" @click="branchDialogVisible = false; openAiPanel()">连接 AI</el-button>
           </div>
         </section>
 

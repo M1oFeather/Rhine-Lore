@@ -351,7 +351,10 @@ export type LlmServerConfig = {
   preset: string;
   level: "fast" | "balanced" | "deep";
   thinking_enabled: boolean;
-  reasoning_effort: "high" | "max" | "";
+  reasoning_effort: "low" | "high" | "max" | "";
+  temperature: number;
+  top_p: number;
+  max_tokens: number;
   masked_key: string;
 };
 
@@ -702,6 +705,10 @@ export function saveLlmServerConfig(body: {
   model?: string;
   preset?: string;
   level?: "fast" | "balanced" | "deep";
+  reasoning_effort?: "low" | "high" | "max";
+  temperature?: number;
+  top_p?: number;
+  max_tokens?: number;
   clear_key?: boolean;
 }): Promise<LlmServerConfig> {
   return postJson("/lore-api/llm/config", body);

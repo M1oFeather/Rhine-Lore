@@ -10,6 +10,7 @@ import urllib.parse
 import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -261,6 +262,10 @@ class EvolutionApiTests(unittest.TestCase):
                 "model": "deepseek-v4-flash",
                 "preset": "deepseek",
                 "level": "deep",
+                "reasoning_effort": "low",
+                "temperature": 0.7,
+                "top_p": 0.85,
+                "max_tokens": 16384,
             },
         )
         self.assertEqual(status, 200)
@@ -273,7 +278,10 @@ class EvolutionApiTests(unittest.TestCase):
         self.assertEqual(payload["model"], "deepseek-v4-pro")
         self.assertEqual(payload["level"], "deep")
         self.assertTrue(payload["thinking_enabled"])
-        self.assertEqual(payload["reasoning_effort"], "max")
+        self.assertEqual(payload["reasoning_effort"], "low")
+        self.assertEqual(payload["temperature"], 0.7)
+        self.assertEqual(payload["top_p"], 0.85)
+        self.assertEqual(payload["max_tokens"], 16384)
         # 空 key 不覆盖已有 key
         status, payload = self._request("POST", "/lore-api/llm/config", {"level": "fast"})
         self.assertEqual(status, 200)
@@ -281,6 +289,58 @@ class EvolutionApiTests(unittest.TestCase):
         self.assertEqual(payload["model"], "deepseek-v4-flash")
         self.assertEqual(payload["level"], "fast")
         self.assertEqual(payload["reasoning_effort"], "high")
+
+    def test_llm_tuning_values_are_bounded(self) -> None:
+        status, payload = self._request(
+            "POST",
+            "/lore-api/llm/config",
+            {"temperature": 9, "top_p": -2, "max_tokens": 999999},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["temperature"], 2.0)
+        self.assertEqual(payload["top_p"], 0.0)
+        self.assertEqual(payload["max_tokens"], 393216)
+
+    def test_embedded_llm_request_includes_tuning(self) -> None:
+        captured: dict[str, object] = {}
+
+        class FakeResponse:
+            def __enter__(self) -> "FakeResponse":
+                return self
+
+            def __exit__(self, *_args: object) -> None:
+                return None
+
+            def read(self) -> bytes:
+                return json.dumps({"choices": [{"message": {"content": "ok"}}]}).encode()
+
+        def fake_urlopen(request: urllib.request.Request, timeout: int) -> FakeResponse:
+            captured["payload"] = json.loads(request.data.decode("utf-8"))
+            captured["timeout"] = timeout
+            return FakeResponse()
+
+        llm = {
+            "base_url": "https://api.deepseek.com/v1",
+            "api_key": "test-key",
+            "model": "deepseek-v4-flash",
+            "thinking_enabled": True,
+            "reasoning_effort": "low",
+            "temperature": 0.7,
+            "top_p": 0.85,
+            "max_tokens": 16384,
+        }
+        with mock.patch.dict(server.os.environ, {"RHINE_LORE_EMBEDDED": "1"}):
+            with mock.patch.object(server, "urlopen", side_effect=fake_urlopen):
+                answer = server._chat_with_vault([{"role": "user", "content": "hi"}], llm)
+
+        self.assertEqual(answer, "ok")
+        request_payload = captured["payload"]
+        self.assertIsInstance(request_payload, dict)
+        self.assertEqual(request_payload["thinking"], {"type": "enabled"})
+        self.assertEqual(request_payload["reasoning_effort"], "low")
+        self.assertEqual(request_payload["temperature"], 0.7)
+        self.assertEqual(request_payload["top_p"], 0.85)
+        self.assertEqual(request_payload["max_tokens"], 16384)
 
     def test_llm_ping_requires_key(self) -> None:
         status, payload = self._request("POST", "/lore-api/llm/config", {"clear_key": True})

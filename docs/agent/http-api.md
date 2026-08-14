@@ -128,6 +128,16 @@ data: {"type":"done","answer":"第一段……","actions":[]}
 {"error": "只允许执行已确认的写操作"}
 ```
 
+## 模型配置
+
+`GET /lore-api/llm/config` 返回脱敏配置，不包含原始 API Key。`POST /lore-api/llm/config`
+可写入 `base_url`、`model`、`preset`、`level`、`reasoning_effort`、`temperature`、
+`top_p` 与 `max_tokens`；只有受控客户端设置流程可以提交 `api_key`。
+
+参数范围：`temperature` 为 `0–2`，`top_p` 为 `0–1`，`max_tokens` 为 `1–393216`，
+DeepSeek V4 的 `reasoning_effort` 为 `low`、`high` 或 `max`。服务端会校验并限制越界数值，
+随后把精调参数同时传给内嵌通道和 Rhine-Vault OpenAI 兼容通道。
+
 ## 读取上下文
 
 外部 Agent 可使用以下只读 REST 接口准备上下文：

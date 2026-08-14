@@ -6,6 +6,7 @@ import json
 import copy
 import io
 import os
+import math
 import re
 import socket
 import sqlite3
@@ -63,6 +64,11 @@ DEEPSEEK_LEVELS = {
     "balanced": {"model": "deepseek-v4-flash", "reasoning_effort": "max"},
     "deep": {"model": "deepseek-v4-pro", "reasoning_effort": "max"},
 }
+LLM_REASONING_EFFORTS = {"low", "high", "max"}
+DEFAULT_LLM_TEMPERATURE = 1.0
+DEFAULT_LLM_TOP_P = 1.0
+DEFAULT_LLM_MAX_TOKENS = 8192
+MAX_LLM_OUTPUT_TOKENS = 393216
 DEFAULT_VAULT_HOST = "127.0.0.1"
 DEFAULT_VAULT_PORT = 8795
 DEFAULT_VAULT_PORT_CANDIDATES = (8795, 8796, 8797)
@@ -465,16 +471,46 @@ def _evolution_payload(
     }
 
 
-def _normalize_llm_config(config: dict[str, str]) -> dict[str, str]:
+def _bounded_float(value: Any, fallback: float, minimum: float, maximum: float) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return fallback
+    if not math.isfinite(parsed):
+        return fallback
+    return min(maximum, max(minimum, parsed))
+
+
+def _bounded_int(value: Any, fallback: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return fallback
+    return min(maximum, max(minimum, parsed))
+
+
+def _normalize_llm_config(config: dict[str, Any]) -> dict[str, Any]:
     normalized = {
         "base_url": str(config.get("base_url") or "").strip(),
         "api_key": str(config.get("api_key") or "").strip(),
         "model": str(config.get("model") or "").strip(),
         "preset": str(config.get("preset") or "deepseek").strip(),
         "level": str(config.get("level") or DEFAULT_LLM_LEVEL).strip(),
+        "temperature": _bounded_float(
+            config.get("temperature"), DEFAULT_LLM_TEMPERATURE, 0.0, 2.0
+        ),
+        "top_p": _bounded_float(config.get("top_p"), DEFAULT_LLM_TOP_P, 0.0, 1.0),
+        "max_tokens": _bounded_int(
+            config.get("max_tokens"), DEFAULT_LLM_MAX_TOKENS, 1, MAX_LLM_OUTPUT_TOKENS
+        ),
     }
     if normalized["level"] not in DEEPSEEK_LEVELS:
         normalized["level"] = DEFAULT_LLM_LEVEL
+    default_effort = DEEPSEEK_LEVELS[normalized["level"]]["reasoning_effort"]
+    reasoning_effort = str(config.get("reasoning_effort") or default_effort).strip()
+    normalized["reasoning_effort"] = (
+        reasoning_effort if reasoning_effort in LLM_REASONING_EFFORTS else default_effort
+    )
     if normalized["preset"] == "deepseek":
         if not normalized["base_url"]:
             normalized["base_url"] = "https://api.deepseek.com"
@@ -482,7 +518,7 @@ def _normalize_llm_config(config: dict[str, str]) -> dict[str, str]:
     return normalized
 
 
-def _load_llm_config() -> dict[str, str]:
+def _load_llm_config() -> dict[str, Any]:
     if LLM_CONFIG_PATH.is_file():
         try:
             data = json.loads(LLM_CONFIG_PATH.read_text(encoding="utf-8"))
@@ -492,6 +528,10 @@ def _load_llm_config() -> dict[str, str]:
                 "model": str(data.get("model") or "").strip(),
                 "preset": str(data.get("preset") or "deepseek").strip(),
                 "level": str(data.get("level") or DEFAULT_LLM_LEVEL).strip(),
+                "reasoning_effort": data.get("reasoning_effort"),
+                "temperature": data.get("temperature"),
+                "top_p": data.get("top_p"),
+                "max_tokens": data.get("max_tokens"),
             })
         except (OSError, json.JSONDecodeError):
             pass
@@ -500,7 +540,7 @@ def _load_llm_config() -> dict[str, str]:
     )
 
 
-def _save_llm_config(config: dict[str, str]) -> None:
+def _save_llm_config(config: dict[str, Any]) -> None:
     config = _normalize_llm_config(config)
     LLM_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     temporary = LLM_CONFIG_PATH.with_suffix(".json.tmp")
@@ -519,7 +559,7 @@ def _mask_key(api_key: str) -> str:
     return f"{api_key[:3]}••••{api_key[-3:]}"
 
 
-def _llm_config_payload(config: dict[str, str]) -> dict[str, Any]:
+def _llm_config_payload(config: dict[str, Any]) -> dict[str, Any]:
     config = _normalize_llm_config(config)
     level = config.get("level") or DEFAULT_LLM_LEVEL
     deepseek = config.get("preset") == "deepseek" and config.get("model", "").startswith("deepseek-v4-")
@@ -530,7 +570,10 @@ def _llm_config_payload(config: dict[str, str]) -> dict[str, Any]:
         "preset": config.get("preset") or "deepseek",
         "level": level,
         "thinking_enabled": deepseek,
-        "reasoning_effort": DEEPSEEK_LEVELS[level]["reasoning_effort"] if deepseek else "",
+        "reasoning_effort": config.get("reasoning_effort") if deepseek else "",
+        "temperature": config.get("temperature"),
+        "top_p": config.get("top_p"),
+        "max_tokens": config.get("max_tokens"),
         "masked_key": _mask_key(config.get("api_key") or ""),
     }
 
@@ -954,9 +997,18 @@ def _run_agent_tool(tool: str, args: dict[str, Any]) -> dict[str, Any]:
         }
     if tool == "update_llm_config":
         config = _load_llm_config()
-        for key in ("base_url", "model", "preset", "level"):
+        for key in (
+            "base_url",
+            "model",
+            "preset",
+            "level",
+            "reasoning_effort",
+            "temperature",
+            "top_p",
+            "max_tokens",
+        ):
             if key in args and args[key] is not None:
-                config[key] = str(args[key])
+                config[key] = args[key]
         _save_llm_config(config)
         return {"config": _llm_config_payload(config)}
     if tool == "save_knowledge":
@@ -1098,7 +1150,8 @@ def _agent_system_prompt(attachments: list[dict[str, Any]]) -> str:
         "- evolution_guidance：参数 project_id, guidance —— 设置演化引导\n"
         "- evolution_reset：参数 project_id —— 删除演化存档（破坏性）\n"
         "- get_llm_config：无参数 —— 查看 AI 配置（只读，不含密钥）\n"
-        "- update_llm_config：参数 base_url/model/preset —— 修改 AI 配置（不写 API Key）\n"
+        "- update_llm_config：参数 base_url/model/preset/level/reasoning_effort/temperature/"
+        "top_p/max_tokens —— 修改 AI 配置（不写 API Key）\n"
         "- get_server_status：无参数 —— 查看服务与数据状态（只读）\n"
         "- save_knowledge：参数 title, content, tags —— 保存为资料草稿\n"
         "- append_book_chapter：参数 book_id, title, content —— 给 TXT 书追加章节\n"
@@ -1179,6 +1232,12 @@ def _resolve_llm(payload_llm: dict[str, Any] | None = None) -> dict[str, Any]:
     if preset == "deepseek" and not explicit.get("model"):
         model = DEEPSEEK_LEVELS[level]["model"]
     deepseek_v4 = preset == "deepseek" and model.startswith("deepseek-v4-")
+    default_effort = DEEPSEEK_LEVELS[level]["reasoning_effort"]
+    reasoning_effort = str(
+        explicit.get("reasoning_effort") or stored.get("reasoning_effort") or default_effort
+    ).strip()
+    if reasoning_effort not in LLM_REASONING_EFFORTS:
+        reasoning_effort = default_effort
     return {
         "base_url": str(explicit.get("base_url") or stored.get("base_url") or "").strip(),
         "api_key": str(explicit.get("api_key") or stored.get("api_key") or "").strip(),
@@ -1186,7 +1245,22 @@ def _resolve_llm(payload_llm: dict[str, Any] | None = None) -> dict[str, Any]:
         "preset": preset,
         "level": level,
         "thinking_enabled": deepseek_v4,
-        "reasoning_effort": DEEPSEEK_LEVELS[level]["reasoning_effort"] if deepseek_v4 else "",
+        "reasoning_effort": reasoning_effort if deepseek_v4 else "",
+        "temperature": _bounded_float(
+            explicit.get("temperature", stored.get("temperature")),
+            DEFAULT_LLM_TEMPERATURE,
+            0.0,
+            2.0,
+        ),
+        "top_p": _bounded_float(
+            explicit.get("top_p", stored.get("top_p")), DEFAULT_LLM_TOP_P, 0.0, 1.0
+        ),
+        "max_tokens": _bounded_int(
+            explicit.get("max_tokens", stored.get("max_tokens")),
+            DEFAULT_LLM_MAX_TOKENS,
+            1,
+            MAX_LLM_OUTPUT_TOKENS,
+        ),
     }
 
 
@@ -1485,6 +1559,9 @@ def _chat_with_vault(messages: list[dict[str, str]], llm: dict[str, Any]) -> str
             payload["thinking"] = {"type": "enabled"}
         if llm.get("reasoning_effort"):
             payload["reasoning_effort"] = llm["reasoning_effort"]
+        payload["temperature"] = llm["temperature"]
+        payload["top_p"] = llm["top_p"]
+        payload["max_tokens"] = llm["max_tokens"]
         request = Request(
             base + "/chat/completions",
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
@@ -1510,6 +1587,9 @@ def _chat_with_vault(messages: list[dict[str, str]], llm: dict[str, Any]) -> str
         "messages": messages,
         "thinking_enabled": bool(llm.get("thinking_enabled")),
         "reasoning_effort": str(llm.get("reasoning_effort") or "").strip() or None,
+        "temperature": llm.get("temperature"),
+        "top_p": llm.get("top_p"),
+        "max_tokens": llm.get("max_tokens"),
     }
     request = Request(
         target,
@@ -2544,6 +2624,17 @@ class RhineLoreHandler(SimpleHTTPRequestHandler):
                     config["preset"] = str(payload["preset"]).strip()
                 if str(payload.get("level") or "").strip():
                     config["level"] = str(payload["level"]).strip()
+                    if not str(payload.get("reasoning_effort") or "").strip():
+                        selected_level = config["level"]
+                        if selected_level in DEEPSEEK_LEVELS:
+                            config["reasoning_effort"] = DEEPSEEK_LEVELS[selected_level][
+                                "reasoning_effort"
+                            ]
+                if str(payload.get("reasoning_effort") or "").strip():
+                    config["reasoning_effort"] = str(payload["reasoning_effort"]).strip()
+                for key in ("temperature", "top_p", "max_tokens"):
+                    if key in payload and payload[key] is not None:
+                        config[key] = payload[key]
                 _save_llm_config(config)
                 self._send_json(200, _llm_config_payload(_load_llm_config()))
                 return
