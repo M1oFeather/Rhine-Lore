@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "rhine-lore"
-version = "0.1.0"
+version = "0.2.0"
 description = "Creative writing studio powered by audited Rhine-Vault knowledge."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -25,4 +25,3 @@ addopts = "-q"
 target-version = "py310"
 line-length = 100
 src = ["src", "tests"]
-

@@ -1,26 +1,63 @@
 site_name: Rhine-Lore 文档
-site_description: 本地优先的中文写作工作室：正文、演化沙盘、TXT 书架与 AI 续写
+site_description: 本地优先的小说创作、阅读、分析与 AI 分支工作台
+site_url: https://m1ofeather.github.io/Rhine-Lore/
+repo_url: https://github.com/M1oFeather/Rhine-Lore
+repo_name: M1oFeather/Rhine-Lore
 
 theme:
   name: readthedocs
   locale: zh_CN
+  navigation_depth: 3
+  collapse_navigation: false
+  sticky_navigation: true
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - tables
+  - toc:
+      permalink: true
 
 nav:
   - 首页: index.md
-  - 架构:
-      - 资料库边界: architecture/RHINE_VAULT_BOUNDARY.md
-  - 实现笔记:
+  - 快速开始: getting-started.md
+  - 使用指南:
+      - 工作台与创作: user-guide/workspace.md
+      - 小说阅读器: user-guide/reader.md
+      - 资料库与 Rhine-Vault: user-guide/knowledge.md
+  - 系统架构:
+      - 总览: architecture/overview.md
+      - 数据与存储: architecture/storage.md
+      - Rhine-Vault 边界: architecture/RHINE_VAULT_BOUNDARY.md
+  - Agent 接入:
+      - 接入总览: agent/index.md
+      - HTTP 与流式协议: agent/http-api.md
+      - 工具参考: agent/tool-reference.md
+      - 安全与确认: agent/security.md
+  - 系统评估:
+      - 当前评估: assessment/system-evaluation.md
+      - 未来路线: assessment/roadmap.md
+  - 开发与部署: development.md
+  - 历史设计记录:
+      - 产品规划: design/app-product-plan.md
+      - 界面重设计: design/redesign-v2.md
+      - 全量设计评估: design/full-design-evaluation.md
+      - 滚动设计审计: design/scroll-audit.md
+      - 引导与交互方案: design/interaction-guidance.md
+      - 页面验收标准: design/page-acceptance.md
+      - 通用验收标准: design/acceptance-standard.md
+      - 组件规范: design/component-spec.md
+      - 图标系统: design/icon-system.md
+      - 动效规范: design/motion.md
+      - 实施方案: design/implementation-plan.md
+  - 实现记录:
       - 演化沙盘: implementation/EVOLUTION_SANDBOX.md
       - 首个里程碑: implementation/FIRST_MILESTONE.md
       - 文风一致: implementation/STYLE_ADOPTION.md
-  - 界面重设计: design/redesign-v2.md
-  - 滚动设计审计: design/scroll-audit.md
-  - 全量设计评估: design/full-design-evaluation.md
-  - 引导与交互方案: design/interaction-guidance.md
-  - 每页验收标准: design/page-acceptance.md
-  - 通用验收标准: design/acceptance-standard.md
-  - 全套修改实施方案: design/implementation-plan.md
   - 版本与发布:
       - 发布管理: releases/index.md
       - 更新日志: releases/changelog.md
+      - v0.2.0: releases/v0.2.0.md
       - v0.1.0: releases/v0.1.0.md

@@ -70,8 +70,8 @@ python3 main.py --host 0.0.0.0 --port 8786
 
 | 平台 | 包 | 说明 |
 | --- | --- | --- |
-| Windows x64 | `Rhine-Lore-v0.1.0-win-x64.zip` | 解压后运行 `start.bat` |
-| Linux x64 | `Rhine-Lore-v0.1.0-linux-x64.tar.gz` | 解压后运行 `./start.sh` |
+| Windows x64 | `Rhine-Lore-v0.2.0-win-x64.zip` | 解压后运行 `start.bat` |
+| Linux x64 | `Rhine-Lore-v0.2.0-linux-x64.tar.gz` | 解压后运行 `./start.sh` |
 | Android | `app-release.apk` | 全内嵌版，安装即用 |
 
 > 发布包见仓库 GitHub Releases 或本地 `dist/` 目录。
@@ -120,13 +120,23 @@ data/
 │  ├─ book.json         # 元数据 + 章节摘要 + 全书档案（角色/设定/事实/伏笔）
 │  ├─ chapters.json     # 章节索引
 │  └─ chapters/*.txt    # 每章一个文件
-├─ embedded-vault.json  # 内嵌资料库
+├─ embedded-vault.json  # 内嵌资料库（Android / 内嵌模式）
+├─ rhine-vault-core.db  # 桌面端自动拉起的默认 Rhine-Vault Core
 └─ llm-config.json      # AI 通道配置（本机）
 ```
 
+设置页导出的 ZIP 会包含项目、TXT 正文、版本记录，以及上述两种资料库数据；
+为保护密钥，`llm-config.json` 不随备份导出。
+
 ## 📚 文档
 
+- [文档首页](docs/index.md)
+- [快速开始](docs/getting-started.md)
+- [Agent 接入](docs/agent/index.md)
+- [系统评估](docs/assessment/system-evaluation.md)
+- [未来路线](docs/assessment/roadmap.md)
 - [发布管理](docs/releases/index.md)
+- [v0.2.0 Release Notes](docs/releases/v0.2.0.md)
 - [v0.1.0 Release Notes](docs/releases/v0.1.0.md)
 - [更新日志](docs/releases/changelog.md)
 - [Android 构建说明](android/README.md)
@@ -140,5 +150,7 @@ data/
 
 ## 📜 版本
 
+- **v0.2.0**（2026-08-15）：产品化创作工作流更新，包含应用式界面、完整阅读器、长篇分析、
+  视觉分支树、对话确认写入、Vault 接入、TXT 编码检测、移动端优化与默认奇幻演示。
 - **v0.1.0**（2026-08-11）：首个公开发布，包含正文 / 演化 / 小说阅读 / TXT 书架 /
   AI 续写 / 内嵌资料库 / 安卓全内嵌版。

@@ -16,25 +16,25 @@ const props = withDefaults(
 );
 
 const icon = computed(() => gameIcons[props.name]);
-const sizeStyle = computed(() => `${props.size}px`);
 </script>
 
 <template>
-  <svg
+  <component
+    :is="icon"
     class="game-icon"
-    viewBox="0 0 24 24"
-    fill="currentColor"
+    :size="size"
+    :stroke-width="1.8"
     :aria-hidden="label ? undefined : 'true'"
     :aria-label="label || undefined"
-    :style="{width: sizeStyle, height: sizeStyle}"
-  >
-    <path v-for="(path, index) in icon.paths" :key="`p-${index}`" :d="path" />
-  </svg>
+  />
 </template>
 
 <style scoped>
 .game-icon {
-  display: inline-block;
+  display: block;
+  flex: 0 0 auto;
+  stroke-linecap: round;
+  stroke-linejoin: round;
   vertical-align: middle;
 }
 </style>

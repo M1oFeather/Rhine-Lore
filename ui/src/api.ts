@@ -11,6 +11,8 @@ export type StoryProject = {
   name: string;
   genre: string;
   summary: string;
+  source_book_id?: string;
+  source_branch_id?: string;
   global_guidance: string;
   chapter_turns: number;
   writing_style: string;
@@ -119,6 +121,25 @@ export type CreativeMessage = {
   created_at: string;
   actions?: AgentToolAction[];
 };
+
+export type KnowledgeExtractCandidate = {
+  candidate_id: string;
+  title: string;
+  node_type: "Character" | "Location" | "Rule" | "Event" | "Fact" | "Foreshadowing" | "Note";
+  content: string;
+  authority: string;
+  tags: string[];
+  source_message_ids: string[];
+  confidence: number;
+  rationale: string;
+};
+
+export type KnowledgeExtractResult = {
+  candidates: KnowledgeExtractCandidate[];
+  offline: boolean;
+  note: string;
+};
+
 export type VaultRuntimeConfig = {
   vault_path: string;
   host: string;
@@ -399,6 +420,18 @@ export async function postJson<T>(url: string, body: unknown): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+export async function patchJson<T>(url: string, body: unknown): Promise<T> {
+  const response = await fetch(apiUrl(url), {
+    method: "PATCH",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json() as Promise<T>;
+}
+
 export function health(): Promise<ApiRecord> {
   return getJson("/api/health");
 }
@@ -425,6 +458,14 @@ export function createManualProposal(body: {
   return postJson("/api/manual", {workspace_id: workspaceId, ...body});
 }
 
+export function extractConversationKnowledge(body: {
+  project: {id: string; name: string; genre: string};
+  chapter?: {id: string; title: string} | null;
+  messages: Pick<CreativeMessage, "id" | "role" | "content" | "created_at">[];
+}): Promise<KnowledgeExtractResult> {
+  return postJson("/lore-api/knowledge/extract", body);
+}
+
 export function buildContextBundle(body: {
   query: string;
   profile_id?: string;
@@ -446,6 +487,30 @@ export function stageProposal(proposalId: string, temporaryIds: string[]): Promi
   return postJson(`/api/proposals/${encodeURIComponent(proposalId)}/stage`, {
     workspace_id: workspaceId,
     temporary_ids: temporaryIds,
+  });
+}
+
+export function updateProposalNode(
+  proposalId: string,
+  temporaryId: string,
+  patch: {
+    node_id?: string;
+    title: string;
+    node_type: string;
+    content: string;
+    authority: string;
+    tags: string[];
+  },
+): Promise<ApiRecord> {
+  return patchJson(
+    `/api/proposals/${encodeURIComponent(proposalId)}/nodes/${encodeURIComponent(temporaryId)}`,
+    {workspace_id: workspaceId, patch},
+  );
+}
+
+export function rejectProposal(proposalId: string): Promise<ApiRecord> {
+  return postJson(`/api/proposals/${encodeURIComponent(proposalId)}/reject`, {
+    workspace_id: workspaceId,
   });
 }
 
@@ -754,6 +819,7 @@ export type BookMeta = {
   name: string;
   genre: string;
   summary: string;
+  source_encoding?: string;
   chapter_count: number;
   total_chars: number;
   updated_at: string;
@@ -789,22 +855,111 @@ export type BookAnalysisCharacter = {
   aliases: string[];
   role: string;
   first_chapter: number;
+  last_chapter?: number;
   notes: string;
+  source_chapters?: number[];
 };
 
 export type BookAnalysisSetting = {
   name: string;
   type: string;
   notes: string;
+  source_chapters?: number[];
+};
+
+export type BookAnalysisRelation = {
+  from: string;
+  to: string;
+  relation: string;
+  kind: string;
+  source_chapters?: number[];
+};
+
+export type BookAnalysisNote = {
+  text: string;
+  source_chapters: number[];
+};
+
+export type BookAnalysisTimelineItem = {
+  title: string;
+  summary: string;
+  participants: string[];
+  source_chapters: number[];
 };
 
 export type BookAnalysis = {
+  schema_version?: number;
+  summary?: string;
   characters: BookAnalysisCharacter[];
   settings: BookAnalysisSetting[];
-  key_facts: string[];
-  unresolved_threads: string[];
+  relations: BookAnalysisRelation[];
+  timeline: BookAnalysisTimelineItem[];
+  key_facts: BookAnalysisNote[];
+  unresolved_threads: BookAnalysisNote[];
+  resolved_threads: BookAnalysisNote[];
   offline?: boolean;
+  stale?: boolean;
   updated_at?: string;
+  coverage?: {
+    chapters_analyzed: number;
+    chapters_total: number;
+    characters_analyzed: number;
+    characters_total: number;
+    percent: number;
+  };
+  analysis_meta?: {
+    mode: string;
+    fragments: number;
+    model_requests: number;
+    cache_hits: number;
+    schema_version: number;
+  };
+};
+
+export type BookAnalysisMode = "quick" | "smart" | "deep";
+
+export type BookAnalysisPlan = {
+  mode: BookAnalysisMode;
+  mode_label: string;
+  chapter_count: number;
+  total_chars: number;
+  fragment_count: number;
+  long_chapters: number;
+  max_fragment_chars: number;
+  merge_calls: number;
+  estimated_requests: number;
+};
+
+export type BookAnalysisStatus = {
+  job_id?: string;
+  book_id: string;
+  state: "idle" | "queued" | "running" | "paused" | "cancelled" | "failed" | "completed";
+  stage: "idle" | "preparing" | "extracting" | "merging" | "finalizing" | "paused" | "completed";
+  message: string;
+  mode?: BookAnalysisMode;
+  offline?: boolean;
+  progress: number;
+  completed_steps?: number;
+  total_steps?: number;
+  cached_steps?: number;
+  processed_fragments?: number;
+  total_fragments?: number;
+  current_chapter?: string;
+  current_order?: number;
+  can_resume: boolean;
+  cancel_requested?: boolean;
+  error?: string;
+  plan?: BookAnalysisPlan;
+  result_summary?: {
+    characters: number;
+    settings: number;
+    relations: number;
+    timeline: number;
+    unresolved_threads: number;
+  };
+  started_at?: string;
+  updated_at?: string;
+  completed_at?: string;
 };
 
 export function listBooks(): Promise<{books: BookMeta[]}> {
@@ -816,6 +971,7 @@ export function importBook(body: {
   genre?: string;
   summary?: string;
   text: string;
+  source_encoding?: string;
 }): Promise<BookDetail> {
   return postJson("/lore-api/books/import", body);
 }
@@ -852,6 +1008,7 @@ export async function importBackupZip(file: Blob): Promise<{
   projects: number;
   books: number;
   versions: number;
+  knowledge: number;
 }> {
   const response = await fetch(apiUrl("/lore-api/backup/import"), {
     method: "POST",
@@ -861,7 +1018,13 @@ export async function importBackupZip(file: Blob): Promise<{
   if (!response.ok) {
     throw new Error(await response.text());
   }
-  return response.json() as Promise<{ok: boolean; projects: number; books: number; versions: number}>;
+  return response.json() as Promise<{
+    ok: boolean;
+    projects: number;
+    books: number;
+    versions: number;
+    knowledge: number;
+  }>;
 }
 
 export function getBookChapter(bookId: string, chapterId: string): Promise<{chapter: BookChapter}> {
@@ -966,7 +1129,111 @@ export function restoreVersion(
   });
 }
 
-export function analyzeBook(bookId: string): Promise<{analysis: BookAnalysis; offline: boolean}> {
-  return postJson(`/lore-api/books/${encodeURIComponent(bookId)}/analyze`, {});
+export function previewBookAnalysis(
+  bookId: string,
+  mode: BookAnalysisMode,
+): Promise<{plan: BookAnalysisPlan}> {
+  return getJson(`/lore-api/books/${encodeURIComponent(bookId)}/analysis/preview?mode=${encodeURIComponent(mode)}`);
+}
+
+export function getBookAnalysisStatus(bookId: string): Promise<{status: BookAnalysisStatus}> {
+  return getJson(`/lore-api/books/${encodeURIComponent(bookId)}/analysis/status`);
+}
+
+export function startBookAnalysis(
+  bookId: string,
+  body: {mode: BookAnalysisMode; force?: boolean},
+): Promise<{status: BookAnalysisStatus}> {
+  return postJson(`/lore-api/books/${encodeURIComponent(bookId)}/analysis/jobs`, body);
+}
+
+export function cancelBookAnalysis(bookId: string): Promise<{status: BookAnalysisStatus}> {
+  return postJson(`/lore-api/books/${encodeURIComponent(bookId)}/analysis/cancel`, {});
+}
+
+export type BookBranch = {
+  branch_id: string;
+  book_id: string;
+  chapter_id: string;
+  chapter_title: string;
+  chapter_order: number;
+  parent_branch_id: string;
+  root_branch_id: string;
+  root_offset: number;
+  depth: number;
+  offset: number;
+  progress: number;
+  anchor: string;
+  title: string;
+  kind: "choice" | "relationship" | "clue" | "free";
+  guidance: string;
+  text: string;
+  offline: boolean;
+  children_count?: number;
+  is_leaf?: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type BookBranchPath = {
+  branch: BookBranch;
+  lineage: BookBranch[];
+  chapter: {id: string; title: string; order: number};
+  text: string;
+};
+
+export function listBookBranches(
+  bookId: string,
+  chapterId = "",
+): Promise<{branches: BookBranch[]}> {
+  const query = chapterId ? `?chapter_id=${encodeURIComponent(chapterId)}` : "";
+  return getJson(`/lore-api/books/${encodeURIComponent(bookId)}/branches${query}`);
+}
+
+export function createBookBranch(body: {
+  book_id: string;
+  chapter_id: string;
+  offset: number;
+  anchor?: string;
+  guidance?: string;
+  parent_branch_id?: string;
+  kind?: BookBranch["kind"];
+  title?: string;
+}): Promise<{branch: BookBranch; offline: boolean}> {
+  return postJson(`/lore-api/books/${encodeURIComponent(body.book_id)}/branches`, body);
+}
+
+export function getBookBranchPath(
+  bookId: string,
+  branchId: string,
+): Promise<{path: BookBranchPath}> {
+  return getJson(
+    `/lore-api/books/${encodeURIComponent(bookId)}/branches/${encodeURIComponent(branchId)}/path`,
+  );
+}
+
+export function deleteBookBranch(
+  bookId: string,
+  branchId: string,
+): Promise<{ok: boolean; deleted: {branch_id: string; deleted_ids: string[]; count: number}}> {
+  return fetch(
+    apiUrl(`/lore-api/books/${encodeURIComponent(bookId)}/branches/${encodeURIComponent(branchId)}`),
+    {method: "DELETE"},
+  ).then(async (response) => {
+    if (!response.ok) throw new Error(await response.text());
+    return response.json();
+  });
+}
+
+export function convertBookToProject(
+  bookId: string,
+  branchId = "",
+): Promise<{
+  project: StoryProject;
+  imported: {chapters: number; characters: number; world: number; map_nodes: number};
+}> {
+  return postJson(`/lore-api/books/${encodeURIComponent(bookId)}/workbench`, {
+    branch_id: branchId,
+  });
 }
 
